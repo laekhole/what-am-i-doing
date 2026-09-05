@@ -1,0 +1,18 @@
+[package]
+name = "waid"
+version = "0.1.0"
+edition = "2021"
+description = "what am I doing? — 돌고 있는 코딩 에이전트를 한 화면에. 관찰만 하고 개입하지 않는다"
+license = "MIT"
+
+# 의존성 예산 (매니페스트 §5): 외부 크레이트 0개.
+# JSON 파싱/직렬화, 프로세스 열거, 패턴 매칭 전부 std로 직접 구현한다.
+# 추가하려면 PR에서 명시적 정당화를 요구한다.
+[dependencies]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

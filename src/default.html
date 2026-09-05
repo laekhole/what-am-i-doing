@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>waid</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<!--
+  waid 기본 대시보드 템플릿.
+
+  이 파일은 규범이 아니라 출발점이다. 통째로 꺼내서 자기 것으로 만들어라:
+
+      waid --html --eject > mine.html
+      waid --html --template mine.html --watch
+
+  아래 :root 변수만 바꿔도 인상은 완전히 달라진다. 구조까지 바꾸고 싶으면
+  마크업을 갈아엎어도 된다 — waid가 요구하는 것은 딱 두 가지뿐이다.
+
+    1. 갱신을 원하면 [data-waid-root] 요소를 하나 둘 것
+    2. 페이지 끝의 <script> 조각을 남겨둘 것
+
+  쓸 수 있는 키 전체 목록은 `waid --html --keys` 로 확인한다.
+-->
+
+<style>
+  :root {
+    /* ── 팔레트 ─────────────────────────────────────────── */
+    --bg:        #0d0f12;
+    --surface:   #16191e;
+    --border:    #23272e;
+    --fg:        #e6e8eb;
+    --fg-dim:    #7d848e;
+    --fg-faint:  #4b525b;
+
+    /* 상태색. waiting 이 가장 튀어야 한다 — 이 화면을 보는 이유다. */
+    --waiting:   #f5a623;
+    --working:   #4ade80;
+    --error:     #ef4444;
+    --idle:      #6b7280;
+    --done:      #3f8f5f;
+
+    /* ── 타이포 ─────────────────────────────────────────── */
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+            "Liberation Mono", monospace;
+    --size: 13px;
+
+    /* ── 형태 ───────────────────────────────────────────── */
+    --radius: 10px;
+    --gap: 10px;
+    --card-min: 300px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 28px 24px 40px;
+    background: var(--bg);
+    color: var(--fg);
+    font: var(--size)/1.55 var(--mono);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 22px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+  }
+
+  h1 span { color: var(--fg-faint); font-weight: 400; }
+
+  .tally { display: flex; gap: 12px; margin-left: auto; color: var(--fg-dim); }
+  .tally b { font-weight: 600; }
+  .tally .w { color: var(--waiting); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
+    gap: var(--gap);
+  }
+
+  .card {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px 13px;
+    overflow: hidden;
+  }
+
+  /* 왼쪽 상태 스트라이프. 색 하나로 훑어보게 만드는 장치. */
+  .card::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: var(--accent, var(--idle));
+  }
+
+  .card.waiting { --accent: var(--waiting); }
+  .card.working { --accent: var(--working); }
+  .card.error   { --accent: var(--error); }
+  .card.idle    { --accent: var(--idle); }
+  .card.done    { --accent: var(--done); }
+
+  /* 내 입력을 기다리는 카드만 은은하게 맥동한다. */
+  .card.waiting {
+    border-color: color-mix(in srgb, var(--waiting) 40%, var(--border));
+    animation: breathe 2.6s ease-in-out infinite;
+  }
+
+  @keyframes breathe {
+    0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    50%      { box-shadow: 0 0 0 3px color-mix(in srgb, var(--waiting) 9%, transparent); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card.waiting { animation: none; }
+  }
+
+  .top {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 9px;
+  }
+
+  .title {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .state {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    color: var(--accent, var(--idle));
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .state em { font-style: normal; color: var(--fg-faint); }
+
+  .task {
+    margin: 0 0 11px;
+    color: var(--fg);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* 추론한 값은 확실한 값처럼 보이면 안 된다 (매니페스트 §3.1). */
+  .task.inferred { color: var(--fg-dim); }
+  .task.inferred::after {
+    content: "≈";
+    margin-left: 5px;
+    color: var(--fg-faint);
+    font-size: 11px;
+  }
+
+  .task.none { color: var(--fg-faint); font-style: italic; }
+
+  .meta {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 11px;
+    color: var(--fg-dim);
+  }
+
+  .chip {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 8px;
+    white-space: nowrap;
+  }
+
+  .chip.agent { color: var(--fg); }
+  .branch { color: var(--fg-faint); margin-left: auto; }
+
+  .empty {
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 44px 20px;
+    text-align: center;
+    color: var(--fg-dim);
+  }
+
+  footer {
+    margin-top: 26px;
+    color: var(--fg-faint);
+    font-size: 11px;
+    display: flex;
+    gap: 10px;
+  }
+
+  #live { margin-left: auto; }
+  #live.on::before  { content: "◉ live"; color: var(--working); }
+  #live.off::before { content: "○ 정지"; }
+</style>
+
+<div data-waid-root>
+  <header>
+    <h1>waid <span>{{count}} sessions</span></h1>
+    <div class="tally">
+      {{#if any.waiting}}<span class="w"><b>{{count.waiting}}</b> 내 차례</span>{{/if}}
+      {{#if any.working}}<span><b>{{count.working}}</b> 작업 중</span>{{/if}}
+      {{#if any.idle}}<span><b>{{count.idle}}</b> 유휴</span>{{/if}}
+      {{#if any.error}}<span><b>{{count.error}}</b> 오류</span>{{/if}}
+    </div>
+  </header>
+
+  {{#if any}}
+  <div class="grid">
+    {{#each sessions}}
+    <article class="card {{status.state}}">
+      <div class="top">
+        <span class="title">{{title}}</span>
+        <span class="state">{{status.symbol}} {{status.label}} <em>{{status.since}}</em></span>
+      </div>
+
+      {{#if task.present}}
+        <p class="task{{#if task.inferred}} inferred{{/if}}">{{task.text}}</p>
+      {{else}}
+        <p class="task none">— 지시 내용 없음</p>
+      {{/if}}
+
+      <div class="meta">
+        <span class="chip agent">{{agent.display}}</span>
+        {{#if llm.present}}<span class="chip">{{llm.display}}</span>{{/if}}
+        {{#if branch.present}}<span class="branch">{{branch}}</span>{{/if}}
+      </div>
+    </article>
+    {{/each}}
+  </div>
+  {{else}}
+  <div class="empty">
+    돌고 있는 코딩 에이전트가 없습니다.<br>
+    <small>감지 경로를 확인하려면 <code>waid doctor</code></small>
+  </div>
+  {{/if}}
+
+  <footer>
+    <span>waid {{version}}</span>
+    <span>{{generated_at}}</span>
+    <span id="live"></span>
+  </footer>
+</div>
+
+<script>
+  // --watch 로 띄웠을 때만 동작한다. 정적 출력에서는 조용히 아무것도 안 한다.
+  (function () {
+    var live = document.getElementById("live");
+    if (!window.EventSource || !location.port) return;
+
+    var es = new EventSource("/events");
+    es.onopen = function () { if (live) live.className = "on"; };
+    es.onerror = function () { if (live) live.className = "off"; };
+
+    es.onmessage = function () {
+      // 서버가 다시 렌더한 페이지를 받아 루트만 갈아끼운다.
+      // 템플릿 로직이 서버 한 곳에만 있으므로 클라이언트에 중복이 없다.
+      fetch("/", { cache: "no-store" })
+        .then(function (r) { return r.text(); })
+        .then(function (html) {
+          var next = new DOMParser()
+            .parseFromString(html, "text/html")
+            .querySelector("[data-waid-root]");
+          var cur = document.querySelector("[data-waid-root]");
+          if (next && cur) cur.innerHTML = next.innerHTML;
+          if (live) live.className = "on";
+        })
+        .catch(function () {});
+    };
+  })();
+</script>
