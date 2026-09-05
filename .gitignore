@@ -1,4 +1,10 @@
 /target
+/desktop/target
+/desktop/node_modules
+/desktop/binaries
+/desktop/gen
+/desktop/icons/android
+/desktop/icons/ios
 **/*.rs.bk
 *.pdb
 

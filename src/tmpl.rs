@@ -58,9 +58,7 @@ fn lookup<'a>(stack: &[&'a Ctx], key: &str) -> Option<&'a Val> {
 /// `{{#kw …}}` 다음(`start`)부터 짝이 맞는 `{{/kw}}`까지를 잘라낸다.
 /// 반환: (본문, else 절, 닫는 태그 다음 인덱스).
 fn scan_block<'s>(src: &'s str, start: usize, kw: &str) -> (&'s str, Option<&'s str>, usize) {
-    let open = format!("#{kw}");
-    let close = format!("/{kw}");
-    let mut depth = 1usize;
+    let mut blocks = vec![kw];
     let mut i = start;
     let mut alt: Option<(usize, usize)> = None;
 
@@ -73,14 +71,12 @@ fn scan_block<'s>(src: &'s str, start: usize, kw: &str) -> (&'s str, Option<&'s 
         let tag = src[s + 2..c].trim();
         let after = c + 2;
 
-        let is_open = tag == open
-            || (tag.starts_with(&open) && tag.as_bytes().get(open.len()) == Some(&b' '));
-
-        if is_open {
-            depth += 1;
-        } else if tag == close {
-            depth -= 1;
-            if depth == 0 {
+        let opening = tag.strip_prefix('#').and_then(|t| t.split_whitespace().next());
+        if let Some(name @ ("if" | "unless" | "each")) = opening {
+            blocks.push(name);
+        } else if tag.strip_prefix('/') == blocks.last().copied() {
+            blocks.pop();
+            if blocks.is_empty() {
                 return match alt {
                     Some((body_end, alt_start)) => {
                         (&src[start..body_end], Some(&src[alt_start..s]), after)
@@ -88,7 +84,7 @@ fn scan_block<'s>(src: &'s str, start: usize, kw: &str) -> (&'s str, Option<&'s 
                     None => (&src[start..s], None, after),
                 };
             }
-        } else if tag == "else" && depth == 1 && alt.is_none() {
+        } else if tag == "else" && blocks.len() == 1 && alt.is_none() {
             alt = Some((s, after));
         }
         i = after;

@@ -12,8 +12,6 @@ use std::path::{Path, PathBuf};
 
 /// 마지막 이벤트 이후 이 시간 안이면 "지금 일하는 중"으로 본다.
 pub const WORKING_WITHIN: i64 = 20;
-/// 그 뒤 이 시간까지는 "내 차례"로 본다. 그 다음은 유휴.
-pub const WAITING_UNTIL: i64 = 180;
 /// 이미 끝난 세션을 목록에 남겨두는 시간.
 pub const KEEP_DONE_FOR: i64 = 600;
 
@@ -123,18 +121,19 @@ pub fn collect(now: i64) -> Vec<Session> {
             if let Some(t) = matched {
                 claimed.insert(t.path.clone());
                 sessions.push(from_pair(Some(p), agent, t, now));
-            } else {
+            } else if p.cwd.is_some() || transcripts.is_empty() {
                 sessions.push(from_process_only(p, agent, now));
             }
         }
 
-        // 프로세스가 사라졌지만 최근에 끝난 트랜스크립트 → done.
+        // 프로세스를 못 봤다는 것은 종료 증거가 아니다 (§5.1).
         for t in &transcripts {
             if claimed.contains(&t.path) {
                 continue;
             }
-            if now - t.last_event_at <= KEEP_DONE_FOR {
-                sessions.push(from_pair(None, agent, t, now));
+            let session = from_pair(None, agent, t, now);
+            if session.state != State::Done || now - t.last_event_at <= KEEP_DONE_FOR {
+                sessions.push(session);
             }
         }
     }
@@ -144,21 +143,14 @@ pub fn collect(now: i64) -> Vec<Session> {
     sessions
 }
 
-fn from_pair(p: Option<&Process>, agent: Agent, t: &Transcript, now: i64) -> Session {
+pub(crate) fn from_pair(p: Option<&Process>, agent: Agent, t: &Transcript, now: i64) -> Session {
     let cwd = p.and_then(|p| p.cwd.clone()).or_else(|| t.cwd.clone());
-    let alive = p.is_some();
     let age = now - t.last_event_at;
 
-    let state = if t.errored {
-        State::Error
-    } else if !alive {
-        State::Done
-    } else if age <= WORKING_WITHIN {
-        State::Working
-    } else if age <= WAITING_UNTIL {
-        State::Waiting
-    } else {
-        State::Idle
+    let state = match t.event_state {
+        Some(State::Working) | None if age > WORKING_WITHIN => State::Idle,
+        Some(state) => state,
+        None => State::Working,
     };
 
     let branch = cwd.as_deref().and_then(git_branch);
@@ -168,7 +160,7 @@ fn from_pair(p: Option<&Process>, agent: Agent, t: &Transcript, now: i64) -> Ses
         id: short_id(&[agent.name, &t.path.to_string_lossy()]),
         title: make_title(cwd.as_deref(), branch.as_deref()),
         agent,
-        llm_display: t.model.clone(),
+        llm_display: t.model.as_deref().map(transcript::normalize_model),
         llm_id: t.model.clone(),
         task,
         state,

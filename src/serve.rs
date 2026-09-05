@@ -59,6 +59,7 @@ pub fn serve(port: u16, tpl: String, interval: u64, snap: Snap) -> Result<(), St
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("{addr} 바인딩 실패: {e} — 다른 포트를 쓰려면 --port"))?;
 
+    let addr = listener.local_addr().map_err(|e| e.to_string())?;
     eprintln!("waid → http://{addr}  (Ctrl-C 로 종료)");
 
     let tpl = Arc::new(tpl);

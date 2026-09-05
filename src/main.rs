@@ -17,7 +17,7 @@ mod transcript;
 use render::Style;
 
 const USAGE: &str = "\
-waid 0.1.0 — what am I doing?
+waid 0.5.0 — what am I doing?
 
 사용법:
   waid [옵션]
@@ -33,7 +33,7 @@ waid 0.1.0 — what am I doing?
       --template FILE   HTML 템플릿 (기본: 내장)
       --eject           기본 템플릿을 stdout 으로 꺼낸다
       --keys            템플릿에서 쓸 수 있는 키 목록
-      --port N          --html --watch 의 포트 (기본 7423)
+      --port N          --html --watch 의 포트 (기본 7423, 0은 자동 배정)
   -i, --interval SEC    폴링 주기 (기본 2)
       --agent NAME      특정 에이전트만
       --waiting         내 입력을 기다리는 세션만
@@ -99,7 +99,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--port" => {
                 let v = it.next().ok_or("--port 에 값이 필요합니다")?;
-                a.port = v.parse::<u16>().map_err(|_| "--port 는 1..65535 여야 합니다")?;
+                a.port = v.parse::<u16>().map_err(|_| "--port 는 0..65535 여야 합니다")?;
             }
             "--watch" => a.watch = true,
             "--waiting" => a.waiting_only = true,
@@ -265,11 +265,15 @@ fn doctor() {
     let procfs = std::path::Path::new("/proc/self/cmdline").exists();
     println!(
         "프로세스 열거   {}",
-        if procfs { "/proc (정확: cwd 확보 가능)" } else { "ps 폴백 (cwd 없음)" }
+        if cfg!(windows) { "tasklist /NH /FO CSV (cwd 없음, watch에서 비동기 갱신)" }
+        else if procfs { "/proc (정확: cwd 확보 가능)" } else { "ps 폴백 (cwd 없음)" }
     );
 
     let home = std::env::var("HOME").unwrap_or_else(|_| "(unset)".into());
     println!("HOME            {home}");
+    if let Some(home) = adapters::home() {
+        println!("사용 홈         {}", home.display());
+    }
     match theme::path() {
         Some(p) => println!(
             "테마            {} {}",
@@ -305,7 +309,11 @@ fn doctor() {
     }
 
     println!("\n에이전트");
-    let procs: Vec<_> = proc::list();
+    // doctor는 진단 정확성을 위해 기다린다. 첫 화면용 수집은 대기하지 않는다.
+    #[cfg(windows)]
+    let procs = proc::from_tasklist();
+    #[cfg(not(windows))]
+    let procs = proc::list();
     for d in adapters::table() {
         let a = d.agent;
         let n = procs

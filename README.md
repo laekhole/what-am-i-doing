@@ -24,13 +24,12 @@ STATUS     TITLE                  AGENT        LLM         TASK
 
 | 플랫폼 | 상태 |
 |---|---|
-| Linux / WSL | 동작. 검증됨 |
-| macOS | 빌드됨, 실사용 미검증 (`ps` 경로) |
-| Windows (네이티브) | 미지원. 프로세스 열거 미구현 |
-| 데스크톱 앱 (Windows → macOS) | 개발 예정 |
+| Windows (네이티브) | 코어 v0.5.0 + 네이티브 앱 v0.5.2 개발 빌드; 이전 v0.5.1 설치·실행 확인 |
+| macOS | `ps` 경로 유지, 이번 작업에서 실기 빌드·실사용 미검증 |
 | Android 뷰어 | 개발 예정 |
+| Linux / WSL | 기존 구현 유지. WSL → Windows Codex 읽기는 사용자 실환경 검증 보고 |
 
-Windows에서 지금 쓰시려면 WSL 안에서 빌드해 쓰시면 되고, 그 경우 Windows 쪽 셸에서 띄운 세션도 트랜스크립트를 통해 함께 잡힙니다.
+실환경 검증은 Windows → macOS → Android → WSL 순서입니다. Windows는 cwd를 못 얻어도 트랜스크립트로 표를 채우며, 프로세스를 못 봤다는 이유로 `done`을 만들지 않습니다. `waiting`은 마지막으로 확인한 턴 종료 신호이지, 현재 세션의 생존을 보증하는 값은 아닙니다. 상세 검증 범위와 미확인 항목은 [DECISIONS.md](DECISIONS.md)의 마지막 절에 기록합니다.
 
 ---
 
@@ -41,7 +40,43 @@ cargo build --release
 cp target/release/waid ~/.local/bin/
 ```
 
-의존성 크레이트 0개. 런타임 없음. 자발적 네트워크 요청 없음.
+코어는 의존성 크레이트 0개, 별도 런타임 없음, 자발적 네트워크 요청 없음입니다. 별도 `desktop` 패키지만 Windows API 바인딩과 JSON 판독 의존성을 사용합니다. Tauri·WebView2는 제거했습니다.
+
+Windows에서 코어만 빌드·실행:
+
+```powershell
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" test --release
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" build --release
+.\target\release\waid.exe doctor
+.\target\release\waid.exe --html --watch
+# 브라우저에서 http://127.0.0.1:7423 열기. 종료는 Ctrl-C.
+```
+
+Windows x64 앱·인스톨러 빌드 (Rust MSVC 도구 체인과 NSIS 필요, Node.js 불필요):
+
+```powershell
+.\desktop\build.ps1 -NsisPath 'C:\Program Files (x86)\NSIS\makensis.exe'
+```
+
+스크립트는 코어와 앱의 release 테스트가 통과한 뒤 빌드합니다. NSIS가 PATH에 있으면 `-NsisPath`를 생략할 수 있습니다. 이전 Tauri 빌드가 받은 NSIS 컴파일러도 재사용할 수 있으며 Tauri 자체는 필요 없습니다.
+
+생성물: `desktop/target/release/bundle/nsis/waid_0.5.2_x64-setup.exe`. 일반 Windows 세션에서 이 설치 파일을 직접 실행하세요. 이전 앱은 먼저 종료하세요 (v0.5.0은 트레이의 `waid 종료`).
+현재 사용자 전용 설치이며, 기본 설치 위치는 `%LOCALAPPDATA%\waid`입니다. WebView2나 브라우저 다운로드는 없습니다. 코드 서명은 아직 하지 않았습니다. 설치 없이 `desktop/target/release/waid-desktop.exe`를 실행해도 됩니다. 같은 폴더의 `waid.exe`는 함께 두세요.
+
+앱은 작은 Windows 기본 목록 창입니다. 세션마다 제목·상태 / 작업 / 에이전트·모델의 세 줄이며, 긴 문장은 말줄임합니다. 카드·배지·애니메이션·브라우저·HTTP 서버를 쓰지 않습니다.
+
+v0.5.2는 UI 정돈 단계입니다. 새 UI의 직접 시각 검사·설치는 아직 하지 않았고, 기존 설치본은 그대로입니다. **waid를 켠 뒤 관찰한 세션만 남기는 필터는 아직 미구현입니다.** Windows tasklist만으로는 열려 있는 유휴 세션과 과거 트랜스크립트를 정확히 구별할 수 없어 처리 기준을 확인 중입니다 (D20).
+
+- 상단에는 최소화와 닫기만 있습니다. 최대화는 없습니다. 제목 부분을 끌어 이동하고 테두리로 크기를 조절합니다.
+- 목록을 우클릭하면 `항상 위`와 `불투명도`(30~100%)를 조절할 수 있습니다. 키보드는 목록에 포커스를 두고 Shift+F10입니다.
+- 모르는 모델·작업은 `—`, 추론한 작업은 `≈`로 표시합니다. 목록은 읽기 전용입니다.
+- 닫기는 앱과 자신이 만든 waid를 종료합니다. 트레이·토스트는 없으며 에이전트는 건드리지 않습니다.
+
+창 설정은 재실행하면 기본값으로 돌아옵니다. 상태 수집은 동봉 코어의 `--json --watch`, 기본 2초 간격입니다. 앱은 내용이 바뀔 때만 목록을 갱신하며 선택·스크롤 위치를 세션 id로 유지합니다. **120ms는 갱신 간격이 아니라 코어 첫 출력 목표입니다.**
+
+Windows 단발 출력은 느린 tasklist를 기다리지 않으므로 트랜스크립트 없는 프로세스가 빠질 수 있습니다. `--watch`의 다음 갱신이나 `doctor`로 확인하세요. 실행 파일 이름만 같은 데스크톱 앱 보조 프로세스는 개별 세션과 구별할 수 없습니다.
+
+`doctor`에서 Claude가 0개라면 설치 여부보다 실제 JSONL 존재 여부를 확인하세요. 이 PC에서는 `.claude`는 있지만 `projects`가 없고 `sessions`가 비어 있었습니다. 세션을 만든 적이 없다고 단정하거나 다른 경로를 추측으로 추가하지 않았습니다.
 
 ---
 
@@ -86,6 +121,8 @@ waid --html --watch
 ## 커스터마이징
 
 세 겹으로 나뉜다. 위로 갈수록 쉽고, 아래로 갈수록 자유롭다.
+
+테마·HTML 템플릿은 CLI 출력용입니다. 네이티브 앱은 레이어 3의 별도 표시기이므로 HTML/CSS를 사용하지 않습니다.
 
 ### 레이어 1 — 테마 파일
 
@@ -280,9 +317,13 @@ dir = "~/.aider/sessions"
 
 | 항목 | 예산 | 현재 |
 |---|---|---|
-| 바이너리 크기 | < 5 MB | 580 KB |
+| 코어 바이너리 크기 | < 5 MB | Windows x64 407,552 bytes |
+| 네이티브 앱 실행 파일 | — | 이전 v0.5.1: 240,128 bytes |
+| NSIS 설치 파일 | < 15 MB | 이전 v0.5.1: 297,625 bytes |
 | 외부 크레이트 | 0개 | 0개 |
 | 네트워크 요청 | 0회 | 0회 |
-| 콜드 스타트 | < 120 ms | — |
+| 첫 출력 | < 120 ms | Windows 최근 5회 82.5~140.1ms, 초과 사례 있음 |
+
+첫 출력 측정은 반복 실행 결과이며 진정한 콜드 스타트 보증이 아닙니다. 최종 네이티브 설치본의 관측 3회에서 앱·코어·콘솔 호스트 working set 합은 약 34.7 MB였습니다. 수명이 짧은 tasklist가 표본 사이에 실행될 수 있어 최대 사용량을 보증하는 수치는 아닙니다. 고정 20세션·유휴 CPU·120ms 예산 충족은 아직 완료하지 않았고 예산도 완화하지 않았습니다. `cargo test`는 코어 58개 단위 + 1개 HTTP/SSE 통합 테스트, `desktop`은 4개 테스트를 실행합니다.
 
 MIT

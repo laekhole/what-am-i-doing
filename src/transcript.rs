@@ -11,11 +11,17 @@
 
 use crate::json::{parse, Json};
 use crate::time;
+use crate::session::State;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
-const HEAD_BYTES: u64 = 32 * 1024;
+// Codex의 주입 문맥 뒤 첫 사용자 요청이 실제 로그에서 약 79KiB에 있었다.
+// ponytail: 앞 128KiB까지만 읽는다. 더 긴 머리말의 실례가 나오면 범위를 재검토한다.
+const HEAD_BYTES: u64 = 128 * 1024;
 const TAIL_BYTES: u64 = 64 * 1024;
 /// 이보다 오래된 트랜스크립트는 후보에서 뺀다. 수백 개씩 쌓이는 과거
 /// 세션 파일을 매 폴링마다 stat 하지 않기 위한 방어선.
@@ -28,7 +34,14 @@ pub struct Transcript {
     pub cwd: Option<PathBuf>,
     pub model: Option<String>,
     pub first_prompt: Option<String>,
-    pub errored: bool,
+    pub event_state: Option<State>,
+}
+
+struct Cached {
+    size: u64,
+    modified: Option<SystemTime>,
+    created: Option<SystemTime>,
+    transcript: Transcript,
 }
 
 /// 에이전트별 트랜스크립트 루트.
@@ -95,14 +108,34 @@ fn read_span(f: &mut File, from: SeekFrom, len: usize) -> Vec<String> {
 
 pub fn read(path: &Path, mtime: i64) -> Option<Transcript> {
     let mut f = File::open(path).ok()?;
-    let size = f.metadata().ok()?.len();
+    let metadata = f.metadata().ok()?;
+    let size = metadata.len();
+    let modified = metadata.modified().ok();
+    let created = metadata.created().ok();
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Cached>>> = OnceLock::new();
+    // ponytail: 짧은 파일 읽기 동안 하나의 잠금. 동시 독자가 많아지면 파일별로 분리한다.
+    let mut cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+        .lock().unwrap_or_else(|e| e.into_inner());
+    let cached = cache.get(path);
+    if let Some(c) = cached.filter(|c| modified.is_some() && c.modified == modified && c.size == size) {
+        let mut transcript = c.transcript.clone();
+        transcript.last_event_at = mtime;
+        return Some(transcript);
+    }
+    // 세션 JSONL은 append-only. 잘리거나 교체되면 머리말도 다시 읽는다.
+    let previous = cached.filter(|c| c.size < size && c.created == created)
+        .map(|c| &c.transcript);
+    let reuse_head = previous.is_some_and(|t| t.first_prompt.is_some());
 
-    let head = read_span(&mut f, SeekFrom::Start(0), HEAD_BYTES.min(size) as usize);
+    let head = if reuse_head { Vec::new() } else {
+        read_span(&mut f, SeekFrom::Start(0), HEAD_BYTES.min(size) as usize)
+    };
 
-    let mut tail = if size > TAIL_BYTES {
-        let mut t = read_span(&mut f, SeekFrom::End(-(TAIL_BYTES as i64)), TAIL_BYTES as usize);
+    let mut tail = if reuse_head || size > HEAD_BYTES {
+        let len = TAIL_BYTES.min(size);
+        let mut t = read_span(&mut f, SeekFrom::End(-(len as i64)), len as usize);
         // 중간에서 잘렸으므로 첫 줄은 깨진 JSON일 수 있다.
-        if !t.is_empty() {
+        if size > len && !t.is_empty() {
             t.remove(0);
         }
         t
@@ -117,33 +150,73 @@ pub fn read(path: &Path, mtime: i64) -> Option<Transcript> {
     let cwd = head_json
         .iter()
         .find_map(|v| v.find_str(&["cwd", "workingDirectory", "working_dir", "project_path"]))
-        .map(PathBuf::from);
+        .map(PathBuf::from)
+        .or_else(|| previous.and_then(|t| t.cwd.clone()));
 
     // 모델은 뒤에서부터 찾는다. 세션 중간에 모델을 바꿀 수 있고,
     // 우리가 보여줘야 하는 건 지금 쓰는 모델이다.
     let model = tail_json
         .iter()
         .chain(head_json.iter())
-        .find_map(|v| v.find_str(&["model", "model_id", "modelName"]));
+        .find_map(|v| v.find_str(&["model", "model_id", "modelName"]))
+        .or_else(|| previous.and_then(|t| t.model.clone()));
 
-    let first_prompt = head_json.iter().find_map(first_user_text);
+    let first_prompt = head_json.iter().find_map(first_user_text)
+        .map(|t| normalize_prompt(&t))
+        .or_else(|| previous.and_then(|t| t.first_prompt.clone()));
 
-    let errored = tail_json.iter().take(5).any(|v| {
-        v.has_kv("type", "error") || v.has_kv("subtype", "error") || v.has_kv("status", "failed")
-    });
+    let event_state = tail_json.iter().find_map(event_state)
+        .or_else(|| previous.and_then(|t| t.event_state));
 
-    Some(Transcript {
+    let transcript = Transcript {
         path: path.to_path_buf(),
         last_event_at: mtime,
         cwd,
-        model: model.map(|m| normalize_model(&m)),
-        first_prompt: first_prompt.map(|t| normalize_prompt(&t)),
-        errored,
-    })
+        model,
+        first_prompt,
+        event_state,
+    };
+    // 원문/JSON 트리는 저장하지 않는다. 오래 켜둬도 항목 수는 유한하다.
+    // ponytail: 256개면 비우는 단순 상한. 이 규모를 상시 넘기면 LRU를 검토한다.
+    if cache.len() >= 256 { cache.clear(); }
+    cache.insert(path.to_path_buf(), Cached { size, modified, created, transcript: transcript.clone() });
+    Some(transcript)
+}
+
+/// 상태는 이벤트 자체에서만 읽는다. 프롬프트나 도구 출력 안의 문자열은 증거가 아니다.
+pub(crate) fn event_state(v: &Json) -> Option<State> {
+    let kind = v.get("type").and_then(Json::as_str)?;
+    let event = if matches!(kind, "event_msg" | "response_item") { v.get("payload")? } else { v };
+    let kind = event.get("type").and_then(Json::as_str).unwrap_or(kind);
+    match kind {
+        "error" => Some(State::Error),
+        "task_complete" => Some(State::Waiting), // 턴 종료는 세션 종료가 아니다.
+        "task_started" | "user_message" | "function_call" | "function_call_output"
+        | "custom_tool_call" | "custom_tool_call_output" | "reasoning" => Some(State::Working),
+        "turn_aborted" => Some(State::Idle),
+        "user" => Some(State::Working),
+        "assistant" => {
+            let message = event.get("message")?;
+            match message.get("stop_reason").and_then(Json::as_str) {
+                Some("end_turn" | "stop_sequence") => Some(State::Waiting),
+                _ => Some(State::Working),
+            }
+        }
+        "message" => match event.get("role").and_then(Json::as_str) {
+            Some("user") => Some(State::Working),
+            Some("assistant") if event.get("phase").and_then(Json::as_str) == Some("final") => Some(State::Waiting),
+            Some("assistant") => Some(State::Working),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// 이 줄이 사용자 발화인가?
 fn first_user_text(v: &Json) -> Option<String> {
+    let v = if v.get("type").and_then(Json::as_str) == Some("response_item") {
+        v.get("payload")?
+    } else { v };
     let is_user = v.has_kv("role", "user") || v.has_kv("type", "user");
     if !is_user {
         return None;
@@ -205,7 +278,7 @@ pub fn normalize_prompt(raw: &str) -> String {
     if out.is_empty() {
         out = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     }
-    out
+    out.chars().take(200).collect()
 }
 
 /// `claude-opus-4-6-20260514` → `opus-4.6`

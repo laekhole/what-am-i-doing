@@ -99,7 +99,7 @@ const BUILTIN: &[(&str, &str, &[&str], &[&str], Option<&str>)] = &[
 ///
 /// Windows 는 `HOME` 을 두지 않는다. `USERPROFILE` 로 떨어지지 않으면
 /// 네이티브 Windows 에서 트랜스크립트를 한 건도 못 찾는다.
-fn home() -> Option<PathBuf> {
+pub(crate) fn home() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)

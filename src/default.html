@@ -241,7 +241,7 @@
 
       <div class="meta">
         <span class="chip agent">{{agent.display}}</span>
-        {{#if llm.present}}<span class="chip">{{llm.display}}</span>{{/if}}
+        <span class="chip">{{#if llm.present}}{{llm.display}}{{else}}—{{/if}}</span>
         {{#if branch.present}}<span class="branch">{{branch}}</span>{{/if}}
       </div>
     </article>
@@ -282,6 +282,7 @@
             .querySelector("[data-waid-root]");
           var cur = document.querySelector("[data-waid-root]");
           if (next && cur) cur.innerHTML = next.innerHTML;
+          live = document.getElementById("live");
           if (live) live.className = "on";
         })
         .catch(function () {});

@@ -1,8 +1,9 @@
 //! 프로세스 열거.
 //!
 //! 읽기 전용이다(매니페스트 §1.1). 시그널을 보내지 않고, 프로세스를 만들지
-//! 않는다. `/proc`을 읽거나 `ps`를 한 번 부르는 게 전부다.
+//! 않는다. `/proc`, `ps`, Windows의 `tasklist`로 관찰한다.
 
+#[cfg(not(windows))]
 use std::fs;
 use std::path::PathBuf;
 
@@ -22,6 +23,9 @@ impl Process {
 }
 
 pub fn list() -> Vec<Process> {
+    #[cfg(windows)]
+    { return windows_list(); }
+    #[cfg(not(windows))]
     if PathBuf::from("/proc/self/cmdline").exists() {
         from_procfs()
     } else {
@@ -29,6 +33,73 @@ pub fn list() -> Vec<Process> {
     }
 }
 
+/// 한 번에 한 작업만 실행한다. 화면 요청은 마지막 결과만 복사하고 기다리지 않는다.
+#[cfg(windows)]
+fn windows_list() -> Vec<Process> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+    #[derive(Default)]
+    struct Cache {
+        processes: Vec<Process>,
+        started: Option<Instant>,
+        running: bool,
+    }
+    static CACHE: OnceLock<Arc<Mutex<Cache>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Arc::new(Mutex::new(Cache::default())));
+    let mut state = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if !state.running && state.started.map_or(true, |t| t.elapsed() >= Duration::from_secs(2)) {
+        state.running = true;
+        state.started = Some(Instant::now());
+        let worker = Arc::clone(cache);
+        std::thread::spawn(move || {
+            let processes = from_tasklist();
+            let mut state = worker.lock().unwrap_or_else(|e| e.into_inner());
+            state.processes = processes;
+            state.running = false;
+        });
+    }
+    state.processes.clone()
+}
+
+#[cfg(windows)]
+pub(crate) fn from_tasklist() -> Vec<Process> {
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new("tasklist")
+        .args(["/NH", "/FO", "CSV"])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW: 관찰할 때 콘솔 창을 띄우지 않는다.
+        .output().ok().filter(|o| o.status.success())
+        .map(|o| parse_tasklist(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or_default()
+}
+
+#[cfg(any(windows, test))]
+pub(crate) fn parse_tasklist(text: &str) -> Vec<Process> {
+    fn field(text: &str) -> Option<(String, &str)> {
+        let text = text.strip_prefix('"')?;
+        let mut value = String::new();
+        let mut chars = text.char_indices().peekable();
+        while let Some((i, ch)) = chars.next() {
+            if ch != '"' { value.push(ch); continue; }
+            if chars.peek().map(|(_, ch)| *ch) == Some('"') {
+                chars.next();
+                value.push('"');
+            } else {
+                let rest = &text[i + 1..];
+                return Some((value, if rest.is_empty() { rest } else { rest.strip_prefix(',')? }));
+            }
+        }
+        None
+    }
+    text.lines().filter_map(|line| {
+        let (name, rest) = field(line.trim())?;
+        let (pid, _) = field(rest)?;
+        let pid: i32 = pid.parse().ok()?;
+        if name.is_empty() || pid <= 0 { return None; }
+        Some(Process { pid, argv: vec![name], cwd: None })
+    }).collect()
+}
+
+#[cfg(not(windows))]
 fn from_procfs() -> Vec<Process> {
     let mut out = Vec::new();
     let entries = match fs::read_dir("/proc") {
@@ -70,6 +141,7 @@ fn from_procfs() -> Vec<Process> {
 /// 세션 목록이 디스크의 트랜스크립트 쪽에서 주도되고 프로세스는 생존 여부
 /// 확인에만 쓰인다. `lsof`로 cwd를 캐낼 수는 있지만 프로세스당 수십 ms가 들고
 /// 성능 예산(§8)을 깬다.
+#[cfg(not(windows))]
 fn from_ps() -> Vec<Process> {
     let out = match std::process::Command::new("ps").args(["-eo", "pid=,args="]).output() {
         Ok(o) => o,
@@ -88,15 +160,4 @@ fn from_ps() -> Vec<Process> {
             Some(Process { pid, argv, cwd: None })
         })
         .collect()
-}
-
-pub fn is_alive(pid: i32) -> bool {
-    if PathBuf::from("/proc/self").exists() {
-        return PathBuf::from(format!("/proc/{pid}")).exists();
-    }
-    std::process::Command::new("ps")
-        .args(["-p", &pid.to_string()])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }

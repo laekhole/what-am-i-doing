@@ -96,7 +96,7 @@ impl Json {
                     .filter_map(|b| match b {
                         Json::Str(s) => Some(s.clone()),
                         Json::Obj(m) => match m.get("type").and_then(|t| t.as_str()) {
-                            Some("text") | None => {
+                            Some("text" | "input_text" | "output_text") | None => {
                                 m.get("text").and_then(|t| t.as_str()).map(str::to_string)
                             }
                             _ => None,

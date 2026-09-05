@@ -324,6 +324,40 @@ fn tmpl_unclosed_tag_is_literal_not_panic() {
 }
 
 #[test]
+fn tmpl_else_belongs_to_its_own_block_kind() {
+    let mut root = ctx(&[("any", b(true))]);
+    root.insert("xs".into(), TVal::List(vec![ctx(&[("on", b(false))])]));
+    assert_eq!(tmpl::render(
+        "{{#if any}}{{#each xs}}A{{#if on}}Y{{else}}N{{/if}}B{{#unless on}}U{{else}}V{{/unless}}C{{/each}}{{else}}EMPTY{{/if}}",
+        &root,
+    ), "ANBUC");
+}
+
+#[test]
+fn populated_default_template_keeps_all_five_fields() {
+    use crate::session::{Confidence, Session, State, Task};
+    let mut session = Session {
+        id: "test0001".into(), title: "Windows MVP".into(),
+        agent: crate::adapters::Agent { name: "codex", display: "Codex", has_reader: true },
+        llm_id: Some("model-test".into()), llm_display: Some("model-test".into()),
+        task: Task { text: Some("작업 <검증>".into()), source: "transcript_first_prompt", confidence: Confidence::Inferred },
+        state: State::Waiting, since: 100, cwd: None, branch: None, pid: None,
+    };
+    let html = crate::html::render(&[session.clone()], 110, crate::html::DEFAULT_TEMPLATE);
+    for field in ["Windows MVP", ">Codex</span>", "model-test", "작업 &lt;검증&gt;", "내 차례", "task inferred"] {
+        assert!(html.contains(field), "missing {field}");
+    }
+    assert!(!html.contains("{{"));
+    session.task.text = None;
+    session.llm_id = None;
+    session.llm_display = None;
+    let html = crate::html::render(&[session], 110, crate::html::DEFAULT_TEMPLATE);
+    assert!(html.contains("— 지시 내용 없음"));
+    assert!(html.contains("<span class=\"chip\">—</span>"));
+    assert!(html.contains(">Codex</span>"));
+}
+
+#[test]
 fn default_template_renders_without_leftover_tags() {
     // 기본 템플릿과 컨텍스트가 어긋나면 화면에 {{...}} 가 그대로 남는다.
     let out = crate::html::render(&[], crate::time::now(), crate::html::DEFAULT_TEMPLATE);
@@ -358,7 +392,7 @@ fn adapter_minimal_definition_loads() {
 fn adapter_transcript_dir_enables_reader_and_expands_tilde() {
     // HOME 을 변경하지 않는다 — 테스트가 병렬로 돌고 어댑터 테이블은
     // OnceLock 으로 캐시되므로, 환경을 건드리면 다른 테스트가 흔들린다.
-    let home = std::env::var("HOME").expect("HOME");
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).expect("home");
     let d = adapters::parse_def_for_test(
         r#"
         [adapter]
@@ -375,9 +409,9 @@ fn adapter_transcript_dir_enables_reader_and_expands_tilde() {
     assert!(d.agent.has_reader);
     // 내 홈은 반드시 후보에 들어 있어야 한다. 경계 너머 후보가
     // 추가로 붙는 것은 환경에 따라 다르므로 개수는 고정하지 않는다.
-    let expected = format!("{home}/.mytool/sessions");
+    let expected = std::path::PathBuf::from(home).join(".mytool/sessions");
     assert!(
-        d.transcript_dirs.iter().any(|p| p.to_string_lossy() == expected),
+        d.transcript_dirs.contains(&expected),
         "내 홈 루트가 빠졌다: {:?}",
         d.transcript_dirs
     );
@@ -516,11 +550,11 @@ fn absolute_roots_are_not_multiplied_across_homes() {
 fn builtin_roots_cover_the_current_home() {
     // Windows 에서 HOME 이 없어 USERPROFILE 로 떨어지는 경로까지 포함해,
     // 내 홈의 트랜스크립트 루트는 어떤 환경에서도 후보에 있어야 한다.
-    let home = std::env::var("HOME").expect("HOME");
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).expect("home");
     let roots = adapters::transcript_dirs("claude");
-    let want = format!("{home}/.claude/projects");
+    let want = std::path::PathBuf::from(home).join(".claude/projects");
     assert!(
-        roots.iter().any(|p| p.to_string_lossy() == want),
+        roots.contains(&want),
         "내 홈 루트가 빠졌다: {roots:?}"
     );
 }
@@ -532,4 +566,127 @@ fn agent_without_transcript_root_has_no_reader() {
     assert!(!adapters::by_name("aider").unwrap().has_reader);
     // 없는 에이전트를 물어도 패닉하지 않는다.
     assert!(adapters::transcript_dirs("nope").is_empty());
+}
+
+#[test]
+fn theme_path_uses_native_home_unless_overridden() {
+    let expected = if let Some(p) = std::env::var_os("WAID_THEME") {
+        std::path::PathBuf::from(p)
+    } else {
+        let base = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).unwrap();
+                std::path::PathBuf::from(home).join(".config")
+            });
+        base.join("waid/theme.toml")
+    };
+    assert_eq!(theme::path(), Some(expected));
+}
+
+#[test]
+fn tasklist_csv_preserves_names_and_only_uses_pid() {
+    let processes = crate::proc::parse_tasklist(
+        "\"claude.exe\",\"123\",\"Console\",\"1\",\"104,104 K\"\r\n\"한글, tool.exe\",\"456\",\"Console\"\n\"quote\"\"tool.exe\",\"789\"\n"
+    );
+    assert_eq!(processes.len(), 3);
+    assert_eq!(processes[0].pid, 123);
+    assert_eq!(matchers::identify(&processes[0]).unwrap().name, "claude");
+    assert_eq!(processes[1].argv, ["한글, tool.exe"]);
+    assert_eq!(processes[2].argv, ["quote\"tool.exe"]);
+    assert!(processes.iter().all(|p| p.cwd.is_none()));
+}
+
+#[test]
+fn tasklist_csv_skips_errors_and_invalid_rows() {
+    for bad in ["ERROR: Access denied", "\"unterminated", "\"x\",\"pid\"", "\"x\",\"-1\"", "\"x\",\"2147483648\"", "\"\",\"1\"", "\"x\"garbage,\"2\"", "\"x\",\"0\""] {
+        assert!(crate::proc::parse_tasklist(bad).is_empty(), "{bad}");
+    }
+}
+
+#[test]
+fn transcript_events_distinguish_turn_end_from_session_end() {
+    use crate::session::State;
+    for (event, want) in [
+        (r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#, Some(State::Waiting)),
+        (r#"{"type":"event_msg","payload":{"type":"task_started"}}"#, Some(State::Working)),
+        (r#"{"type":"assistant","message":{"stop_reason":"end_turn"}}"#, Some(State::Waiting)),
+        (r#"{"type":"assistant","message":{"stop_reason":"tool_use"}}"#, Some(State::Working)),
+        (r#"{"type":"response_item","payload":{"type":"message","role":"assistant","phase":"final"}}"#, Some(State::Waiting)),
+        (r#"{"type":"response_item","payload":{"type":"function_call_output","output":{"type":"error"}}}"#, Some(State::Working)),
+        (r#"{"type":"event_msg","payload":{"type":"token_count"}}"#, None),
+    ] {
+        assert_eq!(crate::transcript::event_state(&json::parse(event).unwrap()), want, "{event}");
+    }
+}
+
+#[test]
+fn transcript_without_process_keeps_cwd_task_and_waiting() {
+    use crate::session::{self, State, Confidence};
+    let mut transcript = crate::transcript::Transcript {
+        path: "fixture.jsonl".into(), last_event_at: 100, cwd: Some("project".into()),
+        model: Some("claude-opus-4-6".into()), first_prompt: Some("Windows MVP".into()),
+        event_state: Some(State::Waiting),
+    };
+    let agent = crate::adapters::by_name("claude").unwrap();
+    let session = session::from_pair(None, agent, &transcript, 200);
+    assert_eq!(session.state, State::Waiting);
+    assert_eq!(session.title, "project");
+    assert_eq!(session.pid, None);
+    assert_eq!(session.task.confidence, Confidence::Inferred);
+    assert_eq!(session.llm_id.as_deref(), Some("claude-opus-4-6"));
+    assert_eq!(session.llm_display.as_deref(), Some("opus-4.6"));
+    transcript.event_state = None;
+    assert_eq!(session::from_pair(None, agent, &transcript, 101).state, State::Working);
+    assert_eq!(session::from_pair(None, agent, &transcript, 200).state, State::Idle);
+}
+
+#[test]
+fn transcript_reads_tail_between_32_and_64_kib_and_codex_payload() {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("waid-tail-{}.jsonl", std::process::id()));
+    let mut file = std::fs::File::create(&path).unwrap();
+    writeln!(file, "{}", r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"실제 첫 지시"}]}}"#).unwrap();
+    writeln!(file, "{}", " ".repeat(40 * 1024)).unwrap();
+    writeln!(file, "{}", r#"{"type":"turn_context","payload":{"model":"model-latest"}}"#).unwrap();
+    writeln!(file, "{}", r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#).unwrap();
+    drop(file);
+    let t = crate::transcript::read(&path, 100).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(t.model.as_deref(), Some("model-latest"));
+    assert_eq!(t.first_prompt.as_deref(), Some("실제 첫 지시"));
+    assert_eq!(t.event_state, Some(crate::session::State::Waiting));
+}
+
+#[test]
+fn transcript_finds_first_request_after_long_injected_context() {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("waid-long-head-{}.jsonl", std::process::id()));
+    let mut file = std::fs::File::create(&path).unwrap();
+    writeln!(file, "{}", r#"{"type":"session_meta","payload":{"cwd":"project"}}"#).unwrap();
+    writeln!(file, "{}", r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<recommended_plugins>injected</recommended_plugins>"}]}}"#).unwrap();
+    writeln!(file, "{}", " ".repeat(80 * 1024)).unwrap();
+    writeln!(file, "{}", r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"실제 작업 요청"}]}}"#).unwrap();
+    writeln!(file, "{}", " ".repeat(80 * 1024)).unwrap();
+    writeln!(file, "{}", r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#).unwrap();
+    drop(file);
+    let t = crate::transcript::read(&path, 100).unwrap();
+    assert_eq!(t.cwd, Some("project".into()));
+    assert_eq!(t.first_prompt.as_deref(), Some("실제 작업 요청"));
+    assert_eq!(t.event_state, Some(crate::session::State::Waiting));
+    assert_eq!(crate::transcript::read(&path, 101).unwrap().last_event_at, 101);
+    let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    writeln!(file, "{}", r#"{"type":"user","message":{"content":"다음 작업"}}"#).unwrap();
+    drop(file);
+    let t = crate::transcript::read(&path, 102).unwrap();
+    assert_eq!(t.first_prompt.as_deref(), Some("실제 작업 요청"));
+    assert_eq!(t.event_state, Some(crate::session::State::Working));
+    std::fs::write(&path, r#"{"type":"user","message":{"content":"교체된 로그"}}"#).unwrap();
+    assert_eq!(crate::transcript::read(&path, 103).unwrap().first_prompt.as_deref(), Some("교체된 로그"));
+    std::fs::remove_file(&path).unwrap();
+}
+
+#[test]
+fn normalized_prompt_is_bounded_without_splitting_unicode() {
+    assert_eq!(normalize_prompt(&"가나다".repeat(200)).chars().count(), 200);
+    assert_eq!(normalize_prompt(&format!("# {}", "한".repeat(300))).chars().count(), 200);
 }
