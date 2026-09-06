@@ -24,54 +24,63 @@ pub use crate::adapters::{all, by_name, Agent};
 /// npm으로 설치한 CLI는 Windows에서 `claude.cmd`로, 맨 실행 파일은
 /// `claude.exe`로 나타난다. 이걸 벗기지 않으면 Windows에서 아무것도
 /// 감지되지 않는다.
-fn basename(arg: &str) -> &str {
-    let file = arg.rsplit(['/', '\\']).next().unwrap_or(arg);
+fn basename(arg: &str) -> String {
+    let file = arg.rsplit(['/', '\\']).next().unwrap_or(arg).to_ascii_lowercase();
     for ext in [".exe", ".cmd", ".ps1", ".bat"] {
-        if let Some(stripped) = file.strip_suffix(ext) {
-            return stripped;
-        }
+        if let Some(stripped) = file.strip_suffix(ext) { return stripped.into(); }
     }
     file
 }
 
-/// 인터프리터 런처인가? 그렇다면 진짜 이름은 다음 인자에 있다.
 fn is_launcher(name: &str) -> bool {
-    matches!(
-        name,
-        "node" | "bun" | "deno" | "python" | "python3" | "npx" | "pnpm" | "uv" | "uvx"
-    )
+    matches!(name, "node" | "bun" | "deno" | "python" | "python3" | "pythonw")
+        || name.strip_prefix("python3.").is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn by_exec(candidate: &str) -> Option<Agent> {
-    adapters::table()
-        .iter()
-        .find(|d| d.exec.iter().any(|e| e == candidate))
+    adapters::table().iter()
+        .find(|d| d.exec.iter().any(|e| e.eq_ignore_ascii_case(candidate)))
         .map(|d| d.agent)
 }
 
+/// Query arguments only for known executables/interpreters, never arbitrary desktop apps.
+#[cfg(windows)]
+pub(crate) fn needs_arguments(exe: &str) -> bool {
+    let name = basename(exe);
+    is_launcher(&name) || by_exec(&name).is_some()
+}
+
 pub fn identify(p: &Process) -> Option<Agent> {
-    // 1) argv[0]의 basename. 가장 신뢰도 높은 신호.
     let head = basename(p.argv.first()?);
-    if let Some(a) = by_exec(head) {
-        return Some(a);
-    }
-
-    // 2) 런처를 거쳐 실행된 경우 (`node /usr/lib/node_modules/.../cli.js`).
-    //    argv[1]까지만 본다. 더 들어가면 오탐이 시작된다.
-    if is_launcher(head) {
-        if let Some(second) = p.argv.get(1) {
-            if let Some(a) = by_exec(basename(second)) {
-                return Some(a);
-            }
+    if let Some(a) = by_exec(&head) { return Some(a); }
+    if !is_launcher(&head) { return None; }
+    let mut args = p.argv.iter().skip(1);
+    let script = loop {
+        let arg = args.next()?;
+        // Only known flag shapes may precede the entrypoint. Eval/prompt arguments
+        // and package-manager supervisor processes must not become extra sessions.
+        if head.starts_with("python") && arg == "-m" {
+            return match args.next()?.as_str() {
+                "aider" | "aider.main" => by_name("aider"),
+                _ => None,
+            };
         }
+        if matches!(arg.as_str(), "--no-warnings" | "--enable-source-maps" | "-u" | "-B")
+            || arg.starts_with("--max-old-space-size=") { continue; }
+        if arg == "--" { break args.next()?; }
+        if arg.starts_with('-') { return None; }
+        break arg;
+    };
+    if let Some(a) = by_exec(&basename(script)) { return Some(a); }
+    if head.starts_with("python") && basename(script) == "aider-script.py" {
+        return by_name("aider");
     }
-
-    // 3) 패키지 경로 표지. `node .../@anthropic-ai/claude-code/cli.js`처럼
-    //    파일명이 `cli.js`라서 2)로 안 잡히는 경우를 위한 것.
-    //    표지 문자열이 충분히 구체적이라 오탐 위험이 낮다.
-    let full = p.cmdline();
-    adapters::table()
-        .iter()
-        .find(|d| d.markers.iter().any(|m| full.contains(m.as_str())))
-        .map(|d| d.agent)
+    let entry = script.replace('\\', "/").to_ascii_lowercase();
+    adapters::table().iter().find(|d| d.markers.iter().any(|m| {
+        let marker = m.replace('\\', "/").to_ascii_lowercase();
+        entry.match_indices(&marker).any(|(i, _)| {
+            (i == 0 || entry.as_bytes()[i - 1] == b'/')
+                && (i + marker.len() == entry.len() || entry.as_bytes()[i + marker.len()] == b'/')
+        })
+    })).map(|d| d.agent)
 }

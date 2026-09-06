@@ -100,7 +100,9 @@ pub fn discover_with_history(agent: &str, now: i64, history: bool) -> Vec<Transc
     files.sort_by(|a, b| b.1.cmp(&a.1));
     let mut found: Vec<_> = files
         .iter()
+        .filter(|(p, _)| agent != "copilot" || p.file_name().is_some_and(|n| n == "events.jsonl"))
         .filter_map(|(p, m)| read(p, *m))
+        .filter(|t| agent != "copilot" || t.session_id.is_some() || t.current_prompt.is_some())
         .filter(|t| history || now - t.last_event_at <= MAX_AGE_SECS)
         .collect();
     found.sort_by(|a, b| b.last_event_at.cmp(&a.last_event_at));
@@ -233,6 +235,8 @@ pub fn read(path: &Path, mtime: i64) -> Option<Transcript> {
             if v.get("type").and_then(Json::as_str) == Some("session_meta") {
                 v.get("payload")
                     .and_then(|p| p.get("id").or_else(|| p.get("session_id")))
+            } else if v.get("type").and_then(Json::as_str) == Some("session.start") {
+                v.get("data").and_then(|d| d.get("sessionId"))
             } else {
                 v.get("sessionId")
             }
@@ -322,8 +326,25 @@ pub fn read(path: &Path, mtime: i64) -> Option<Transcript> {
 }
 
 /// 상태는 이벤트 자체에서만 읽는다. 프롬프트나 도구 출력 안의 문자열은 증거가 아니다.
+fn copilot_child(v: &Json) -> bool {
+    // Claude sidechains also have agentId; retain their independently displayed logs.
+    v.get("data").is_some() && v.get("agentId").and_then(Json::as_str).is_some()
+}
+
 pub(crate) fn event_state(v: &Json) -> Option<State> {
     let kind = v.get("type").and_then(Json::as_str)?;
+    if copilot_child(v) { return None; }
+    match kind {
+        "session.error" => return Some(State::Error),
+        "session.idle" => return Some(if v.get("data").and_then(|d| d.get("aborted")) == Some(&Json::Bool(true)) { State::Idle } else { State::Waiting }),
+        // Explicit CLI shutdown does not mean the conversation cannot be resumed.
+        "abort" => return Some(State::Idle),
+        "session.shutdown" => return Some(if v.get("data").and_then(|d| d.get("shutdownType")).and_then(Json::as_str) == Some("error") { State::Error } else { State::Idle }),
+        "user.message" => return first_user_text(v).map(|_| State::Working),
+        "assistant.turn_start" | "assistant.turn_end" | "assistant.message"
+        | "tool.execution_start" | "tool.execution_complete" => return Some(State::Working),
+        _ => {}
+    }
     let event = if matches!(kind, "event_msg" | "response_item") {
         v.get("payload")?
     } else {
@@ -364,6 +385,10 @@ pub(crate) fn event_state(v: &Json) -> Option<State> {
 
 /// 이 줄이 사용자 발화인가?
 fn first_user_text(v: &Json) -> Option<String> {
+    if copilot_child(v) { return None; }
+    if v.get("type").and_then(Json::as_str) == Some("user.message") {
+        return clean_user_text(&v.get("data")?.get("content")?.text_content()?);
+    }
     let v = if v.get("type").and_then(Json::as_str) == Some("response_item") {
         v.get("payload")?
     } else {
@@ -420,6 +445,24 @@ fn clean_user_text(text: &str) -> Option<String> {
 
 // Read envelope metadata only; a tool result's nested model/cwd is not session metadata.
 fn envelope_field(v: &Json, keys: &[&str]) -> Option<String> {
+    if copilot_child(v) { return None; }
+    let kind = v.get("type").and_then(Json::as_str);
+    if matches!(kind, Some("session.start" | "session.model_change" | "session.context_changed" | "session.shutdown")) {
+        let data = v.get("data")?;
+        let field = if keys.contains(&"model") {
+            match kind? {
+                "session.start" => data.get("selectedModel"),
+                "session.model_change" => data.get("newModel"),
+                "session.shutdown" => data.get("currentModel"),
+                _ => None,
+            }
+        } else if kind == Some("session.context_changed") {
+            data.get("cwd")
+        } else {
+            data.get("context").and_then(|v| v.get("cwd"))
+        };
+        return field.and_then(Json::as_str).filter(|s| !s.is_empty()).map(str::to_string);
+    }
     let value = match v.get("type").and_then(Json::as_str) {
         Some("session_meta" | "turn_context") => v.get("payload")?,
         Some("assistant") => {

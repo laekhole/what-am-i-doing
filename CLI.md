@@ -102,9 +102,15 @@ waid --json --watch | your-own-thing
 
 프로세스 감지: Claude Code, Codex, Gemini CLI, opencode, Aider, Cursor CLI, Copilot CLI, Goose
 
-트랜스크립트 판독(= `llm`/`task`/마지막 `status`): Claude Code, Codex
+트랜스크립트 판독(= `llm`/`task`/마지막 `status`): Claude Code, Codex, Copilot CLI
 
-나머지는 프로세스만 잡히므로 `unknown`과 `—`로 표시된다. 알 수 없는 것은 알 수 없다고 쓴다.
+나머지는 프로세스만 감지하며 상태는 `unknown`이다. 명시적인 실행 옵션이 없으면 모델·작업도 미확인이다. Windows에서는 알려진 CLI와 Node/Bun/Deno/Python의 인자만 제한된 읽기 권한으로 조회한다. 조회 거부 시 실행 파일 이름으로 폴백한다. 별도 PowerShell 폴링·관리자 권한·외부 라이브러리를 요구하지 않는다.
+
+패키지 표지는 실행 스크립트 경로의 구성 요소에서만 비교한다. `node server.js @github/copilot`, `rg @google/gemini-cli`, eval 코드 안의 언급은 세션이 아니다. npx/pnpm/uv/uvx 같은 설치·실행 관리자는 제외하고 실제 자식 CLI를 감지한다. 임의의 런처 옵션·Cursor IDE·VS Code 확장·WSL 내부 프로세스는 지원 범위에 포함하지 않는다.
+
+Copilot은 [공식 저장 경로](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/chronicle)의 `~/.copilot/session-state/<id>/events.jsonl`을 읽는다. [COPILOT_HOME](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)을 설정하면 그 아래 session-state도 읽는다. 다른 --config-dir 경로는 사용자 어댑터로 설정한다. 인증 설정 파일이나 SQLite DB는 읽지 않는다.
+
+[공식 이벤트 스키마](https://github.com/github/copilot-sdk/blob/main/nodejs/src/generated/session-events.ts)를 기준으로 session.start의 프로젝트·모델·세션 ID, user.message의 현재 요청, session.model_change의 최신 모델을 사용한다. agentId가 붙은 보조 이벤트는 부모 작업·상태를 덮어쓰지 않는다. assistant.turn_end는 모델 호출 종료이므로 작업 중 근거로만 쓰고, session.idle은 내 차례, abort/정상 shutdown은 중단·유휴, session.error/오류 shutdown은 오류다. 재요청은 같은 세션 ID를 유지하며 요청 식별자를 바꾼다. 비용·모델 변경만으로 재개하지 않는다. 버전에 따라 idle 이벤트가 디스크에 남지 않으면 기다리는 상태를 확정하지 않고 미확인으로 둔다.
 
 ```sh
 waid doctor   # 어느 경로가 잡히고 안 잡히는지
@@ -119,7 +125,7 @@ waid doctor   # 어느 경로가 잡히고 안 잡히는지
 name    = "mytool"
 display = "사내 에이전트"
 exec    = ["mytool", "mytool-cli"]   # argv[0] 의 basename 후보
-markers = ["@vendor/mytool"]         # 커맨드라인 표지 (선택)
+markers = ["@vendor/mytool"]         # 실행 스크립트의 패키지 경로 (선택)
 
 [transcript]
 dir  = "~/.mytool/sessions"          # 선택. 있으면 llm/task/status 가 열린다

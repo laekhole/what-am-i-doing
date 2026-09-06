@@ -90,7 +90,7 @@ const BUILTIN: &[(&str, &str, &[&str], &[&str], Option<&str>)] = &[
         "Copilot CLI",
         &["copilot", "github-copilot-cli"],
         &["@github/copilot"],
-        None,
+        Some(".copilot/session-state"),
     ),
     ("goose", "Goose", &["goose"], &[], None),
 ];
@@ -196,6 +196,11 @@ fn builtins() -> Vec<Def> {
             if *name == "codex" {
                 if let Some(root) = std::env::var_os("CODEX_HOME").filter(|root| !root.is_empty()) {
                     transcript_dirs.push(PathBuf::from(root).join("sessions"));
+                }
+            }
+            if *name == "copilot" {
+                if let Some(root) = std::env::var_os("COPILOT_HOME").filter(|root| !root.is_empty()) {
+                    transcript_dirs.push(PathBuf::from(root).join("session-state"));
                 }
             }
             transcript_dirs.sort();

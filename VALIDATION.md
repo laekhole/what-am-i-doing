@@ -169,3 +169,19 @@ CLI 통합 테스트는 파일 시각과 이벤트 시각이 모두 오래된 �
 일부 캡처는 도구가 다른 창에 가려진 영역을 반환했다. 가려진 이미지와 상태가 변하지 않은 합성 클릭은 성공 증거에 포함하지 않는다. 샘플 카드 캡처는 .tools/rounded-final/cards.png에 있으며 원본 대화나 실제 세션 캡처는 커밋에 포함하지 않는다.
 
 이번 변경 범위의 회귀 검사를 통과했으며, 혼합 DPI 모니터·스크린 리더·몇 시간 실사용 등 앞서 기록한 제품 전체 검증 한계는 남아 있다.
+
+## 2026-09-06 — 추가 코딩 에이전트 감지
+
+- 코어 69개, CLI 통합 4개, 새 코어를 포함한 데스크톱 9개 통과(총 82개). Windows 자기 프로세스의 실제 실행 인자를 std::env::args와 대조했다. 한글·공백·따옴표, 없는 PID, Node/Python 진입점, 패키지 문자열 오탐을 검사했다.
+- Copilot의 기본/설정 경로, 부가 JSONL 제외, 프로젝트·모델·대표/최근 요청, 모델 변경, 자식 이벤트 제외, 중단·오류·재개, 불완전한 append와 파일 교체를 합성 로그로 검사했다.
+- 실제 Windows Node/Python으로 만든 대기 스크립트와 직접 실행 stub 8개를 실행했다. Gemini/Copilot/OpenCode의 Node 진입점, Aider 모듈, Cursor/Goose/OpenCode 실행 이름 7개를 감지하고 일반 Node 스크립트의 패키지 언급 1개는 제외했다. 30회 스냅샷 모두 일치, 총 1,893 ms(프로세스 시작 비용 포함). 원본 에이전트는 실행하지 않았고 fixture 자식만 종료했다. 장시간 메모리 검증을 대신하는 수치는 아니다.
+- 이 PC의 .gemini, OpenCode, Goose 기본 데이터 루트와 Copilot session-state가 없었다. 실제 Copilot 대화·다른 제품의 실제 작업 상태 전환은 미검증이며 fixture 검증과 구분한다. 기존 실제 Claude/Codex 로그 수집은 새 코어에서도 각각 170/294개가 나오는 것을 집계 확인했다. 이 숫자는 실행 시점의 결과이며 대화 내용은 기록하지 않았다.
+- 이번 변경은 코어 감지에 한정하며 새 제품의 실제 화면 검증을 수행했다고 주장하지 않는다. 기존 네이티브 화면·템플릿 검증 기록은 위 항목을 따른다.
+
+OS 감지 회귀를 재현하려면 Windows에 Rust GNU 도구 체인, Node, Python이 있어야 한다. 아래는 실제 에이전트 대신 tests의 대기 stub만 실행한다. 결과에는 fixture PID·제품·상태만 출력한다. 코어를 먼저 빌드하고 저장소 루트에서 실행한다:
+
+```powershell
+New-Item -ItemType Directory -Force .tools/agent-detection-check | Out-Null
+rustc --edition 2021 --target x86_64-pc-windows-gnu tests/fixtures/process_stub.rs -o .tools/agent-detection-check/helper.exe
+node tests/windows-processes.cjs
+```

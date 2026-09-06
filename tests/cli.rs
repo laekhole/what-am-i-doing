@@ -181,3 +181,32 @@ fn history_includes_old_idle_and_metadata_only_logs_without_completing_them() {
     assert!(!history.contains("\"state\": \"done\""));
     assert!(history.contains("2020-01-01T00:00:01Z"));
 }
+
+
+#[test]
+fn copilot_default_and_configured_roots_discover_only_session_logs() {
+    let suffix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let fixture = Fixture { dir: std::env::temp_dir().join(format!("waid-copilot-roots-{}-{suffix}", std::process::id())), child: None };
+    let home = fixture.dir.join("home");
+    let configured = fixture.dir.join("한글 Copilot home");
+    for (root, id) in [(home.join(".copilot"), "default-session"), (configured.clone(), "configured-session")] {
+        let session = root.join("session-state").join(id);
+        fs::create_dir_all(&session).unwrap();
+        fs::write(session.join("events.jsonl"), format!(concat!(
+            "{{\"type\":\"session.start\",\"data\":{{\"sessionId\":\"{}\",\"selectedModel\":\"test-model\"}}}}\n",
+            "{{\"type\":\"user.message\",\"data\":{{\"content\":\"root discovery fixture\"}}}}\n",
+            "{{\"type\":\"session.idle\",\"data\":{{}}}}\n"
+        ), id)).unwrap();
+        fs::write(session.join("telemetry.jsonl"), "{\"type\":\"user.message\",\"data\":{\"content\":\"not-a-session\"}}\n").unwrap();
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_waid"))
+        .args(["--agent", "copilot", "--json", "--history"])
+        .env("HOME", &home).env("USERPROFILE", &home).env("COPILOT_HOME", &configured)
+        .env("WAID_ADAPTERS", fixture.dir.join("no-adapters"))
+        .output().unwrap();
+    assert!(output.status.success());
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(json.matches("root discovery fixture").count(), 4, "task + summary for two sessions");
+    assert_eq!(json.matches("\"state\": \"waiting\"").count(), 2);
+    assert!(!json.contains("not-a-session"));
+}

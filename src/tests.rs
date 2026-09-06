@@ -6,6 +6,8 @@
 
 use crate::json;
 use crate::matchers;
+use crate::transcript;
+use crate::session::State;
 use crate::proc::Process;
 use crate::render::{self, width};
 use crate::theme::{self, Truncate, Val};
@@ -544,8 +546,9 @@ fn builtin_table_is_intact_after_refactor() {
     ] {
         assert!(names.contains(&expected), "{expected} 가 사라졌다");
     }
-    // 트랜스크립트 리더는 claude/codex 만.
+    // 로그 리더 지원과 프로세스 전용 감지를 구분한다.
     assert!(adapters::by_name("claude").unwrap().has_reader);
+    assert!(adapters::by_name("copilot").unwrap().has_reader);
     assert!(!adapters::by_name("aider").unwrap().has_reader);
 }
 
@@ -949,9 +952,10 @@ fn latest_request_identity_and_auxiliary_are_from_envelopes() {
 #[test]
 fn claude_sidechain_does_not_replace_parent_identity() {
     let path = std::env::temp_dir().join(format!("waid-sidechain-{}.jsonl", std::process::id()));
-    std::fs::write(&path, r#"{"type":"user","sessionId":"shared-parent","isSidechain":true,"message":{"content":"child task"}}"#).unwrap();
+    std::fs::write(&path, r#"{"type":"user","sessionId":"shared-parent","agentId":"claude-child","isSidechain":true,"message":{"content":"child task"}}"#).unwrap();
     let t = crate::transcript::read(&path, 100).unwrap();
     assert!(t.auxiliary);
+    assert_eq!(t.current_prompt.as_deref(), Some("child task"));
     assert!(t.session_id.is_none());
     std::fs::remove_file(path).unwrap();
 }
@@ -1019,4 +1023,93 @@ fn request_marker_ignores_metadata_and_distinguishes_repeated_requests() {
     assert_ne!(first.request_marker, resumed.request_marker);
     drop(file);
     std::fs::remove_file(path).unwrap();
+}
+
+
+#[test]
+fn other_agents_and_windows_runtime_entrypoints() {
+    for (argv, agent) in [
+        (vec![r"C:\Tools\GEMINI.EXE"], "gemini"),
+        (vec!["node.exe", r"C:\npm\@google\gemini-cli\dist\index.js"], "gemini"),
+        (vec!["NODE.EXE", "--no-warnings", r"C:\npm\@github\copilot\index.js"], "copilot"),
+        (vec!["bun", r"C:\npm\opencode-ai\bin\opencode"], "opencode"),
+        (vec!["python.exe", "-m", "aider"], "aider"),
+        (vec!["python3.12", "-u", "-m", "aider.main"], "aider"),
+        (vec!["python", r"C:\venv\Scripts\aider-script.py"], "aider"),
+        (vec!["cursor-agent.exe"], "cursor"),
+        (vec!["goose.exe"], "goose"),
+    ] {
+        assert_eq!(matchers::identify(&p(&argv)).map(|a| a.name), Some(agent), "{argv:?}");
+    }
+}
+
+#[test]
+fn package_mentions_and_supervisors_are_not_sessions() {
+    for argv in [
+        vec!["rg", "@google/gemini-cli"],
+        vec!["node", "server.js", "@github/copilot"],
+        vec!["node", "-e", "require('@google/gemini-cli')"],
+        vec!["node", "/npm/@github/copilot-fake/index.js"],
+        vec!["node", "/npm/fake@github/copilot/index.js"],
+        vec!["python", "-c", "import aider"],
+        vec!["npx", "@google/gemini-cli"],
+        vec!["uv", "run", "aider"],
+        vec!["uvx", "aider"],
+    ] { assert!(matchers::identify(&p(&argv)).is_none(), "{argv:?}"); }
+}
+
+#[test]
+fn copilot_metadata_requests_child_events_and_resume() {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("waid-copilot-reader-{}.jsonl", std::process::id()));
+    std::fs::write(&path, concat!(
+        "{\"type\":\"session.start\",\"data\":{\"sessionId\":\"copilot-test\",\"selectedModel\":\"model-one\",\"context\":{\"cwd\":\"D:/fixture/project\"}}}\n",
+        "{\"type\":\"user.message\",\"id\":\"request-one\",\"timestamp\":\"2026-09-06T00:00:00Z\",\"data\":{\"content\":\"original task\"}}\n",
+        "{\"type\":\"session.idle\",\"timestamp\":\"2026-09-06T00:00:10Z\",\"data\":{}}\n"
+    )).unwrap();
+    let first = transcript::read(&path, 100).unwrap();
+    assert_eq!(first.session_id.as_deref(), Some("copilot-test"));
+    assert_eq!(first.model.as_deref(), Some("model-one"));
+    assert_eq!(first.cwd.as_deref(), Some(std::path::Path::new("D:/fixture/project")));
+    assert_eq!(first.event_state, Some(State::Waiting));
+    let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    writeln!(f, "{}", r#"{"type":"session.model_change","data":{"newModel":"model-two"}}"#).unwrap();
+    writeln!(f, "{}", r#"{"type":"user.message","agentId":"child","data":{"content":"child request"}}"#).unwrap();
+    writeln!(f, "{}", r#"{"type":"session.error","agentId":"child","data":{"message":"child error"}}"#).unwrap();
+    let metadata = transcript::read(&path, 200).unwrap();
+    assert_eq!(metadata.model.as_deref(), Some("model-two"));
+    assert_eq!(metadata.current_prompt.as_deref(), Some("original task"));
+    assert_eq!(metadata.request_marker, first.request_marker);
+    assert_eq!(metadata.last_event_at, first.last_event_at);
+    assert_eq!(metadata.event_state, Some(State::Waiting));
+    writeln!(f, "{}", r#"{"type":"session.shutdown","data":{"shutdownType":"routine"}}"#).unwrap();
+    assert_eq!(transcript::read(&path, 201).unwrap().event_state, Some(State::Idle));
+    write!(f, "{}", r#"{"type":"user.message","id":"request-two","data":{"content":"new task"}"#).unwrap();
+    assert_eq!(transcript::read(&path, 202).unwrap().event_state, Some(State::Idle));
+    writeln!(f, "}}").unwrap();
+    let resumed = transcript::read(&path, 203).unwrap();
+    assert_eq!(resumed.event_state, Some(State::Working));
+    assert_eq!(resumed.current_prompt.as_deref(), Some("new task"));
+    assert_eq!(resumed.first_prompt.as_deref(), Some("original task"));
+    assert_ne!(resumed.request_marker, first.request_marker);
+    drop(f);
+    std::fs::write(&path, "{\"type\":\"session.start\",\"data\":{\"sessionId\":\"replaced\"}}\n").unwrap();
+    let replaced = transcript::read(&path, 204).unwrap();
+    assert_eq!(replaced.session_id.as_deref(), Some("replaced"));
+    assert!(replaced.current_prompt.is_none());
+    assert!(replaced.model.is_none());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn copilot_turn_end_is_not_session_completion() {
+    for (event, expected) in [
+        (r#"{"type":"assistant.turn_end","data":{}}"#, State::Working),
+        (r#"{"type":"tool.execution_complete","data":{"success":false}}"#, State::Working),
+        (r#"{"type":"session.idle","data":{}}"#, State::Waiting),
+        (r#"{"type":"session.idle","data":{"aborted":true}}"#, State::Idle),
+        (r#"{"type":"abort","data":{"reason":"user_initiated"}}"#, State::Idle),
+        (r#"{"type":"session.error","data":{}}"#, State::Error),
+        (r#"{"type":"session.shutdown","data":{"shutdownType":"error"}}"#, State::Error),
+    ] { assert_eq!(transcript::event_state(&json::parse(event).unwrap()), Some(expected)); }
 }

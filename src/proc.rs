@@ -21,11 +21,6 @@ pub struct Process {
     pub cwd: Option<PathBuf>,
 }
 
-impl Process {
-    pub fn cmdline(&self) -> String {
-        self.argv.join(" ")
-    }
-}
 
 pub fn list() -> Vec<Process> {
     #[cfg(windows)]

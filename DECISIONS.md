@@ -305,3 +305,9 @@ request_marker는 정리된 사용자 요청 본문과 해당 이벤트의 times
 항상 위와 투명도를 waid 설정에 저장한다. 투명도는 0~60%(불투명도 100~40%)이며 손상되거나 범위를 벗어난 값은 선명한 기본값으로 복원한다. 먼저 layered 스타일·alpha를 적용한 다음 창 순서를 설정한다. Windows가 관리하는 TOPMOST 비트를 오래된 확장 스타일 값으로 덮어쓰지 않는다. 레이어 스타일과 저장된 항상 위 속성은 창 생성 시점에 함께 지정한다. 종료된 스레드의 WM_QUIT 영향을 섞지 않도록 재시작 검사는 새 UI 스레드에서 3회 수행한다.
 
 실제 화면의 슬라이더 PREPAINT 사각형이 비어 있어 잘리는 문제를 확인했다. 컨트롤의 실제 client rect로 그리도록 수정하고 메모리 DC의 픽셀로 회귀 검사한다. GUI 테스트는 프로세스의 창 활성화·데스크톱 순서를 공유하므로 순서대로 실행한다. 실행 중인 동봉 코어가 원본과 같은 경우 빌드 스크립트가 재기록하지 않아 Windows 파일 잠금을 피한다.
+
+## D31 — Windows 인터프리터 감지와 Copilot 세션 판독 (2026-09-06)
+
+Tool Help 뒤에 알려진 CLI/인터프리터만 대상으로 NtQueryInformationProcess의 ProcessCommandLineInformation을 조회한다. 동적 함수 조회, 최대 128 KiB 버퍼, 반환 포인터 범위 확인, CommandLineToArgvW 파싱, RAII 핸들 해제를 사용한다. VM 쓰기·디버그 권한·외부 셸 폴링은 없다. API/권한 실패는 이름 감지로 폴백한다. 구현 근거: [Microsoft API 안내](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntqueryinformationprocess), [PHNT 정보 클래스](https://github.com/winsiderss/phnt/blob/master/ntpsapi.h).
+
+패키지 문자열을 명령 전체에서 찾던 오탐을 제거하고 런처의 실행 진입점에만 한정한다. Windows 경로 구분자·대소문자, Python -m aider를 지원한다. Copilot은 기존 bounded JSONL 리더와 공통 세션 데이터 모델을 재사용한다. 프로세스만 감지되는 나머지 제품의 로그 판독을 구현했다고 주장하지 않는다. 네이티브 UI·템플릿에는 제품별 상태 로직을 추가하지 않는다.
