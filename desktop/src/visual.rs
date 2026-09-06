@@ -8,6 +8,8 @@ use windows_sys::Win32::{
 
 pub struct Visuals {
     token: usize,
+    pub app: HICON,
+    pub app_small: HICON,
     pub codex: HICON,
     pub claude: HICON,
 }
@@ -20,8 +22,11 @@ impl Visuals {
                 ..Default::default()
             };
             GdiplusStartup(&mut token, &input, null_mut());
+            let logo = include_bytes!("../assets/waid.png");
             Self {
                 token,
+                app: png_icon_sized(logo, GetSystemMetrics(SM_CXICON)),
+                app_small: png_icon_sized(logo, GetSystemMetrics(SM_CXSMICON)),
                 codex: png_icon(include_bytes!("../assets/openai.png")),
                 claude: ico_icon(include_bytes!("../assets/claude.ico")),
             }
@@ -39,7 +44,7 @@ impl Visuals {
 impl Drop for Visuals {
     fn drop(&mut self) {
         unsafe {
-            for icon in [self.codex, self.claude] {
+            for icon in [self.app, self.app_small, self.codex, self.claude] {
                 if !icon.is_null() {
                     DestroyIcon(icon);
                 }
@@ -51,14 +56,17 @@ impl Drop for Visuals {
     }
 }
 unsafe fn png_icon(data: &[u8]) -> HICON {
+    png_icon_sized(data, 96)
+}
+unsafe fn png_icon_sized(data: &[u8], size: i32) -> HICON {
     let mut bytes = data.to_vec();
     CreateIconFromResourceEx(
         bytes.as_mut_ptr(),
         bytes.len() as u32,
         1,
         0x00030000,
-        96,
-        96,
+        size.max(16),
+        size.max(16),
         LR_DEFAULTCOLOR,
     )
 }

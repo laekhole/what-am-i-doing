@@ -1,6 +1,8 @@
-# Harness marks
+# App and harness marks
 
-These marks identify the harness that produced a session; they are not waid branding or model indicators. They are embedded in the app and require no network access at runtime.
+`waid.png` is waid's own logo, resized to 256px from `assets/waid_logo.png` in the repository root and embedded in the app as its window and taskbar icon. `../icons/icon.ico`, built from the same source, is the installer icon.
+
+The marks below identify the harness that produced a session; they are not waid branding or model indicators. They are embedded in the app and require no network access at runtime.
 
 - OpenAI mark for Codex: [OpenAI's official GitHub organization](https://github.com/openai), original [organization avatar](https://avatars.githubusercontent.com/u/14957082?v=4), downloaded 2026-09-06 as openai.png. See [OpenAI brand guidelines](https://openai.com/brand/).
 - Claude mark for Claude Code: original [Claude favicon](https://claude.ai/favicon.ico), downloaded 2026-09-06 as claude.ico. See [Anthropic's official media resources](https://www.anthropic.com/news).

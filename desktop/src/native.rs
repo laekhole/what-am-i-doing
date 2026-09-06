@@ -1402,6 +1402,7 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
     let wc = WNDCLASSW {
         lpfnWndProc: Some(window_proc),
         hInstance: instance,
+        hIcon: s.visuals.app,
         hCursor: LoadCursorW(null_mut(), IDC_ARROW),
         lpszClassName: class.as_ptr(),
         ..Default::default()
@@ -1436,6 +1437,9 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
     if hwnd.is_null() {
         return Err(io::Error::last_os_error());
     }
+    // The class icon only covers windows created after registration; set both sizes here.
+    SendMessageW(hwnd, WM_SETICON, ICON_BIG as usize, s.visuals.app as isize);
+    SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, s.visuals.app_small as isize);
     let corner: u32 = DWMWCP_ROUND as u32;
     DwmSetWindowAttribute(
         hwnd,
@@ -1806,9 +1810,15 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let state = Window::new(Updates::default(), path.clone(), true);
         unsafe {
+            assert!(!state.visuals.app.is_null(), "waid logo must decode");
             assert!(!state.visuals.codex.is_null(), "OpenAI logo must decode");
             assert!(!state.visuals.claude.is_null(), "Claude logo must decode");
             let hwnd = create_window(&state).unwrap();
+            assert_ne!(
+                send(hwnd, WM_GETICON, ICON_SMALL as usize, 0),
+                0,
+                "window carries the waid icon"
+            );
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             assert_eq!(
                 GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 & WS_MAXIMIZEBOX,

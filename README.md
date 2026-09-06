@@ -1,3 +1,5 @@
+<img src="assets/waid_logo.png" alt="waid 로고" width="120" align="right">
+
 # waid — what am I doing?
 
 여러 코딩 AI 세션의 **현재 작업, 프로젝트, 에이전트·모델, 마지막으로 확인한 상태**를 한 화면에서 보는 Windows 앱입니다. Claude Code·Codex·Copilot CLI 로그를 읽으며 에이전트에 명령을 보내지 않습니다. Kanboard나 일정 관리 없이 독립 실행합니다.
