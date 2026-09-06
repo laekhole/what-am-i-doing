@@ -2,12 +2,18 @@ Unicode true
 !include "MUI2.nsh"
 !include "x64.nsh"
 Name "waid"
-OutFile "${__FILEDIR__}\target\release\bundle\nsis\waid_0.5.2_x64-setup.exe"
+!ifndef WAID_VERSION
+    !error "Use desktop/build.ps1 to supply WAID_VERSION."
+!endif
+!ifndef WAID_RELEASE_DIR
+    !error "Use desktop/build.ps1 to supply WAID_RELEASE_DIR."
+!endif
+OutFile "${WAID_RELEASE_DIR}\bundle\waid_${WAID_VERSION}_x64-setup.exe"
 InstallDir "$LOCALAPPDATA\waid"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
-!define MUI_ICON "${__FILEDIR__}\icons\icon.ico"
-!define MUI_UNICON "${__FILEDIR__}\icons\icon.ico"
+!define MUI_ICON "${__FILEDIR__}\..\assets\waid.ico"
+!define MUI_UNICON "${__FILEDIR__}\..\assets\waid.ico"
 !define MUI_ABORTWARNING
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -29,12 +35,12 @@ FunctionEnd
 Section "waid"
     SetShellVarContext current
     SetOutPath "$INSTDIR"
-    File "${__FILEDIR__}\target\release\waid-desktop.exe"
-    File "${__FILEDIR__}\target\release\waid.exe"
+    File "${WAID_RELEASE_DIR}\waid-desktop.exe"
+    File "${WAID_RELEASE_DIR}\waid.exe"
     WriteUninstaller "$INSTDIR\uninstall.exe"
     CreateShortcut "$SMPROGRAMS\waid.lnk" "$INSTDIR\waid-desktop.exe"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\waid" "DisplayName" "waid"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\waid" "DisplayVersion" "0.5.2"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\waid" "DisplayVersion" "${WAID_VERSION}"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\waid" "InstallLocation" "$INSTDIR"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\waid" "UninstallString" '"$INSTDIR\uninstall.exe"'
     WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\waid" "NoModify" 1
