@@ -30,6 +30,7 @@ waid 0.5.0 — what am I doing?
 
 옵션:
       --watch           지속 갱신 (--html 이면 로컬 서버)
+      --history         날짜 제한 없이 기존 세션도 수집
       --template FILE   HTML 템플릿 (기본: 내장)
       --eject           기본 템플릿을 stdout 으로 꺼낸다
       --keys            템플릿에서 쓸 수 있는 키 목록
@@ -50,6 +51,7 @@ struct Args {
     template: Option<String>,
     port: u16,
     watch: bool,
+    history: bool,
     interval: u64,
     agent: Option<String>,
     waiting_only: bool,
@@ -64,6 +66,7 @@ fn parse_args() -> Result<Args, String> {
         template: None,
         port: 7423,
         watch: false,
+        history: false,
         interval: 2,
         agent: None,
         waiting_only: false,
@@ -102,6 +105,7 @@ fn parse_args() -> Result<Args, String> {
                 a.port = v.parse::<u16>().map_err(|_| "--port 는 0..65535 여야 합니다")?;
             }
             "--watch" => a.watch = true,
+            "--history" => a.history = true,
             "--waiting" => a.waiting_only = true,
             "--color" => a.color = Some(true),
             "--no-color" => a.color = Some(false),
@@ -125,7 +129,7 @@ fn parse_args() -> Result<Args, String> {
 
 fn snapshot(args: &Args) -> (Vec<session::Session>, i64) {
     let now = time::now();
-    let mut s = session::collect(now);
+    let mut s = session::collect_with_history(now, args.history);
     if let Some(name) = &args.agent {
         s.retain(|x| x.agent.name == name);
     }
@@ -168,9 +172,10 @@ fn main() {
         };
         let agent = args.agent.clone();
         let waiting_only = args.waiting_only;
+        let history = args.history;
         let snap = std::sync::Arc::new(move || {
             let now = time::now();
-            let mut s = session::collect(now);
+            let mut s = session::collect_with_history(now, history);
             if let Some(n) = &agent {
                 s.retain(|x| x.agent.name == n);
             }
@@ -265,7 +270,7 @@ fn doctor() {
     let procfs = std::path::Path::new("/proc/self/cmdline").exists();
     println!(
         "프로세스 열거   {}",
-        if cfg!(windows) { "tasklist /NH /FO CSV (cwd 없음, watch에서 비동기 갱신)" }
+        if cfg!(windows) { "Windows Tool Help API (첫 조회부터 수집, cwd·인자 없음)" }
         else if procfs { "/proc (정확: cwd 확보 가능)" } else { "ps 폴백 (cwd 없음)" }
     );
 
@@ -309,9 +314,14 @@ fn doctor() {
     }
 
     println!("\n에이전트");
-    // doctor는 진단 정확성을 위해 기다린다. 첫 화면용 수집은 대기하지 않는다.
     #[cfg(windows)]
-    let procs = proc::from_tasklist();
+    let procs = match proc::windows_snapshot() {
+        Ok(processes) => processes,
+        Err(error) => {
+            println!("  ! 프로세스 열거 실패: {error}");
+            Vec::new()
+        }
+    };
     #[cfg(not(windows))]
     let procs = proc::list();
     for d in adapters::table() {

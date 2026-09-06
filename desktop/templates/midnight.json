@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "Midnight",
+  "font_size": 13,
+  "padding": 10,
+  "line_gap": 3,
+  "fields": [
+    "task",
+    "status",
+    "project",
+    "agent",
+    "model"
+  ],
+  "colors": {
+    "background": "#101827",
+    "surface": "#172238",
+    "text": "#F2F6FF",
+    "muted": "#C1CCE0",
+    "selection": "#283C59",
+    "accent": "#A7D6FF"
+  },
+  "icons": {
+    "waiting": "☀",
+    "working": "▶",
+    "error": "⚠",
+    "idle": "☾",
+    "done": "✓",
+    "unknown": "?"
+  },
+  "state_colors": {
+    "waiting": "#FFD08A",
+    "working": "#98E0AF",
+    "error": "#FFAFBC",
+    "idle": "#C1CCE0",
+    "done": "#98E0AF",
+    "unknown": "#C1CCE0"
+  },
+  "compact": true
+}

@@ -188,9 +188,18 @@ fn builtins() -> Vec<Def> {
     BUILTIN
         .iter()
         .map(|(name, display, exec, markers, dir)| {
-            let transcript_dirs: Vec<PathBuf> = dir
+            let mut transcript_dirs: Vec<PathBuf> = dir
                 .map(|d| home_candidates().into_iter().map(|h| h.join(d)).collect())
                 .unwrap_or_default();
+            // Include the explicitly configured Codex home alongside other local sessions.
+            // User adapters still replace this built-in definition below.
+            if *name == "codex" {
+                if let Some(root) = std::env::var_os("CODEX_HOME").filter(|root| !root.is_empty()) {
+                    transcript_dirs.push(PathBuf::from(root).join("sessions"));
+                }
+            }
+            transcript_dirs.sort();
+            transcript_dirs.dedup();
             Def {
                 agent: Agent {
                     name,

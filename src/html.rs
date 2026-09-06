@@ -20,6 +20,7 @@ fn state_label(st: State) -> &'static str {
         State::Error => "오류",
         State::Idle => "유휴",
         State::Done => "완료",
+        State::Unknown => "미확인",
     }
 }
 
@@ -30,6 +31,7 @@ fn state_symbol(st: State) -> &'static str {
         State::Error => "✗",
         State::Idle => "○",
         State::Done => "✓",
+        State::Unknown => "?",
     }
 }
 
@@ -76,6 +78,7 @@ fn session_ctx(x: &Session, now: i64) -> Ctx {
         State::Error,
         State::Idle,
         State::Done,
+        State::Unknown,
     ] {
         c.insert(format!("status.{}", st.id()), b(x.state == st));
     }
@@ -109,6 +112,7 @@ pub fn context(sessions: &[Session], now: i64) -> Ctx {
         State::Error,
         State::Idle,
         State::Done,
+        State::Unknown,
     ] {
         root.insert(format!("count.{}", st.id()), s(count(st).to_string()));
         root.insert(format!("any.{}", st.id()), b(count(st) > 0));

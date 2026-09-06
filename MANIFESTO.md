@@ -1,5 +1,7 @@
 # waid — 프로젝트 매니페스트 (개정 3판)
 
+> 제품 범위와 개발 순서는 2026-09-06 [PRODUCT.md](PRODUCT.md)가 우선합니다. 아래의 이전 비목표는 사용자 템플릿·Kanboard 확장을 금지하는 근거로 사용하지 않습니다.
+
 > **what am I doing?**
 > 에이전트 다섯 개를 돌려놓고 "내가 지금 뭘 하고 있더라" 하는 그 순간을 위한 도구.
 > 저장소: `what-am-i-doing` · 바이너리·크레이트: `waid`
@@ -477,7 +479,7 @@ Claude Code + Codex 감지, 다섯 컬럼, 표·JSON·HTML 출력, `theme.toml`,
 - 실행 환경별 루트 자동 탐지: `%USERPROFILE%`, `\\wsl$\<배포판>\home\<user>`, `/mnt/c/Users/<user>`
 - `HOME`이 없으면 `USERPROFILE`로 폴백
 - 프로세스 열거를 생존 확인용으로 강등, 없어도 표가 채워지도록
-- Windows 프로세스 열거는 `tasklist /NH /FO CSV` (basename만 필요하므로 충분)
+- Windows 프로세스 열거는 Tool Help API 직접 호출 (이름·PID; cwd·인자는 알 수 없음)
 - 에이전트 자체 상태 파일을 1순위로, mtime 추론을 폴백으로
 
 **v0.5 — Windows 앱**

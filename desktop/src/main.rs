@@ -10,12 +10,23 @@ use std::{
 
 #[cfg(windows)]
 mod native;
+mod ui;
+#[cfg(windows)]
+mod visual;
 
 type Updates = Arc<Mutex<Option<Result<Vec<Row>, String>>>>;
-const MAX_SNAPSHOT: u64 = 2 * 1024 * 1024;
+const MAX_SNAPSHOT: u64 = 16 * 1024 * 1024;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Row {
+    agent_id: String,
+    request_marker: String,
+    summary: String,
+    cwd: String,
+    since: String,
+    evidence: String,
+    task_source: String,
+    auxiliary: bool,
     id: String,
     title: String,
     agent: String,
@@ -27,13 +38,24 @@ struct Row {
 impl Row {
     fn status(&self) -> &str {
         match self.state.as_str() {
-            "waiting" => "내 차례", "working" => "작업 중", "idle" => "유휴",
-            "done" => "완료", "error" => "오류", _ => "—",
+            "waiting" => "내 차례",
+            "working" => "작업 중",
+            "idle" => "중단 / 유휴",
+            "done" => "종결",
+            "error" => "오류",
+            _ => "미확인",
         }
     }
 
     fn accessible_text(&self) -> String {
-        format!("{} · {}\n{}\n{} · {}", self.title, self.status(), self.task, self.agent, self.model)
+        format!(
+            "{} · {}\n{}\n{} · {}",
+            self.title,
+            self.status(),
+            self.task,
+            self.agent,
+            self.model
+        )
     }
 }
 
@@ -54,16 +76,26 @@ impl Drop for Core {
 
 fn start_core(exe: &Path) -> io::Result<(Core, Updates)> {
     let mut command = Command::new(exe);
-    command.args(["--json", "--watch"])
-        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    command
+        .args(["--json", "--watch", "--history"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
     let child = command.spawn()?;
-    let mut core = Core { child, reader: None };
-    let stdout = core.child.stdout.take().ok_or_else(|| io::Error::other("missing core stdout"))?;
+    let mut core = Core {
+        child,
+        reader: None,
+    };
+    let stdout = core
+        .child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("missing core stdout"))?;
     let updates = Updates::default();
     let output = Arc::clone(&updates);
     core.reader = Some(std::thread::spawn(move || {
@@ -71,11 +103,16 @@ fn start_core(exe: &Path) -> io::Result<(Core, Updates)> {
         loop {
             let (message, ended) = match read_snapshot(&mut reader) {
                 Ok(Some(rows)) => (Ok(rows), false),
-                Ok(None) => (Err("코어가 종료됐습니다. 앱을 다시 실행하세요.".into()), true),
+                Ok(None) => (
+                    Err("코어가 종료됐습니다. 앱을 다시 실행하세요.".into()),
+                    true,
+                ),
                 Err(e) => (Err(format!("상태를 읽지 못했습니다: {e}")), true),
             };
             *output.lock().unwrap_or_else(|e| e.into_inner()) = Some(message);
-            if ended { break; }
+            if ended {
+                break;
+            }
         }
     }));
     Ok((core, updates))
@@ -87,7 +124,10 @@ fn read_snapshot(reader: &mut impl BufRead) -> io::Result<Option<Vec<Row>>> {
         return Ok(None);
     }
     if line.len() as u64 > MAX_SNAPSHOT {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "snapshot exceeds 2 MiB"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "snapshot exceeds 16 MiB",
+        ));
     }
     snapshot_rows(&line).map(Some)
 }
@@ -95,34 +135,66 @@ fn read_snapshot(reader: &mut impl BufRead) -> io::Result<Option<Vec<Row>>> {
 fn snapshot_rows(bytes: &[u8]) -> io::Result<Vec<Row>> {
     let snapshot: serde_json::Value = serde_json::from_slice(bytes)?;
     if snapshot["schema"] != 1 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "unsupported schema"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unsupported schema",
+        ));
     }
-    let sessions = snapshot["sessions"].as_array()
+    let sessions = snapshot["sessions"]
+        .as_array()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing sessions"))?;
-    Ok(sessions.iter().map(|s| {
-        let inferred = if s["task"]["confidence"] == "inferred" { "≈ " } else { "" };
-        Row {
-            id: field(&s["id"], 128), title: field(&s["title"], 160),
-            agent: field(&s["agent"]["display"], 48), model: field(&s["llm"]["display"], 80),
-            task: format!("{inferred}{}", field(&s["task"]["text"], 200)),
-            state: field(&s["status"]["state"], 16),
-        }
-    }).collect())
+    Ok(sessions
+        .iter()
+        .map(|s| {
+            let inferred = if s["task"]["confidence"] == "inferred" {
+                "≈ "
+            } else {
+                ""
+            };
+            Row {
+                request_marker: s["request_marker"].as_str().unwrap_or("").to_string(),
+                summary: field(&s["summary"], 4000),
+                cwd: field(&s["cwd"], 1000),
+                since: field(&s["status"]["since"], 48),
+                evidence: field(&s["status"]["evidence"], 48),
+                task_source: field(&s["task"]["source"], 48),
+                auxiliary: s["auxiliary"].as_bool().unwrap_or(false),
+                id: field(&s["id"], 128),
+                title: field(&s["title"], 160),
+                agent_id: field(&s["agent"]["name"], 48),
+                agent: field(&s["agent"]["display"], 48),
+                model: field(&s["llm"]["display"], 80),
+                task: format!("{inferred}{}", field(&s["task"]["text"], 4000)),
+                state: field(&s["status"]["state"], 16),
+            }
+        })
+        .collect())
 }
 
 fn field(value: &serde_json::Value, limit: usize) -> String {
-    let text = value.as_str().unwrap_or("").replace('\0', "")
-        .split_whitespace().collect::<Vec<_>>().join(" ");
-    if text.is_empty() { return "—".into(); }
+    let text = value
+        .as_str()
+        .unwrap_or("")
+        .replace('\0', "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if text.is_empty() {
+        return "—".into();
+    }
     let mut chars = text.chars();
     let mut shortened: String = chars.by_ref().take(limit).collect();
-    if chars.next().is_some() { shortened.push('…'); }
+    if chars.next().is_some() {
+        shortened.push('…');
+    }
     shortened
 }
 
 #[cfg(windows)]
 fn main() {
-    if let Err(error) = native::run() { native::show_error(&error.to_string()); }
+    if let Err(error) = native::run() {
+        native::show_error(&error.to_string());
+    }
 }
 
 #[cfg(not(windows))]
@@ -135,18 +207,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn harness_identity_is_separate_from_model_and_display_name() {
+        let value = serde_json::json!({"schema":1,"sessions":[
+            {"agent":{"name":"claude","display":"My coding tool"},"llm":{"display":"gpt-test"}},
+            {"agent":{"name":"codex","display":"Custom alias"},"llm":{"display":"claude-test"}},
+            {"agent":{"name":"custom","display":"Codex"},"llm":{"display":"gpt-test"}}
+        ]});
+        let rows = snapshot_rows(value.to_string().as_bytes()).unwrap();
+        assert_eq!(rows[0].agent_id, "claude");
+        assert_eq!(rows[1].agent_id, "codex");
+        assert_eq!(rows[2].agent_id, "custom");
+    }
+    #[test]
     fn five_fields_preserve_unknowns_and_inference() {
         let value = serde_json::json!({"schema":1,"sessions":[{
             "title":"repo\nmain", "agent":{"display":"Codex"}, "llm":{"display":null},
             "task":{"text":"한글\t작업", "confidence":"inferred"}, "status":{"state":"waiting"}
         }, {}]});
         let rows = snapshot_rows(value.to_string().as_bytes()).unwrap();
-        assert_eq!(rows[0].accessible_text(), "repo main · 내 차례\n≈ 한글 작업\nCodex · —");
-        assert_eq!(rows[1].accessible_text(), "— · —\n—\n— · —");
+        assert_eq!(
+            rows[0].accessible_text(),
+            "repo main · 내 차례\n≈ 한글 작업\nCodex · —"
+        );
+        assert_eq!(rows[1].accessible_text(), "— · 미확인\n—\n— · —");
         assert_eq!(field(&serde_json::json!("가나다"), 2), "가나…");
         assert_eq!(field(&serde_json::json!(" \n "), 2), "—");
         assert_eq!(field(&serde_json::json!("\0"), 2), "—");
-        assert!(snapshot_rows(br#"{"schema":1,"sessions":[]}"#).unwrap().is_empty());
+        assert!(snapshot_rows(br#"{"schema":1,"sessions":[]}"#)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -163,18 +252,47 @@ mod tests {
     #[test]
     fn bundled_core_streams_and_stops_with_its_owner() {
         let test_exe = std::env::current_exe().unwrap();
-        let exe = test_exe.parent().unwrap().parent().unwrap()
+        let exe = test_exe
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
             .join(if cfg!(windows) { "waid.exe" } else { "waid" });
         let (core, updates) = start_core(&exe).unwrap();
+        let (mut independent, _) = start_core(&exe).unwrap();
+        #[cfg(windows)]
+        let owned_handle = {
+            use std::os::windows::io::AsHandle;
+            core.child.as_handle().try_clone_to_owned().unwrap()
+        };
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
             if let Some(rows) = updates.lock().unwrap().take() {
                 rows.expect("core must produce a valid snapshot");
                 break;
             }
-            assert!(std::time::Instant::now() < deadline, "core produced no snapshot");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "core produced no snapshot"
+            );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         drop(core);
+        assert!(
+            independent.child.try_wait().unwrap().is_none(),
+            "another core must survive"
+        );
+        #[cfg(windows)]
+        unsafe {
+            use std::os::windows::io::AsRawHandle;
+            extern "system" {
+                fn WaitForSingleObject(handle: *mut std::ffi::c_void, milliseconds: u32) -> u32;
+            }
+            assert_eq!(
+                WaitForSingleObject(owned_handle.as_raw_handle(), 1000),
+                0,
+                "owned child must exit"
+            );
+        }
     }
 }

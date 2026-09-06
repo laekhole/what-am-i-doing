@@ -76,3 +76,108 @@ fn native_binary_serves_transcript_without_process_and_streams_updates() {
     }
     assert!(request(address, "/snapshot.json").contains("\"state\": \"working\""));
 }
+
+#[test]
+fn configured_codex_home_streams_turn_transitions_and_partial_writes() {
+    let suffix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let mut fixture = Fixture { dir: std::env::temp_dir().join(format!("waid-codex-{}-{suffix}", std::process::id())), child: None };
+    let home = fixture.dir.join("home");
+    let codex = fixture.dir.join("한글 Codex home");
+    let sessions = codex.join("sessions/2026/09/06");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&sessions).unwrap();
+    let log = sessions.join("session.jsonl");
+    fs::write(&log, concat!(
+        "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"project\"}}\n",
+        "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"실제 작업 검증\"}]}}\n",
+        "{\"type\":\"turn_context\",\"payload\":{\"model\":\"model-one\"}}\n",
+        "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n",
+    )).unwrap();
+    fixture.child = Some(Command::new(env!("CARGO_BIN_EXE_waid"))
+        .args(["--agent", "codex", "--json", "--watch", "--interval", "1"])
+        .env("HOME", &home).env("USERPROFILE", &home).env("CODEX_HOME", &codex)
+        .env("WAID_ADAPTERS", fixture.dir.join("no-adapters"))
+        .stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap());
+    let stdout = fixture.child.as_mut().unwrap().stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if tx.send(line.unwrap()).is_err() { break; }
+        }
+    });
+    let expect = |state: &str, model: &str| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(6);
+        loop {
+            let line = rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .expect("core must emit the expected state within six seconds");
+            if line.contains(&format!("\"state\":\"{state}\"")) && line.contains(model) {
+                assert!(line.contains("실제 작업 검증"));
+                assert!(line.contains("\"title\":\"project\""));
+                assert!(line.contains("\"confidence\":\"inferred\""));
+                assert!(line.contains("\"pid\":null"));
+                break;
+            }
+        }
+    };
+    expect("waiting", "model-one");
+    let mut output = fs::OpenOptions::new().append(true).open(&log).unwrap();
+    writeln!(output, "{}", r#"{"type":"event_msg","payload":{"type":"task_started"}}"#).unwrap();
+    writeln!(output, "{}", r#"{"type":"turn_context","payload":{"model":"model-two"}}"#).unwrap();
+    output.flush().unwrap();
+    expect("working", "model-two");
+    write!(output, "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_").unwrap();
+    output.flush().unwrap();
+    expect("working", "model-two"); // Incomplete records must not invent a state.
+    writeln!(output, "complete\"}}}}").unwrap();
+    output.flush().unwrap();
+    expect("waiting", "model-two");
+    writeln!(output, "{}", r#"{"type":"event_msg","payload":{"type":"turn_aborted"}}"#).unwrap();
+    output.flush().unwrap();
+    expect("idle", "model-two");
+    writeln!(output, "{}", r#"{"type":"error","message":"fixture failure"}"#).unwrap();
+    output.flush().unwrap();
+    expect("error", "model-two");
+    writeln!(output, "{}", r#"{"type":"event_msg","payload":{"type":"task_started"}}"#).unwrap();
+    output.flush().unwrap();
+    expect("working", "model-two");
+}
+
+
+#[test]
+fn history_includes_old_idle_and_metadata_only_logs_without_completing_them() {
+    let suffix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let fixture = Fixture { dir: std::env::temp_dir().join(format!("waid-history-{}-{suffix}", std::process::id())), child: None };
+    let adapters = fixture.dir.join("adapters");
+    let logs = fixture.dir.join("logs");
+    fs::create_dir_all(&adapters).unwrap();
+    fs::create_dir_all(&logs).unwrap();
+    fs::write(adapters.join("fixture.toml"), format!(
+        "[adapter]\nname = \"fixture\"\ndisplay = \"History Fixture\"\nexec = [\"never-run-waid-fixture\"]\n[transcript]\ndir = \"{}\"\n",
+        logs.to_string_lossy().replace('\\', "/")
+    )).unwrap();
+    for (name, event) in [("old-idle", "turn_aborted"), ("old-waiting", "task_complete")] {
+        let path = logs.join(format!("{name}.jsonl"));
+        fs::write(&path, format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{name}\",\"cwd\":\"history-project\"}}}}\n{{\"type\":\"response_item\",\"timestamp\":\"2020-01-01T00:00:00Z\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":\"{name}\"}}]}}}}\n{{\"type\":\"event_msg\",\"timestamp\":\"2020-01-01T00:00:01Z\",\"payload\":{{\"type\":\"{event}\"}}}}\n{{\"type\":\"turn_context\",\"payload\":{{\"model\":\"metadata-only\"}}}}\n"
+        )).unwrap();
+        if name == "old-idle" {
+            fs::File::options().write(true).open(path).unwrap()
+                .set_times(fs::FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(1_577_836_801))).unwrap();
+        }
+    }
+    let run = |history| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_waid"));
+        command.args(["--json", "--agent", "fixture"]).env("WAID_ADAPTERS", &adapters);
+        if history { command.arg("--history"); }
+        let output = command.output().unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let recent = run(false);
+    assert!(!recent.contains("old-idle") && !recent.contains("old-waiting"));
+    let history = run(true);
+    assert!(history.contains("old-idle") && history.contains("old-waiting"));
+    assert!(history.contains("\"state\": \"idle\"") && history.contains("\"state\": \"waiting\""));
+    assert!(!history.contains("\"state\": \"done\""));
+    assert!(history.contains("2020-01-01T00:00:01Z"));
+}

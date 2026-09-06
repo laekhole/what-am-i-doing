@@ -64,3 +64,64 @@ pub fn ago(seconds: i64) -> String {
         s => format!("{}d", s / 86_400),
     }
 }
+
+/// Parse the timestamp envelope used by transcript events (RFC 3339).
+/// Fractions are validated and truncated to the snapshot's second precision.
+pub fn from_iso8601(text: &str) -> Option<i64> {
+    let b = text.as_bytes();
+    let number = |from: usize, to: usize| -> Option<i64> {
+        b.get(from..to)?.iter().try_fold(0i64, |n, c| {
+            c.is_ascii_digit().then(|| n * 10 + (c - b'0') as i64)
+        })
+    };
+    if b.len() < 20 || b[4] != b'-' || b[7] != b'-'
+        || !matches!(b[10], b'T' | b't') || b[13] != b':' || b[16] != b':' { return None; }
+    let (year, month, day) = (number(0, 4)?, number(5, 7)?, number(8, 10)?);
+    let (hour, minute, second) = (number(11, 13)?, number(14, 16)?, number(17, 19)?);
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month { 2 => if leap { 29 } else { 28 }, 4 | 6 | 9 | 11 => 30, 1..=12 => 31, _ => return None };
+    if !(1..=days).contains(&day) || hour > 23 || minute > 59 || second > 59 { return None; }
+    let mut zone = 19;
+    if b.get(zone) == Some(&b'.') {
+        zone += 1;
+        let start = zone;
+        while b.get(zone).is_some_and(u8::is_ascii_digit) { zone += 1; }
+        if zone == start { return None; }
+    }
+    let offset = match b.get(zone)? {
+        b'Z' | b'z' if b.len() == zone + 1 => 0,
+        sign @ (b'+' | b'-') if b.len() == zone + 6 && b[zone + 3] == b':' => {
+            let (h, m) = (number(zone + 1, zone + 3)?, number(zone + 4, zone + 6)?);
+            if h > 23 || m > 59 { return None; }
+            (h * 3600 + m * 60) * if *sign == b'+' { 1 } else { -1 }
+        }
+        _ => return None,
+    };
+    // Inverse of civil_from_days, including the proleptic Gregorian leap-year rule.
+    let y = year - i64::from(month <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let shifted_month = month + if month > 2 { -3 } else { 9 };
+    let doy = (153 * shifted_month + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some((era * 146097 + doe - 719468) * 86400 + hour * 3600 + minute * 60 + second - offset)
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::*;
+    #[test]
+    fn parses_event_timestamps_without_timezone_drift() {
+        assert_eq!(from_iso8601("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(from_iso8601("1970-01-01T09:00:00.123456+09:00"), Some(0));
+        assert_eq!(from_iso8601("1969-12-31T19:00:00-05:00"), Some(0));
+        for epoch in [-2203891200, -1, 0, 951782400, 1709164800, 1788660000, 4107542400] {
+            assert_eq!(from_iso8601(&to_iso8601(epoch)), Some(epoch));
+        }
+        for invalid in ["", "2026-02-29T00:00:00Z", "1900-02-29T00:00:00Z",
+            "2026-01-00T00:00:00Z", "2026-13-01T00:00:00Z", "2026-01-01T24:00:00Z",
+            "2026-01-01T00:00:00.Z", "2026-01-01T00:00:00+24:00", "2026-01-01T00:00:00Zextra"] {
+            assert_eq!(from_iso8601(invalid), None, "{invalid}");
+        }
+    }
+}

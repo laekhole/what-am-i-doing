@@ -17,6 +17,7 @@ pub const KEEP_DONE_FOR: i64 = 600;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
+    Unknown,
     Waiting,
     Working,
     Error,
@@ -27,6 +28,7 @@ pub enum State {
 impl State {
     pub fn id(&self) -> &'static str {
         match self {
+            State::Unknown => "unknown",
             State::Waiting => "waiting",
             State::Working => "working",
             State::Error => "error",
@@ -44,6 +46,7 @@ impl State {
             State::Error => 2,
             State::Idle => 3,
             State::Done => 4,
+            State::Unknown => 5,
         }
     }
 }
@@ -74,6 +77,10 @@ pub struct Task {
 
 #[derive(Debug, Clone)]
 pub struct Session {
+    pub summary: Option<String>,
+    pub request_marker: Option<String>,
+    pub auxiliary: bool,
+    pub evidence: &'static str,
     pub id: String,
     pub title: String,
     pub agent: Agent,
@@ -90,6 +97,10 @@ pub struct Session {
 // ------------------------------------------------------------ 수집
 
 pub fn collect(now: i64) -> Vec<Session> {
+    collect_with_history(now, false)
+}
+
+pub fn collect_with_history(now: i64, history: bool) -> Vec<Session> {
     let processes: Vec<(Process, Agent)> = proc::list()
         .into_iter()
         .filter_map(|p| matchers::identify(&p).map(|a| (p, a)))
@@ -99,8 +110,10 @@ pub fn collect(now: i64) -> Vec<Session> {
     let mut claimed: HashSet<PathBuf> = HashSet::new();
 
     for agent in matchers::all() {
-        let procs: Vec<&(Process, Agent)> =
-            processes.iter().filter(|(_, a)| a.name == agent.name).collect();
+        let procs: Vec<&(Process, Agent)> = processes
+            .iter()
+            .filter(|(_, a)| a.name == agent.name)
+            .collect();
 
         if !agent.has_reader {
             for (p, _) in &procs {
@@ -109,7 +122,7 @@ pub fn collect(now: i64) -> Vec<Session> {
             continue;
         }
 
-        let transcripts = transcript::discover(agent.name, now);
+        let transcripts = transcript::discover_with_history(agent.name, now, history);
 
         // 프로세스 ↔ 트랜스크립트 짝짓기. cwd가 유일한 신뢰 가능한 열쇠다.
         for (p, _) in &procs {
@@ -138,8 +151,15 @@ pub fn collect(now: i64) -> Vec<Session> {
         }
     }
 
+    let mut seen = HashSet::new();
+    sessions.retain(|s| seen.insert(s.id.clone()));
     dedupe_titles(&mut sessions);
-    sessions.sort_by(|a, b| a.state.rank().cmp(&b.state.rank()).then(a.title.cmp(&b.title)));
+    sessions.sort_by(|a, b| {
+        a.state
+            .rank()
+            .cmp(&b.state.rank())
+            .then(a.title.cmp(&b.title))
+    });
     sessions
 }
 
@@ -148,16 +168,42 @@ pub(crate) fn from_pair(p: Option<&Process>, agent: Agent, t: &Transcript, now: 
     let age = now - t.last_event_at;
 
     let state = match t.event_state {
-        Some(State::Working) | None if age > WORKING_WITHIN => State::Idle,
+        Some(State::Working) if age > WORKING_WITHIN => State::Unknown,
         Some(state) => state,
-        None => State::Working,
+        None => State::Unknown,
     };
 
     let branch = cwd.as_deref().and_then(git_branch);
-    let task = resolve_task(p, cwd.as_deref(), t.first_prompt.as_deref());
+    let mut task = resolve_task(
+        p,
+        cwd.as_deref(),
+        t.current_prompt.as_deref().or(t.first_prompt.as_deref()),
+    );
+    if task.source == "transcript_latest_prompt" && t.current_prompt.is_none() {
+        task.source = "transcript_first_prompt";
+    }
 
+    let identity = t.session_id.clone().unwrap_or_else(|| {
+        t.path
+            .components()
+            .collect::<PathBuf>()
+            .to_string_lossy()
+            .into_owned()
+    });
     Session {
-        id: short_id(&[agent.name, &t.path.to_string_lossy()]),
+        summary: t.first_prompt.clone(),
+        request_marker: t.request_marker.clone(),
+        auxiliary: t.auxiliary,
+        evidence: if t.event_state == Some(State::Working) && age > WORKING_WITHIN {
+            "stale"
+        } else if t.event_state.is_some() && t.inferred_time {
+            "inferred_time"
+        } else if t.event_state.is_some() {
+            "transcript"
+        } else {
+            "unknown"
+        },
+        id: short_id(&[agent.name, &identity]),
         title: make_title(cwd.as_deref(), branch.as_deref()),
         agent,
         llm_display: t.model.as_deref().map(transcript::normalize_model),
@@ -177,6 +223,10 @@ pub(crate) fn from_pair(p: Option<&Process>, agent: Agent, t: &Transcript, now: 
 fn from_process_only(p: &Process, agent: Agent, _now: i64) -> Session {
     let branch = p.cwd.as_deref().and_then(git_branch);
     Session {
+        summary: None,
+        request_marker: None,
+        auxiliary: false,
+        evidence: "process_only",
         id: short_id(&[agent.name, &p.pid.to_string()]),
         title: make_title(p.cwd.as_deref(), branch.as_deref()),
         agent,
@@ -185,7 +235,7 @@ fn from_process_only(p: &Process, agent: Agent, _now: i64) -> Session {
         task: resolve_task(Some(p), p.cwd.as_deref(), None),
         // 트랜스크립트 없이는 working/waiting을 구분할 수 없다.
         // 거짓말하느니 가장 약한 주장을 한다.
-        state: State::Idle,
+        state: State::Unknown,
         since: 0,
         cwd: p.cwd.clone(),
         branch,
@@ -199,13 +249,21 @@ fn resolve_task(p: Option<&Process>, cwd: Option<&Path>, prompt: Option<&str>) -
     // 1) 프로세스 환경변수. 사용자가 직접 라벨을 붙인 경우.
     if let Some(p) = p {
         if let Some(v) = env_of(p.pid, "WAID_TASK") {
-            return Task { text: Some(v), source: "env", confidence: Confidence::Explicit };
+            return Task {
+                text: Some(v),
+                source: "env",
+                confidence: Confidence::Explicit,
+            };
         }
     }
     // 2) 리포지토리의 .waid 파일.
     if let Some(cwd) = cwd {
         if let Some(v) = waid_file(cwd, "task") {
-            return Task { text: Some(v), source: "waid_file", confidence: Confidence::Explicit };
+            return Task {
+                text: Some(v),
+                source: "waid_file",
+                confidence: Confidence::Explicit,
+            };
         }
     }
     // 3) 커맨드라인 프롬프트 인자. `claude -p "..."` 같은 원샷 실행.
@@ -218,15 +276,19 @@ fn resolve_task(p: Option<&Process>, cwd: Option<&Path>, prompt: Option<&str>) -
             };
         }
     }
-    // 4) 트랜스크립트 첫 프롬프트. 추론이며, 렌더러가 흐리게 표시한다.
+    // 4) 최근 사용자 요청. 첫 요청 폴백은 호출자가 출처를 별도로 표시한다.
     if let Some(t) = prompt {
         return Task {
             text: Some(t.to_string()),
-            source: "transcript_first_prompt",
+            source: "transcript_latest_prompt",
             confidence: Confidence::Inferred,
         };
     }
-    Task { text: None, source: "none", confidence: Confidence::None }
+    Task {
+        text: None,
+        source: "none",
+        confidence: Confidence::None,
+    }
 }
 
 /// `/proc/<pid>/environ`은 같은 사용자의 프로세스라면 읽을 수 있다.
@@ -422,7 +484,11 @@ pub fn to_json(sessions: &[Session], now: i64, pretty: bool) -> String {
         w.field_str("confidence", s.task.confidence.id());
         w.end_obj();
 
+        w.field_opt_str("summary", s.summary.as_deref());
+        w.field_opt_str("request_marker", s.request_marker.as_deref());
+        w.field_bool("auxiliary", s.auxiliary);
         w.field_obj("status");
+        w.field_str("evidence", s.evidence);
         w.field_str("state", s.state.id());
         if s.since > 0 {
             w.field_str("since", &time::to_iso8601(s.since));
@@ -431,13 +497,20 @@ pub fn to_json(sessions: &[Session], now: i64, pretty: bool) -> String {
         }
         w.end_obj();
 
-        w.field_opt_str("cwd", s.cwd.as_ref().map(|c| c.to_string_lossy()).as_deref());
+        w.field_opt_str(
+            "cwd",
+            s.cwd.as_ref().map(|c| c.to_string_lossy()).as_deref(),
+        );
         w.field_opt_str("branch", s.branch.as_deref());
         match s.pid {
             Some(p) => w.field_num("pid", p as i64),
             None => w.field_opt_str("pid", None),
         }
-        w.field_bool("alive", s.pid.is_some());
+        if s.pid.is_some() {
+            w.field_bool("alive", true);
+        } else {
+            w.field_opt_str("alive", None);
+        }
         w.end_obj();
     }
     w.end_arr();

@@ -4,7 +4,7 @@
 //! 한글 폭 계산, 색상값 안의 `#`, 하네스가 주입한 가짜 첫 프롬프트,
 //! `vim claude.md` 오탐 같은 것들.
 
-use crate::json::{self, Json};
+use crate::json;
 use crate::matchers;
 use crate::proc::Process;
 use crate::render::{self, width};
@@ -24,7 +24,16 @@ fn p(argv: &[&str]) -> Process {
 #[test]
 fn parses_nested_and_unicode() {
     let v = json::parse(r#"{"a":{"b":["x",1,true,null]},"k":"\ud83d\ude80 \uac00"}"#).unwrap();
-    assert_eq!(v.get("a").unwrap().get("b").unwrap().as_array().unwrap().len(), 4);
+    assert_eq!(
+        v.get("a")
+            .unwrap()
+            .get("b")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
     assert_eq!(v.get("k").unwrap().as_str().unwrap(), "🚀 가");
 }
 
@@ -57,11 +66,12 @@ fn find_str_skips_empty_values() {
 
 #[test]
 fn text_content_handles_block_arrays() {
-    let v = json::parse(
-        r#"{"content":[{"type":"image"},{"type":"text","text":"인증 리팩터링"}]}"#,
-    )
-    .unwrap();
-    assert_eq!(v.get("content").unwrap().text_content().unwrap(), "인증 리팩터링");
+    let v = json::parse(r#"{"content":[{"type":"image"},{"type":"text","text":"인증 리팩터링"}]}"#)
+        .unwrap();
+    assert_eq!(
+        v.get("content").unwrap().text_content().unwrap(),
+        "인증 리팩터링"
+    );
 }
 
 #[test]
@@ -95,25 +105,45 @@ fn writer_pretty_has_no_leading_newline() {
 #[test]
 fn detects_direct_invocation() {
     assert_eq!(matchers::identify(&p(&["claude"])).unwrap().name, "claude");
-    assert_eq!(matchers::identify(&p(&["/usr/local/bin/codex", "--yolo"])).unwrap().name, "codex");
+    assert_eq!(
+        matchers::identify(&p(&["/usr/local/bin/codex", "--yolo"]))
+            .unwrap()
+            .name,
+        "codex"
+    );
 }
 
 #[test]
 fn detects_windows_shims() {
-    assert_eq!(matchers::identify(&p(&["C:\\npm\\claude.cmd"])).unwrap().name, "claude");
-    assert_eq!(matchers::identify(&p(&["claude.exe"])).unwrap().name, "claude");
+    assert_eq!(
+        matchers::identify(&p(&["C:\\npm\\claude.cmd"]))
+            .unwrap()
+            .name,
+        "claude"
+    );
+    assert_eq!(
+        matchers::identify(&p(&["claude.exe"])).unwrap().name,
+        "claude"
+    );
 }
 
 #[test]
 fn detects_through_launcher() {
-    let proc = p(&["/usr/bin/node", "/home/mk/.nvm/versions/node/v22/bin/claude", "--resume"]);
+    let proc = p(&[
+        "/usr/bin/node",
+        "/home/mk/.nvm/versions/node/v22/bin/claude",
+        "--resume",
+    ]);
     assert_eq!(matchers::identify(&proc).unwrap().name, "claude");
 }
 
 #[test]
 fn detects_via_package_marker() {
     // 파일명이 cli.js라서 basename으로는 안 잡히는 경우.
-    let proc = p(&["node", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"]);
+    let proc = p(&[
+        "node",
+        "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+    ]);
     assert_eq!(matchers::identify(&proc).unwrap().name, "claude");
 }
 
@@ -144,10 +174,20 @@ fn korean_counts_as_double_width() {
 #[test]
 fn fit_never_exceeds_budget() {
     // 표가 어긋나지 않으려면 이게 절대 깨지면 안 된다.
-    for s in ["api-server", "인증 리팩터링 작업", "a", "가나다라마바사아자차", "🚀 배포"] {
+    for s in [
+        "api-server",
+        "인증 리팩터링 작업",
+        "a",
+        "가나다라마바사아자차",
+        "🚀 배포",
+    ] {
         for max in 1..20 {
             let out = render::fit(s, max, Truncate::End);
-            assert!(width(&out) <= max, "fit({s:?},{max}) = {out:?} 폭 {}", width(&out));
+            assert!(
+                width(&out) <= max,
+                "fit({s:?},{max}) = {out:?} 폭 {}",
+                width(&out)
+            );
         }
     }
 }
@@ -172,7 +212,10 @@ fn model_display_names() {
     assert_eq!(normalize_model("claude-opus-4-6-20260514"), "opus-4.6");
     assert_eq!(normalize_model("claude-sonnet-4-6"), "sonnet-4.6");
     assert_eq!(normalize_model("gpt-5.2"), "gpt-5.2");
-    assert_eq!(normalize_model("gemini-3-pro"), "gemini-3.pro".replace("3.pro", "3-pro"));
+    assert_eq!(
+        normalize_model("gemini-3-pro"),
+        "gemini-3.pro".replace("3.pro", "3-pro")
+    );
 }
 
 #[test]
@@ -205,9 +248,15 @@ fn theme_parses_lists_bools_ints() {
     let kv = theme::parse(
         "[columns]\norder = [\"status\", \"title\"]\n\n[columns.title]\nwidth = 30\n\n[columns.task]\ndim_when_inferred = false\n",
     );
-    assert_eq!(kv.get("columns.order"), Some(&Val::List(vec!["status".into(), "title".into()])));
+    assert_eq!(
+        kv.get("columns.order"),
+        Some(&Val::List(vec!["status".into(), "title".into()]))
+    );
     assert_eq!(kv.get("columns.title.width"), Some(&Val::Int(30)));
-    assert_eq!(kv.get("columns.task.dim_when_inferred"), Some(&Val::Bool(false)));
+    assert_eq!(
+        kv.get("columns.task.dim_when_inferred"),
+        Some(&Val::Bool(false))
+    );
 }
 
 #[test]
@@ -229,7 +278,13 @@ fn default_theme_has_the_five_columns() {
 #[test]
 fn waiting_sorts_first() {
     use crate::session::State;
-    let mut states = vec![State::Done, State::Idle, State::Working, State::Waiting, State::Error];
+    let mut states = vec![
+        State::Done,
+        State::Idle,
+        State::Working,
+        State::Waiting,
+        State::Error,
+    ];
     states.sort_by_key(|s| s.rank());
     assert_eq!(states[0], State::Waiting);
     assert_eq!(states[1], State::Working);
@@ -240,7 +295,10 @@ fn waiting_sorts_first() {
 use crate::tmpl::{self, b, s, Ctx, Val as TVal};
 
 fn ctx(pairs: &[(&str, TVal)]) -> Ctx {
-    pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect()
 }
 
 #[test]
@@ -270,7 +328,10 @@ fn tmpl_each_pushes_scope_and_keeps_outer_visible() {
     let mut root = ctx(&[("version", s("0.1"))]);
     root.insert(
         "sessions".into(),
-        TVal::List(vec![ctx(&[("title", s("api"))]), ctx(&[("title", s("web"))])]),
+        TVal::List(vec![
+            ctx(&[("title", s("api"))]),
+            ctx(&[("title", s("web"))]),
+        ]),
     );
     assert_eq!(
         tmpl::render("{{#each sessions}}{{title}}@{{version}} {{/each}}", &root),
@@ -337,14 +398,39 @@ fn tmpl_else_belongs_to_its_own_block_kind() {
 fn populated_default_template_keeps_all_five_fields() {
     use crate::session::{Confidence, Session, State, Task};
     let mut session = Session {
-        id: "test0001".into(), title: "Windows MVP".into(),
-        agent: crate::adapters::Agent { name: "codex", display: "Codex", has_reader: true },
-        llm_id: Some("model-test".into()), llm_display: Some("model-test".into()),
-        task: Task { text: Some("작업 <검증>".into()), source: "transcript_first_prompt", confidence: Confidence::Inferred },
-        state: State::Waiting, since: 100, cwd: None, branch: None, pid: None,
+        summary: None,
+        request_marker: None,
+        auxiliary: false,
+        evidence: "unknown",
+        id: "test0001".into(),
+        title: "Windows MVP".into(),
+        agent: crate::adapters::Agent {
+            name: "codex",
+            display: "Codex",
+            has_reader: true,
+        },
+        llm_id: Some("model-test".into()),
+        llm_display: Some("model-test".into()),
+        task: Task {
+            text: Some("작업 <검증>".into()),
+            source: "transcript_first_prompt",
+            confidence: Confidence::Inferred,
+        },
+        state: State::Waiting,
+        since: 100,
+        cwd: None,
+        branch: None,
+        pid: None,
     };
     let html = crate::html::render(&[session.clone()], 110, crate::html::DEFAULT_TEMPLATE);
-    for field in ["Windows MVP", ">Codex</span>", "model-test", "작업 &lt;검증&gt;", "내 차례", "task inferred"] {
+    for field in [
+        "Windows MVP",
+        ">Codex</span>",
+        "model-test",
+        "작업 &lt;검증&gt;",
+        "내 차례",
+        "task inferred",
+    ] {
         assert!(html.contains(field), "missing {field}");
     }
     assert!(!html.contains("{{"));
@@ -363,7 +449,10 @@ fn default_template_renders_without_leftover_tags() {
     let out = crate::html::render(&[], crate::time::now(), crate::html::DEFAULT_TEMPLATE);
     assert!(!out.contains("{{"), "미치환 태그 잔존: {out}");
     assert!(out.contains("data-waid-root"), "갱신 훅이 사라졌다");
-    assert!(out.contains("돌고 있는 코딩 에이전트가 없습니다"), "빈 상태가 안 나온다");
+    assert!(
+        out.contains("돌고 있는 코딩 에이전트가 없습니다"),
+        "빈 상태가 안 나온다"
+    );
 }
 
 // ------------------------------------------------------- 어댑터 (§4)
@@ -392,7 +481,9 @@ fn adapter_minimal_definition_loads() {
 fn adapter_transcript_dir_enables_reader_and_expands_tilde() {
     // HOME 을 변경하지 않는다 — 테스트가 병렬로 돌고 어댑터 테이블은
     // OnceLock 으로 캐시되므로, 환경을 건드리면 다른 테스트가 흔들린다.
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).expect("home");
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .expect("home");
     let d = adapters::parse_def_for_test(
         r#"
         [adapter]
@@ -431,14 +522,16 @@ fn adapter_rejects_incomplete_definitions() {
     // 감지 수단 없음 — 잡을 수 없는 어댑터는 무의미하다
     assert!(adapters::parse_def_for_test("[adapter]\nname = \"x\"\n").is_err());
     // 공백 섞인 이름은 --agent 필터를 망가뜨린다
-    assert!(adapters::parse_def_for_test("[adapter]\nname = \"my tool\"\nexec = [\"x\"]\n").is_err());
+    assert!(
+        adapters::parse_def_for_test("[adapter]\nname = \"my tool\"\nexec = [\"x\"]\n").is_err()
+    );
 }
 
 #[test]
 fn adapter_markers_alone_are_enough() {
     // exec 없이 패키지 표지만으로도 성립한다 (`node .../cli.js` 형태).
-    let d =
-        adapters::parse_def_for_test("[adapter]\nname = \"x\"\nmarkers = [\"@vendor/x\"]\n").unwrap();
+    let d = adapters::parse_def_for_test("[adapter]\nname = \"x\"\nmarkers = [\"@vendor/x\"]\n")
+        .unwrap();
     assert!(d.exec.is_empty());
     assert_eq!(d.markers, vec!["@vendor/x"]);
 }
@@ -446,7 +539,9 @@ fn adapter_markers_alone_are_enough() {
 #[test]
 fn builtin_table_is_intact_after_refactor() {
     let names: Vec<&str> = adapters::all().iter().map(|a| a.name).collect();
-    for expected in ["claude", "codex", "gemini", "opencode", "aider", "cursor", "copilot", "goose"] {
+    for expected in [
+        "claude", "codex", "gemini", "opencode", "aider", "cursor", "copilot", "goose",
+    ] {
         assert!(names.contains(&expected), "{expected} 가 사라졌다");
     }
     // 트랜스크립트 리더는 claude/codex 만.
@@ -464,24 +559,35 @@ fn short_id_avalanches_on_trailing_bytes() {
         .iter()
         .map(|pid| crate::session::short_id(&["claude", pid]))
         .collect();
-    let prefixes: std::collections::HashSet<&str> =
-        ids.iter().map(|i| &i[..4]).collect();
+    let prefixes: std::collections::HashSet<&str> = ids.iter().map(|i| &i[..4]).collect();
     assert_eq!(prefixes.len(), ids.len(), "앞 4자리가 충돌한다: {ids:?}");
 }
 
 #[test]
 fn dedupe_extends_suffix_until_titles_are_unique() {
-    use crate::session::{dedupe_titles, Confidence, State, Task};
     use crate::adapters::Agent;
+    use crate::session::{dedupe_titles, Confidence, State, Task};
 
-    let agent = Agent { name: "claude", display: "Claude Code", has_reader: true };
+    let agent = Agent {
+        name: "claude",
+        display: "Claude Code",
+        has_reader: true,
+    };
     let mk = |id: &str| crate::session::Session {
+        summary: None,
+        request_marker: None,
+        auxiliary: false,
+        evidence: "unknown",
         id: id.to_string(),
         title: "api".into(),
         agent,
         llm_id: None,
         llm_display: None,
-        task: Task { text: None, source: "none", confidence: Confidence::None },
+        task: Task {
+            text: None,
+            source: "none",
+            confidence: Confidence::None,
+        },
         state: State::Idle,
         since: 0,
         cwd: None,
@@ -493,10 +599,13 @@ fn dedupe_extends_suffix_until_titles_are_unique() {
     let mut sessions = vec![mk("aaaa0001"), mk("aaaa0002"), mk("bbbb0003")];
     dedupe_titles(&mut sessions);
 
-    let titles: std::collections::HashSet<&String> =
-        sessions.iter().map(|s| &s.title).collect();
-    assert_eq!(titles.len(), 3, "구분되지 않았다: {:?}", 
-        sessions.iter().map(|s| &s.title).collect::<Vec<_>>());
+    let titles: std::collections::HashSet<&String> = sessions.iter().map(|s| &s.title).collect();
+    assert_eq!(
+        titles.len(),
+        3,
+        "구분되지 않았다: {:?}",
+        sessions.iter().map(|s| &s.title).collect::<Vec<_>>()
+    );
 }
 
 // ------------------------------------------------------- 경계 넘기 (§5.1, v0.4)
@@ -550,13 +659,12 @@ fn absolute_roots_are_not_multiplied_across_homes() {
 fn builtin_roots_cover_the_current_home() {
     // Windows 에서 HOME 이 없어 USERPROFILE 로 떨어지는 경로까지 포함해,
     // 내 홈의 트랜스크립트 루트는 어떤 환경에서도 후보에 있어야 한다.
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).expect("home");
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .expect("home");
     let roots = adapters::transcript_dirs("claude");
     let want = std::path::PathBuf::from(home).join(".claude/projects");
-    assert!(
-        roots.contains(&want),
-        "내 홈 루트가 빠졌다: {roots:?}"
-    );
+    assert!(roots.contains(&want), "내 홈 루트가 빠졌다: {roots:?}");
 }
 
 #[test]
@@ -573,9 +681,12 @@ fn theme_path_uses_native_home_unless_overridden() {
     let expected = if let Some(p) = std::env::var_os("WAID_THEME") {
         std::path::PathBuf::from(p)
     } else {
-        let base = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from)
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
             .unwrap_or_else(|| {
-                let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).unwrap();
+                let home = std::env::var_os("HOME")
+                    .or_else(|| std::env::var_os("USERPROFILE"))
+                    .unwrap();
                 std::path::PathBuf::from(home).join(".config")
             });
         base.join("waid/theme.toml")
@@ -584,47 +695,64 @@ fn theme_path_uses_native_home_unless_overridden() {
 }
 
 #[test]
-fn tasklist_csv_preserves_names_and_only_uses_pid() {
-    let processes = crate::proc::parse_tasklist(
-        "\"claude.exe\",\"123\",\"Console\",\"1\",\"104,104 K\"\r\n\"한글, tool.exe\",\"456\",\"Console\"\n\"quote\"\"tool.exe\",\"789\"\n"
-    );
-    assert_eq!(processes.len(), 3);
-    assert_eq!(processes[0].pid, 123);
-    assert_eq!(matchers::identify(&processes[0]).unwrap().name, "claude");
-    assert_eq!(processes[1].argv, ["한글, tool.exe"]);
-    assert_eq!(processes[2].argv, ["quote\"tool.exe"]);
-    assert!(processes.iter().all(|p| p.cwd.is_none()));
-}
-
-#[test]
-fn tasklist_csv_skips_errors_and_invalid_rows() {
-    for bad in ["ERROR: Access denied", "\"unterminated", "\"x\",\"pid\"", "\"x\",\"-1\"", "\"x\",\"2147483648\"", "\"\",\"1\"", "\"x\"garbage,\"2\"", "\"x\",\"0\""] {
-        assert!(crate::proc::parse_tasklist(bad).is_empty(), "{bad}");
-    }
-}
-
-#[test]
 fn transcript_events_distinguish_turn_end_from_session_end() {
     use crate::session::State;
     for (event, want) in [
-        (r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#, Some(State::Waiting)),
-        (r#"{"type":"event_msg","payload":{"type":"task_started"}}"#, Some(State::Working)),
-        (r#"{"type":"assistant","message":{"stop_reason":"end_turn"}}"#, Some(State::Waiting)),
-        (r#"{"type":"assistant","message":{"stop_reason":"tool_use"}}"#, Some(State::Working)),
-        (r#"{"type":"response_item","payload":{"type":"message","role":"assistant","phase":"final"}}"#, Some(State::Waiting)),
-        (r#"{"type":"response_item","payload":{"type":"function_call_output","output":{"type":"error"}}}"#, Some(State::Working)),
-        (r#"{"type":"event_msg","payload":{"type":"token_count"}}"#, None),
+        (
+            r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#,
+            Some(State::Waiting),
+        ),
+        (
+            r#"{"type":"event_msg","payload":{"type":"task_started"}}"#,
+            Some(State::Working),
+        ),
+        (
+            r#"{"type":"assistant","message":{"stop_reason":"end_turn"}}"#,
+            Some(State::Waiting),
+        ),
+        (
+            r#"{"type":"assistant","message":{"stop_reason":"tool_use"}}"#,
+            Some(State::Working),
+        ),
+        (
+            r#"{"type":"response_item","payload":{"type":"message","role":"assistant","phase":"final"}}"#,
+            Some(State::Waiting),
+        ),
+        (
+            r#"{"type":"response_item","payload":{"type":"function_call_output","output":{"type":"error"}}}"#,
+            Some(State::Working),
+        ),
+        (
+            r#"{"type":"event_msg","payload":{"type":"token_count"}}"#,
+            None,
+        ),
+        (
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>metadata</environment_context>"}]}}"#,
+            None,
+        ),
     ] {
-        assert_eq!(crate::transcript::event_state(&json::parse(event).unwrap()), want, "{event}");
+        assert_eq!(
+            crate::transcript::event_state(&json::parse(event).unwrap()),
+            want,
+            "{event}"
+        );
     }
 }
 
 #[test]
 fn transcript_without_process_keeps_cwd_task_and_waiting() {
-    use crate::session::{self, State, Confidence};
+    use crate::session::{self, Confidence, State};
     let mut transcript = crate::transcript::Transcript {
-        path: "fixture.jsonl".into(), last_event_at: 100, cwd: Some("project".into()),
-        model: Some("claude-opus-4-6".into()), first_prompt: Some("Windows MVP".into()),
+        inferred_time: false,
+        session_id: None,
+        current_prompt: None,
+        request_marker: None,
+        auxiliary: false,
+        path: "fixture.jsonl".into(),
+        last_event_at: 100,
+        cwd: Some("project".into()),
+        model: Some("claude-opus-4-6".into()),
+        first_prompt: Some("Windows MVP".into()),
         event_state: Some(State::Waiting),
     };
     let agent = crate::adapters::by_name("claude").unwrap();
@@ -636,8 +764,14 @@ fn transcript_without_process_keeps_cwd_task_and_waiting() {
     assert_eq!(session.llm_id.as_deref(), Some("claude-opus-4-6"));
     assert_eq!(session.llm_display.as_deref(), Some("opus-4.6"));
     transcript.event_state = None;
-    assert_eq!(session::from_pair(None, agent, &transcript, 101).state, State::Working);
-    assert_eq!(session::from_pair(None, agent, &transcript, 200).state, State::Idle);
+    assert_eq!(
+        session::from_pair(None, agent, &transcript, 101).state,
+        State::Unknown
+    );
+    assert_eq!(
+        session::from_pair(None, agent, &transcript, 200).state,
+        State::Unknown
+    );
 }
 
 #[test]
@@ -647,8 +781,18 @@ fn transcript_reads_tail_between_32_and_64_kib_and_codex_payload() {
     let mut file = std::fs::File::create(&path).unwrap();
     writeln!(file, "{}", r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"실제 첫 지시"}]}}"#).unwrap();
     writeln!(file, "{}", " ".repeat(40 * 1024)).unwrap();
-    writeln!(file, "{}", r#"{"type":"turn_context","payload":{"model":"model-latest"}}"#).unwrap();
-    writeln!(file, "{}", r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#).unwrap();
+    writeln!(
+        file,
+        "{}",
+        r#"{"type":"turn_context","payload":{"model":"model-latest"}}"#
+    )
+    .unwrap();
+    writeln!(
+        file,
+        "{}",
+        r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#
+    )
+    .unwrap();
     drop(file);
     let t = crate::transcript::read(&path, 100).unwrap();
     std::fs::remove_file(&path).unwrap();
@@ -662,31 +806,217 @@ fn transcript_finds_first_request_after_long_injected_context() {
     use std::io::Write;
     let path = std::env::temp_dir().join(format!("waid-long-head-{}.jsonl", std::process::id()));
     let mut file = std::fs::File::create(&path).unwrap();
-    writeln!(file, "{}", r#"{"type":"session_meta","payload":{"cwd":"project"}}"#).unwrap();
+    writeln!(
+        file,
+        "{}",
+        r#"{"type":"session_meta","payload":{"cwd":"project"}}"#
+    )
+    .unwrap();
     writeln!(file, "{}", r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<recommended_plugins>injected</recommended_plugins>"}]}}"#).unwrap();
     writeln!(file, "{}", " ".repeat(80 * 1024)).unwrap();
     writeln!(file, "{}", r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"실제 작업 요청"}]}}"#).unwrap();
     writeln!(file, "{}", " ".repeat(80 * 1024)).unwrap();
-    writeln!(file, "{}", r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#).unwrap();
+    writeln!(
+        file,
+        "{}",
+        r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#
+    )
+    .unwrap();
     drop(file);
     let t = crate::transcript::read(&path, 100).unwrap();
     assert_eq!(t.cwd, Some("project".into()));
     assert_eq!(t.first_prompt.as_deref(), Some("실제 작업 요청"));
     assert_eq!(t.event_state, Some(crate::session::State::Waiting));
-    assert_eq!(crate::transcript::read(&path, 101).unwrap().last_event_at, 101);
-    let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
-    writeln!(file, "{}", r#"{"type":"user","message":{"content":"다음 작업"}}"#).unwrap();
+    assert_eq!(
+        crate::transcript::read(&path, 101).unwrap().last_event_at,
+        100
+    );
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(
+        file,
+        "{}",
+        r#"{"type":"user","message":{"content":"다음 작업"}}"#
+    )
+    .unwrap();
     drop(file);
     let t = crate::transcript::read(&path, 102).unwrap();
+    assert_eq!(t.current_prompt.as_deref(), Some("다음 작업"));
     assert_eq!(t.first_prompt.as_deref(), Some("실제 작업 요청"));
     assert_eq!(t.event_state, Some(crate::session::State::Working));
-    std::fs::write(&path, r#"{"type":"user","message":{"content":"교체된 로그"}}"#).unwrap();
-    assert_eq!(crate::transcript::read(&path, 103).unwrap().first_prompt.as_deref(), Some("교체된 로그"));
+    std::fs::write(
+        &path,
+        r#"{"type":"user","message":{"content":"교체된 로그"}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        crate::transcript::read(&path, 103)
+            .unwrap()
+            .first_prompt
+            .as_deref(),
+        Some("교체된 로그")
+    );
     std::fs::remove_file(&path).unwrap();
 }
 
 #[test]
 fn normalized_prompt_is_bounded_without_splitting_unicode() {
     assert_eq!(normalize_prompt(&"가나다".repeat(200)).chars().count(), 200);
-    assert_eq!(normalize_prompt(&format!("# {}", "한".repeat(300))).chars().count(), 200);
+    assert_eq!(
+        normalize_prompt(&format!("# {}", "한".repeat(300)))
+            .chars()
+            .count(),
+        200
+    );
+}
+
+#[test]
+fn transcript_metadata_does_not_refresh_observed_activity() {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("waid-event-time-{}.jsonl", std::process::id()));
+    let now = crate::time::from_iso8601("2026-09-06T04:00:00Z").unwrap();
+    let earlier = now - 3600;
+    std::fs::write(&path, concat!(
+        "{\"timestamp\":\"2026-09-06T03:00:00Z\",\"type\":\"user\",\"message\":{\"content\":\"real request\"}}\n",
+        "{\"timestamp\":\"2026-09-06T04:00:00Z\",\"type\":\"cost-state\"}\n"
+    )).unwrap();
+    let t = crate::transcript::read(&path, now).unwrap();
+    assert_eq!(t.last_event_at, earlier);
+    let agent = crate::adapters::by_name("claude").unwrap();
+    assert_eq!(
+        crate::session::from_pair(None, agent, &t, now).state,
+        crate::session::State::Unknown
+    );
+    assert_eq!(
+        crate::transcript::read(&path, now + 1)
+            .unwrap()
+            .last_event_at,
+        earlier
+    );
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(
+        file,
+        "{}",
+        r#"{"timestamp":"2026-09-06T04:00:01Z","type":"cost-state"}"#
+    )
+    .unwrap();
+    assert_eq!(
+        crate::transcript::read(&path, now + 1)
+            .unwrap()
+            .last_event_at,
+        earlier
+    );
+    writeln!(file, "{}", r#"{"timestamp":"2026-09-06T13:00:02+09:00","type":"event_msg","payload":{"type":"task_complete"}}"#).unwrap();
+    let t = crate::transcript::read(&path, now + 3).unwrap();
+    assert_eq!(t.last_event_at, now + 2);
+    assert_eq!(t.event_state, Some(crate::session::State::Waiting));
+    drop(file);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn latest_request_identity_and_auxiliary_are_from_envelopes() {
+    let path = std::env::temp_dir().join(format!("waid-identity-{}.jsonl", std::process::id()));
+    std::fs::write(&path, concat!(
+        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"stable-session\",\"cwd\":\"project\",\"source\":{\"subagent\":{\"other\":\"guardian\"}}}}\n",
+        "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"first request\"}]}}\n",
+        "{\"type\":\"turn_context\",\"payload\":{\"model\":\"real-model\"}}\n",
+        "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"<environment_context>injected</environment_context>\\nlatest request\"}]}}\n",
+        "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"output\":{\"cwd\":\"fake\",\"model\":\"fake\",\"role\":\"user\",\"content\":\"fake request\"}}}\n"
+    )).unwrap();
+    let t = crate::transcript::read(&path, 100).unwrap();
+    assert_eq!(t.session_id.as_deref(), Some("stable-session"));
+    assert!(t.auxiliary);
+    assert_eq!(t.model.as_deref(), Some("real-model"));
+    assert_eq!(t.cwd, Some("project".into()));
+    assert_eq!(t.current_prompt.as_deref(), Some("latest request"));
+    assert_eq!(t.first_prompt.as_deref(), Some("first request"));
+    let agent = crate::adapters::by_name("codex").unwrap();
+    let a = crate::session::from_pair(None, agent, &t, 100);
+    assert_eq!(a.task.text.as_deref(), Some("latest request"));
+    let mut moved = t.clone();
+    moved.path = "elsewhere.jsonl".into();
+    assert_eq!(a.id, crate::session::from_pair(None, agent, &moved, 100).id);
+    assert!(crate::session::to_json(&[a], 100, false).contains("\"alive\":null"));
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn claude_sidechain_does_not_replace_parent_identity() {
+    let path = std::env::temp_dir().join(format!("waid-sidechain-{}.jsonl", std::process::id()));
+    std::fs::write(&path, r#"{"type":"user","sessionId":"shared-parent","isSidechain":true,"message":{"content":"child task"}}"#).unwrap();
+    let t = crate::transcript::read(&path, 100).unwrap();
+    assert!(t.auxiliary);
+    assert!(t.session_id.is_none());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn undated_metadata_and_growing_replacement_do_not_reuse_false_activity() {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("waid-undated-{}.jsonl", std::process::id()));
+    std::fs::write(
+        &path,
+        "{\"type\":\"user\",\"sessionId\":\"old\",\"message\":{\"content\":\"first\"}}\n",
+    )
+    .unwrap();
+    let first = crate::transcript::read(&path, 1000).unwrap();
+    assert!(first.inferred_time);
+    assert_eq!(first.last_event_at, 1000);
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(file, "{}", r#"{"type":"cost-state"}"#).unwrap();
+    drop(file);
+    assert_eq!(
+        crate::transcript::read(&path, 2000).unwrap().last_event_at,
+        1000
+    );
+    std::fs::write(&path,format!("{{\"type\":\"user\",\"sessionId\":\"new\",\"message\":{{\"content\":\"replacement\"}}}}\n{}", " ".repeat(600))).unwrap();
+    let replaced = crate::transcript::read(&path, 3000).unwrap();
+    assert_eq!(replaced.session_id.as_deref(), Some("new"));
+    assert_eq!(replaced.first_prompt.as_deref(), Some("replacement"));
+    assert_eq!(replaced.last_event_at, 3000);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn request_marker_ignores_metadata_and_distinguishes_repeated_requests() {
+    use std::io::Write;
+    let path =
+        std::env::temp_dir().join(format!("waid-request-marker-{}.jsonl", std::process::id()));
+    std::fs::write(&path,"{\"type\":\"user\",\"timestamp\":\"2026-09-06T00:00:00Z\",\"message\":{\"content\":\"continue\"}}\n").unwrap();
+    let first = crate::transcript::read(&path, 100).unwrap();
+    assert!(first.request_marker.is_some());
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(
+        file,
+        "{}",
+        r#"{"type":"turn_context","payload":{"model":"changed"}}"#
+    )
+    .unwrap();
+    assert_eq!(
+        crate::transcript::read(&path, 101).unwrap().request_marker,
+        first.request_marker
+    );
+    writeln!(
+        file,
+        "{}",
+        r#"{"type":"user","timestamp":"2026-09-06T00:01:00Z","message":{"content":"continue"}}"#
+    )
+    .unwrap();
+    let resumed = crate::transcript::read(&path, 102).unwrap();
+    assert_eq!(first.current_prompt, resumed.current_prompt);
+    assert_ne!(first.request_marker, resumed.request_marker);
+    drop(file);
+    std::fs::remove_file(path).unwrap();
 }

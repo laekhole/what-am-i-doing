@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "Daylight",
+  "font_size": 13,
+  "padding": 10,
+  "line_gap": 3,
+  "fields": [
+    "task",
+    "project",
+    "status",
+    "agent",
+    "model"
+  ],
+  "colors": {
+    "background": "#F3F4F7",
+    "surface": "#FFFFFF",
+    "text": "#202534",
+    "muted": "#525C70",
+    "selection": "#EDF2FC",
+    "accent": "#3159A5"
+  },
+  "icons": {
+    "waiting": "◉",
+    "working": "●",
+    "error": "!",
+    "idle": "○",
+    "done": "✓",
+    "unknown": "?"
+  },
+  "state_colors": {
+    "waiting": "#814400",
+    "working": "#17613A",
+    "error": "#A51D33",
+    "idle": "#44536A",
+    "done": "#17613A",
+    "unknown": "#44536A"
+  },
+  "compact": true
+}

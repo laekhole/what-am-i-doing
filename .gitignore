@@ -1,4 +1,5 @@
 /target
+/.tools
 /desktop/target
 /desktop/node_modules
 /desktop/binaries
