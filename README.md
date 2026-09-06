@@ -64,15 +64,19 @@ Windows에서는 이름·PID를 열거하고 알려진 실행 파일과 인터�
 
 ## 에이전트별 지원 범위
 
-| 에이전트 | 실행 감지 | 저장된 작업·모델·상태 |
+| 에이전트 | 실행 감지 | 읽는 기록 |
 |---|---|---|
-| Claude Code, Codex | 지원 | 지원 |
-| Copilot CLI | 직접 실행·Node 패키지 | session-state의 events.jsonl 지원 |
-| Gemini CLI, OpenCode | 직접 실행·Node/Bun 패키지 | 아직 미지원 |
-| Aider | 직접 실행·Python 스크립트·python -m aider | 아직 미지원 |
-| Cursor CLI, Goose | cursor-agent / goose 실행 파일 | 아직 미지원 |
+| Claude Code, Codex | 지원 | JSONL — 요청·모델·경로·상태 |
+| Copilot CLI | 직접 실행·Node 패키지 | JSONL(session-state의 events.jsonl) |
+| Cursor (편집기) | cursor-agent CLI만 | SQLite(state.vscdb) — 세션·요청·시각 |
+| Cline, Roo Code, VS Code Chat | 없음(편집기 안에서 돕니다) | JSON 파일 — 요청·모델·경로 |
+| Gemini CLI, opencode, Continue | 직접 실행·Node/Bun 패키지 | JSON 파일 |
+| Aider | 직접 실행·Python 스크립트·python -m aider | 아직 미지원(마크다운 기록) |
+| Goose | goose 실행 파일 | 아직 미지원 |
 
-프로세스만 발견하면 상태는 **미확인**입니다. 모델은 실행 인자에 명시된 경우만 표시합니다. Cursor 편집기·VS Code 확장 에이전트는 CLI와 별개이며, WSL 내부 프로세스 감지는 지원하지 않습니다.
+JSONL이 아닌 기록에는 턴 종료 이벤트가 없습니다. 그래서 **상태는 미확인**으로 두고 시각도 기록에 없으면 파일 시각 추정으로 표시합니다 — 없는 근거를 지어내지 않습니다. SQLite는 운영체제에 이미 있는 엔진을 빌려 쓰고(Windows `winsqlite3.dll`), **읽기 전용**으로만 엽니다. 엔진이 없거나 스키마가 바뀌면 그 소스만 조용히 비고 `waid doctor`가 이유를 보여줍니다.
+
+프로세스만 발견하면 상태는 **미확인**입니다. 모델은 실행 인자에 명시된 경우만 표시합니다. Cursor 편집기 창과 VS Code 확장은 프로세스로 잡지 않고 저장된 기록으로만 읽습니다. WSL 내부 프로세스 감지는 지원하지 않습니다.
 
 ## CLI와 문서
 

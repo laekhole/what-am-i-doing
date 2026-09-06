@@ -311,3 +311,18 @@ request_marker는 정리된 사용자 요청 본문과 해당 이벤트의 times
 Tool Help 뒤에 알려진 CLI/인터프리터만 대상으로 NtQueryInformationProcess의 ProcessCommandLineInformation을 조회한다. 동적 함수 조회, 최대 128 KiB 버퍼, 반환 포인터 범위 확인, CommandLineToArgvW 파싱, RAII 핸들 해제를 사용한다. VM 쓰기·디버그 권한·외부 셸 폴링은 없다. API/권한 실패는 이름 감지로 폴백한다. 구현 근거: [Microsoft API 안내](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntqueryinformationprocess), [PHNT 정보 클래스](https://github.com/winsiderss/phnt/blob/master/ntpsapi.h).
 
 패키지 문자열을 명령 전체에서 찾던 오탐을 제거하고 런처의 실행 진입점에만 한정한다. Windows 경로 구분자·대소문자, Python -m aider를 지원한다. Copilot은 기존 bounded JSONL 리더와 공통 세션 데이터 모델을 재사용한다. 프로세스만 감지되는 나머지 제품의 로그 판독을 구현했다고 주장하지 않는다. 네이티브 UI·템플릿에는 제품별 상태 로직을 추가하지 않는다.
+
+
+## D32 — JSONL 이 아닌 기록도 읽는다 (2026-09-07)
+
+코딩 에이전트의 절반은 대화를 append-only JSONL 로 남기지 않는다. 편집기 확장은 세션 하나를 JSON 파일 하나로 쓰고, Cursor 는 SQLite 에 넣는다. 사용자 지시에 따라 **모든 코딩 에이전트가 기본적으로 읽혀야 한다**를 기준으로 삼고, 리더를 세 종류로 늘린다. 형식만 다르고 찾는 값(첫 요청·최근 요청·경로·모델·마지막 활동)은 같으므로 세 리더 모두 같은 Transcript 를 만들고 그 뒤 단계는 출처를 모른다.
+
+SQLite 는 크레이트를 추가하지도, 파일 포맷을 직접 파싱하지도 않는다. 운영체제가 이미 가진 엔진을 실행 시점에 dlopen 으로 빌려 쓴다(Windows `winsqlite3.dll`, macOS·Linux `libsqlite3`). b-tree·varint·오버플로 페이지·WAL 프레임을 다시 구현하면 700줄 이상에 조용히 낡은 값을 읽을 위험까지 지지만, 빌려 쓰면 FFI 200줄이고 바이너리도 커지지 않는다. **외부 크레이트 0 예산은 유지되며, 새로 생기는 것은 런타임 OS 라이브러리 의존이다.** 라이브러리가 없으면 그 소스만 꺼지고 doctor 가 이유를 보여준다.
+
+DB 는 읽기 전용으로만 연다. 편집기가 WAL 로 잡고 있어 열리지 않으면 DB·WAL·SHM 사본을 임시 폴더에 떠서 한 번만 다시 시도하고, 256 MiB 를 넘으면 포기한다. 원본은 어떤 경로로도 쓰지 않는다.
+
+매핑 문법을 새로 만들지 않는다. 어댑터의 SQL 이 내놓는 **열 이름이 곧 필드**다(`id·task·summary·project·updated_ms·model·auxiliary·blob`). 사용자가 배워야 할 것은 `as` 뿐이고, 새 편집기 지원에 코드 수정이 필요 없다는 §4 의 성질도 유지된다. 편집기 업데이트로 스키마가 바뀌면 그 질의만 실패하고 나머지 에이전트는 그대로 보인다. 실패 사유는 doctor 의 "소스 문제"에 남는다.
+
+성능은 파일 시각으로 막는다. DB 와 `-wal` 의 시각이 그대로면 질의 자체를 하지 않고 직전 결과를 쓴다. 대화 본문 테이블(`cursorDiskKV`, `bubbleId`)은 매 틱에 훑지 않는다. 실측: Cursor 6.7 MB DB 의 헤더 질의 17행 2.1 ms. 코어 바이너리는 467 KB 에서 546 KB 가 됐다.
+
+**상태는 지어내지 않는다.** JSON·SQLite 기록에는 턴 종료 이벤트가 없으므로 event_state 를 만들지 않고 미확인으로 둔다. 시각이 기록에서 나오지 않으면 파일 시각 추정으로 표시한다. 사용자 요청이 하나도 없는 JSON 문서(편집기 설정 파일 등)와 요청·제목이 모두 빈 DB 행은 세션으로 만들지 않는다. Cursor 의 `richText` 는 편집기 내부 구조체이므로 작업 텍스트로 쓰지 않는다.

@@ -60,8 +60,17 @@ fn roots(agent: &str) -> Vec<PathBuf> {
     crate::adapters::transcript_dirs(agent).to_vec()
 }
 
-/// 루트 아래 `.jsonl` 파일을 재귀 수집한다.
-fn walk(dir: &Path, now: i64, out: &mut Vec<(PathBuf, i64)>, depth: u32, history: bool) {
+/// 루트 아래에서 확장자가 맞는 파일을 재귀 수집한다. `name` 을 주면 그
+/// 이름의 파일만 본다 — 한 세션 폴더에 파일이 여럿인 형식에 필요하다.
+fn walk(
+    dir: &Path,
+    now: i64,
+    out: &mut Vec<(PathBuf, i64)>,
+    depth: u32,
+    history: bool,
+    ext: &str,
+    name: Option<&str>,
+) {
     if depth > 6 {
         return; // Codex는 년/월/일로 중첩된다. 6이면 충분하고도 남는다.
     }
@@ -76,8 +85,10 @@ fn walk(dir: &Path, now: i64, out: &mut Vec<(PathBuf, i64)>, depth: u32, history
             Err(_) => continue,
         };
         if ft.is_dir() {
-            walk(&path, now, out, depth + 1, history);
-        } else if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+            walk(&path, now, out, depth + 1, history, ext, name);
+        } else if path.extension().map(|e| e == ext).unwrap_or(false)
+            && name.is_none_or(|want| path.file_name().is_some_and(|got| got == want))
+        {
             if let Some(m) = time::mtime(&path) {
                 if history || now - m <= MAX_AGE_SECS {
                     out.push((path, m));
@@ -94,7 +105,7 @@ pub fn discover(agent: &str, now: i64) -> Vec<Transcript> {
 pub fn discover_with_history(agent: &str, now: i64, history: bool) -> Vec<Transcript> {
     let mut files = Vec::new();
     for root in roots(agent) {
-        walk(&root, now, &mut files, 0, history);
+        walk(&root, now, &mut files, 0, history, "jsonl", None);
     }
     // 최근 것부터. 아래에서 프로세스와 짝지을 때 최신이 우선권을 갖는다.
     files.sort_by(|a, b| b.1.cmp(&a.1));
@@ -105,7 +116,17 @@ pub fn discover_with_history(agent: &str, now: i64, history: bool) -> Vec<Transc
         .filter(|t| agent != "copilot" || t.session_id.is_some() || t.current_prompt.is_some())
         .filter(|t| history || now - t.last_event_at <= MAX_AGE_SECS)
         .collect();
+    // JSONL 이 아닌 소스도 같은 목록에 들어간다 (§4.1).
+    found.extend(json_sessions(agent, now, history));
+    found.extend(sqlite_sessions(agent, now, history));
+    found.retain(|t| history || now - t.last_event_at <= MAX_AGE_SECS);
     found.sort_by(|a, b| b.last_event_at.cmp(&a.last_event_at));
+    // 같은 세션을 여러 질의가 물어 올 수 있다. 최근 것 하나만 남긴다.
+    let mut seen = std::collections::HashSet::new();
+    found.retain(|t| match &t.session_id {
+        Some(id) => seen.insert(id.clone()),
+        None => true,
+    });
     found
 }
 
@@ -210,23 +231,12 @@ pub fn read(path: &Path, mtime: i64) -> Option<Transcript> {
     let request_marker = request
         .as_ref()
         .map(|(v, text)| {
-            // Persisted bookmarks need a defined hash, not Rust's unspecified DefaultHasher.
-            let mut hash = 0xcbf29ce484222325u64;
-            for part in [
+            request_marker(&[
                 text.as_str(),
                 v.get("timestamp").and_then(Json::as_str).unwrap_or(""),
                 v.get("uuid").and_then(Json::as_str).unwrap_or(""),
                 v.get("id").and_then(Json::as_str).unwrap_or(""),
-            ] {
-                for byte in (part.len() as u64)
-                    .to_le_bytes()
-                    .iter()
-                    .chain(part.as_bytes())
-                {
-                    hash = (hash ^ *byte as u64).wrapping_mul(0x100000001b3);
-                }
-            }
-            format!("r1:{hash:016x}")
+            ])
         })
         .or_else(|| previous.and_then(|t| t.request_marker.clone()));
     let session_id = head_json
@@ -543,6 +553,341 @@ pub fn normalize_model(raw: &str) -> String {
             out.push(if prev_num && cur_num { '.' } else { '-' });
         }
         out.push_str(s);
+    }
+    out
+}
+
+// ------------------------------------------------- JSONL 이 아닌 소스 (§4.1)
+//
+// 코딩 에이전트의 절반은 대화를 append-only JSONL 로 남기지 않는다. 편집기
+// 확장은 세션 하나를 JSON 파일 하나로 쓰고, Cursor 같은 앱은 SQLite 에 넣는다.
+// 형식만 다르지 우리가 찾는 것은 같다 — 첫 요청, 최근 요청, 경로, 모델,
+// 마지막 활동 시각. 그래서 아래 두 리더는 값을 뽑는 방식만 다르고 결과는
+// 전부 같은 `Transcript` 다. 그 뒤 단계(session.rs)는 출처를 모른다.
+
+/// JSON 파일은 앞뒤만 잘라 읽을 수 없다 — 통째로 파싱해야 하므로 상한을 둔다.
+/// ponytail: 넘으면 건너뛴다. 카드 한 장 때문에 수십 MB를 파싱하지 않는다.
+const MAX_JSON_BYTES: u64 = 4 * 1024 * 1024;
+
+/// 이 이름의 파일은 세션 식별자를 파일명 대신 상위 폴더에서 가져온다.
+/// 한 폴더에 고정된 이름으로 쌓는 형식(Cline·Gemini)이 여기 해당한다.
+const FIXED_NAMES: &[&str] = &["api_conversation_history", "ui_messages", "logs", "info"];
+
+const TIME_KEYS: &[&str] = &[
+    "lastUpdatedAt",
+    "updatedAt",
+    "updated_at",
+    "timestamp",
+    "ts",
+    "time",
+    "createdAt",
+    "created_at",
+];
+
+/// 밀리초로 보이면 초로 내린다. 2001년 이전 시각을 다룰 일은 없다.
+fn epoch_seconds(raw: i64) -> i64 {
+    if raw > 100_000_000_000 {
+        raw / 1000
+    } else {
+        raw
+    }
+}
+
+fn time_value(v: &Json) -> Option<i64> {
+    for key in TIME_KEYS {
+        match v.get(key) {
+            Some(Json::Num(n)) if *n > 0.0 => return Some(epoch_seconds(*n as i64)),
+            Some(Json::Str(s)) => {
+                if let Some(t) = time::from_iso8601(s) {
+                    return Some(t);
+                }
+                if let Ok(n) = s.parse::<i64>() {
+                    if n > 0 {
+                        return Some(epoch_seconds(n));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `file:///d%3A/work` 같은 URI 도 경로로 받는다. 편집기 계열은 경로를
+/// URI 로 저장한다.
+pub(crate) fn local_path(raw: &str) -> Option<PathBuf> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let decoded = match raw.strip_prefix("file://") {
+        Some(rest) => {
+            let rest = rest.strip_prefix('/').unwrap_or(rest);
+            let bytes = rest.as_bytes();
+            let mut out = String::with_capacity(rest.len());
+            let mut i = 0;
+            while i < bytes.len() {
+                if bytes[i] == b'%' && i + 2 < bytes.len() {
+                    if let Ok(b) = u8::from_str_radix(&rest[i + 1..i + 3], 16) {
+                        out.push(b as char);
+                        i += 3;
+                        continue;
+                    }
+                }
+                out.push(bytes[i] as char);
+                i += 1;
+            }
+            out
+        }
+        None => raw.to_string(),
+    };
+    // 상대 경로는 어느 기준인지 알 수 없다. 잘못된 프로젝트를 보여주느니 비운다.
+    let path = PathBuf::from(decoded);
+    (path.is_absolute() || path.has_root()).then_some(path)
+}
+
+/// 사용자가 친 요청 하나의 식별자. 종결한 세션이 새 요청으로 돌아올 때
+/// 쓰이므로 실행마다 같은 값이어야 한다(Rust 기본 해셔는 그렇지 않다).
+fn request_marker(parts: &[&str]) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for part in parts {
+        for byte in (part.len() as u64).to_le_bytes().iter().chain(part.as_bytes()) {
+            hash = (hash ^ *byte as u64).wrapping_mul(0x100000001b3);
+        }
+    }
+    format!("r1:{hash:016x}")
+}
+
+/// JSON 문서를 이벤트 목록으로 편다. 배열이면 그대로, 객체면 대화 배열을
+/// 찾고, 없으면 객체 하나짜리 목록이다. 그다음은 JSONL 과 같은 추출기를 쓴다.
+fn json_events(v: Json) -> Vec<Json> {
+    if let Some(items) = v.as_array() {
+        return items.to_vec();
+    }
+    for key in [
+        "messages",
+        "apiConversationHistory",
+        "history",
+        "conversation",
+        "turns",
+        "events",
+        "requests",
+        "entries",
+    ] {
+        if let Some(items) = v.get(key).and_then(Json::as_array) {
+            if !items.is_empty() {
+                return items.to_vec();
+            }
+        }
+    }
+    vec![v]
+}
+
+fn file_identity(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_string_lossy().into_owned();
+    if FIXED_NAMES.contains(&stem.as_str()) {
+        if let Some(parent) = path.parent().and_then(|p| p.file_name()) {
+            return Some(parent.to_string_lossy().into_owned());
+        }
+    }
+    Some(stem)
+}
+
+/// JSON 파일 하나 = 세션 하나.
+pub fn read_json(path: &Path, mtime: i64) -> Option<Transcript> {
+    let size = std::fs::metadata(path).ok()?.len();
+    if size == 0 || size > MAX_JSON_BYTES {
+        return None;
+    }
+    let doc = parse(&std::fs::read_to_string(path).ok()?).ok()?;
+
+    let session_id = doc
+        .find_str(&["sessionId", "session_id", "taskId", "composerId"])
+        .filter(|s| !s.is_empty())
+        .or_else(|| file_identity(path));
+    let cwd = doc
+        .find_str(&[
+            "cwd",
+            "workingDirectory",
+            "working_dir",
+            "project_path",
+            "workspaceDirectory",
+            "folder",
+        ])
+        .and_then(|s| local_path(&s));
+    let model = doc
+        .find_str(&["model", "model_id", "modelName"])
+        .map(|m| normalize_model(&m));
+    let stamp = time_value(&doc);
+
+    let events = json_events(doc);
+    let first_prompt = events
+        .iter()
+        .find_map(first_user_text)
+        .map(|t| normalize_prompt(&t));
+    // 사용자 요청이 하나도 없으면 세션이 아니다. 편집기 폴더에 굴러다니는
+    // 설정 JSON 을 카드로 만들지 않는다.
+    first_prompt.as_ref()?;
+    let current_prompt = events
+        .iter()
+        .rev()
+        .find_map(first_user_text)
+        .map(|t| normalize_prompt(&t).chars().take(4000).collect::<String>());
+    let observed = stamp.or_else(|| events.iter().rev().find_map(time_value));
+    let last_event_at = observed.unwrap_or(mtime);
+
+    Some(Transcript {
+        request_marker: Some(request_marker(&[
+            current_prompt.as_deref().unwrap_or_default(),
+            &last_event_at.to_string(),
+        ])),
+        session_id,
+        current_prompt,
+        first_prompt,
+        auxiliary: false,
+        path: path.to_path_buf(),
+        last_event_at,
+        // 이 형식들은 턴 종료 이벤트가 없다. 시각이 파일 것이면 그렇다고 말한다.
+        inferred_time: observed.is_none(),
+        cwd,
+        model,
+        event_state: None,
+    })
+}
+
+fn json_sessions(agent: &str, now: i64, history: bool) -> Vec<Transcript> {
+    let (dirs, name) = crate::adapters::json_source(agent);
+    let mut files = Vec::new();
+    for root in dirs {
+        walk(root, now, &mut files, 0, history, "json", name);
+    }
+    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files
+        .iter()
+        .filter_map(|(p, m)| read_json(p, *m))
+        .collect()
+}
+
+// ------------------------------------------------------------ SQLite 소스
+
+/// 질의 결과 캐시. 편집기 DB 는 크고 갱신 주기는 2초다. 파일과 WAL 의 시각이
+/// 그대로면 질의 자체를 하지 않는다.
+static SQLITE_CACHE: OnceLock<Mutex<HashMap<(PathBuf, String), (i64, Vec<Transcript>)>>> =
+    OnceLock::new();
+/// 질의 실패 사유. `doctor` 전용이라 조용히 모아둔다.
+static SQLITE_PROBLEMS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+
+pub fn source_problems() -> Vec<String> {
+    SQLITE_PROBLEMS
+        .get()
+        .map(|m| m.lock().unwrap_or_else(|e| e.into_inner()).clone())
+        .unwrap_or_default()
+}
+
+fn note_problem(problem: String) {
+    let mut list = SQLITE_PROBLEMS
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if !list.contains(&problem) {
+        list.push(problem);
+    }
+}
+
+fn truthy(raw: &str) -> bool {
+    !matches!(raw, "" | "0" | "false" | "null")
+}
+
+pub(crate) fn row_transcript(file: &Path, row: &crate::sqlite::Row, stamp: i64) -> Option<Transcript> {
+    let id = crate::sqlite::get(row, "id")?.to_string();
+    let blob = crate::sqlite::get(row, "blob").and_then(|b| parse(b).ok());
+    let field = |column: &str, keys: &[&str]| {
+        crate::sqlite::get(row, column)
+            .map(str::to_string)
+            .or_else(|| blob.as_ref().and_then(|b| b.find_str(keys)))
+            .filter(|v| !v.trim().is_empty())
+    };
+
+    // richText 는 편집기 내부 구조체다. 사람이 읽을 문장만 쓴다.
+    let current_prompt = field("task", &["text"])
+        .map(|t| normalize_prompt(&t).chars().take(4000).collect::<String>())
+        .filter(|t| !t.is_empty());
+    // 실제 첫 요청이 제목보다 낫다. 제목은 대화가 비었을 때만 쓴다.
+    let first_prompt = field("summary", &["textPreview"])
+        .or_else(|| field("summary", &["name", "title"]))
+        .map(|t| normalize_prompt(&t))
+        .filter(|t| !t.is_empty());
+    // 요청도 제목도 없으면 빈 대화다. 카드로 만들지 않는다.
+    if current_prompt.is_none() && first_prompt.is_none() {
+        return None;
+    }
+
+    let last_event_at = crate::sqlite::get(row, "updated_ms")
+        .and_then(|v| v.parse::<i64>().ok())
+        .or_else(|| crate::sqlite::get(row, "updated_s").and_then(|v| v.parse::<i64>().ok()))
+        .filter(|v| *v > 0)
+        .map(epoch_seconds)
+        .or_else(|| blob.as_ref().and_then(time_value));
+
+    Some(Transcript {
+        request_marker: Some(request_marker(&[
+            current_prompt.as_deref().or(first_prompt.as_deref()).unwrap_or_default(),
+            &last_event_at.unwrap_or(stamp).to_string(),
+            &id,
+        ])),
+        session_id: Some(id.clone()),
+        current_prompt,
+        first_prompt,
+        auxiliary: crate::sqlite::get(row, "auxiliary").is_some_and(truthy),
+        // 실제 파일이 아니라 식별자다. 열지 않고 세션을 구분하는 데만 쓴다.
+        path: file.join(&id),
+        last_event_at: last_event_at.unwrap_or(stamp),
+        // DB 행에는 턴 경계가 없다. 시각이 행에서 나오지 않았으면 추정이다.
+        inferred_time: last_event_at.is_none(),
+        cwd: field("project", &["cwd", "workspaceDirectory", "folder"])
+            .and_then(|p| local_path(&p)),
+        model: field("model", &["model", "model_id", "modelName"]).map(|m| normalize_model(&m)),
+        event_state: None,
+    })
+}
+
+fn sqlite_sessions(agent: &str, now: i64, history: bool) -> Vec<Transcript> {
+    let mut out = Vec::new();
+    for source in crate::adapters::queries(agent) {
+        let file_time = match time::mtime(&source.file) {
+            Some(t) => t,
+            // DB 가 없는 게 정상이다 — 그 편집기를 안 쓰는 것뿐이다.
+            None => continue,
+        };
+        // WAL 에 최신 내용이 있을 수 있다. 둘 중 나중 시각을 본다.
+        let wal = PathBuf::from(format!("{}-wal", source.file.display()));
+        let stamp = time::mtime(&wal).unwrap_or(file_time).max(file_time);
+        if !history && now - stamp > MAX_AGE_SECS {
+            continue;
+        }
+        let key = (source.file.clone(), source.sql.clone());
+        let mut cache = SQLITE_CACHE
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some((cached_at, rows)) = cache.get(&key).filter(|(at, _)| *at == stamp) {
+            let _ = cached_at;
+            out.extend(rows.iter().cloned());
+            continue;
+        }
+        match crate::sqlite::query(&source.file, &source.sql) {
+            Ok(rows) => {
+                let found: Vec<Transcript> = rows
+                    .iter()
+                    .filter_map(|r| row_transcript(&source.file, r, stamp))
+                    .collect();
+                cache.insert(key, (stamp, found.clone()));
+                out.extend(found);
+            }
+            // 스키마는 편집기 업데이트마다 바뀔 수 있다. 그 소스만 비우고
+            // 나머지 에이전트는 그대로 보여준다.
+            Err(e) => note_problem(format!("{}: {e}", source.file.display())),
+        }
     }
     out
 }

@@ -185,3 +185,14 @@ New-Item -ItemType Directory -Force .tools/agent-detection-check | Out-Null
 rustc --edition 2021 --target x86_64-pc-windows-gnu tests/fixtures/process_stub.rs -o .tools/agent-detection-check/helper.exe
 node tests/windows-processes.cjs
 ```
+
+
+## 2026-09-07 — JSONL 이 아닌 소스 (JSON 파일, SQLite)
+
+- 코어 75개, CLI 통합 4개 통과(총 79개). 새 검사: JSON 파일 한 개가 세션 하나가 되는지(대표/최근 요청, 모델, cwd, 밀리초 시각, 고정 파일명일 때 상위 폴더가 식별자), 사용자 요청이 없는 JSON 은 세션이 되지 않는지, `file://` URI 경로 해석, SQLite 행의 열 이름 매핑과 빈 대화 제외, 스키마가 다를 때 그 질의만 실패하는지.
+- 이 PC 의 `winsqlite3.dll`(1.1 MB, Win11)로 실제 열기·질의·행 읽기를 확인했다. 테스트는 같은 엔진으로 임시 DB 를 만들어 돌리므로 픽스처 바이너리를 저장소에 넣지 않는다.
+- **실제 데이터 대조는 Cursor 하나뿐이다.** 이 PC 의 `AppData\Roaming\Cursor\User\globalStorage\state.vscdb`(6.7 MB, composerHeaders 21행, cursorDiskKV 853행)에서 `waid --json --history` 로 7개 세션이 목록에 떴다. 요청 텍스트·갱신 시각·보조 여부를 확인했고 상태는 전부 미확인으로 표시됐다. 질의 자체는 17행 2.1 ms 였다.
+- 첫 질의는 `h.isBestOfNSubcomposer` 열이 없어 실패했고 doctor 의 "소스 문제"에서 발견해 고쳤다. 실패한 소스가 앱을 멈추지 않는다는 것도 이때 확인했다.
+- Cline·Roo Code·VS Code Chat·Continue·Gemini CLI·opencode 는 **경로만 등록했고 실제 데이터로 대조하지 않았다.** 이 PC 에는 해당 대화 기록이 없다(`~/.continue/sessions/sessions.json` 은 빈 배열, VS Code 의 `chat.ChatSessionStore.index` 도 비어 있음). 형식이 다르면 목록에 안 뜰 수 있으며, 이를 지원 완료로 간주하지 않는다.
+- macOS·Linux 의 `libsqlite3` 경로와 WAL 로 잠긴 DB 의 사본 폴백은 이 환경에서 재현하지 못했다. 편집기 실행 중 읽기는 미검증이다.
+- 이번 변경은 코어 수집에 한정한다. 새 에이전트 카드의 실제 화면 확인은 하지 않았다.

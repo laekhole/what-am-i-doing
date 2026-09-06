@@ -41,6 +41,15 @@ pub enum Origin {
     User(PathBuf),
 }
 
+/// SQLite 소스 하나. `sql` 의 열 이름이 곧 waid 필드다 —
+/// `id · task · summary · project · updated_ms · model · auxiliary · blob`.
+/// 매핑 문법을 새로 만들지 않는다. `as` 는 이미 SQL 에 있다.
+#[derive(Debug, Clone)]
+pub struct Query {
+    pub file: PathBuf,
+    pub sql: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct Def {
     pub agent: Agent,
@@ -48,6 +57,13 @@ pub struct Def {
     pub exec: Vec<String>,
     /// 커맨드라인 어딘가에 나타나는 패키지 경로 표지.
     pub markers: Vec<String>,
+    /// SQLite 소스. 대화를 DB에 넣는 편집기 계열용 (sqlite.rs).
+    pub queries: Vec<Query>,
+    /// JSON 파일 루트. 한 파일이 세션 하나다.
+    pub json_dirs: Vec<PathBuf>,
+    /// JSON 루트에서 이 이름의 파일만 읽는다. 세션 폴더에 파일이 여럿이면
+    /// 이름을 고정하지 않는 한 같은 세션이 여러 장으로 뜬다.
+    pub json_name: Option<String>,
     /// 트랜스크립트 루트 **목록**. 비어 있으면 프로세스 감지만.
     ///
     /// 목록인 이유는 §5.1 이다. 같은 에이전트가 WSL·PowerShell·Git Bash·
@@ -59,40 +75,183 @@ pub struct Def {
 
 // ------------------------------------------------------------ 내장 정의
 
-/// (name, display, exec, markers, HOME 기준 트랜스크립트 경로)
-const BUILTIN: &[(&str, &str, &[&str], &[&str], Option<&str>)] = &[
-    (
-        "claude",
-        "Claude Code",
-        &["claude", "claude-code"],
-        &["@anthropic-ai/claude-code"],
-        Some(".claude/projects"),
-    ),
-    (
-        "codex",
-        "Codex",
-        &["codex", "codex-cli"],
-        &["@openai/codex"],
-        Some(".codex/sessions"),
-    ),
-    (
-        "gemini",
-        "Gemini CLI",
-        &["gemini", "gemini-cli"],
-        &["@google/gemini-cli"],
-        None,
-    ),
-    ("opencode", "opencode", &["opencode"], &["opencode-ai"], None),
-    ("aider", "Aider", &["aider"], &[], None),
-    ("cursor", "Cursor CLI", &["cursor-agent"], &[], None),
-    (
-        "copilot",
-        "Copilot CLI",
-        &["copilot", "github-copilot-cli"],
-        &["@github/copilot"],
-        Some(".copilot/session-state"),
-    ),
-    ("goose", "Goose", &["goose"], &[], None),
+struct Builtin {
+    name: &'static str,
+    display: &'static str,
+    exec: &'static [&'static str],
+    markers: &'static [&'static str],
+    /// HOME 기준 JSONL 트랜스크립트 루트.
+    jsonl: Option<&'static str>,
+    /// HOME 기준 JSON 파일 루트.
+    json: &'static [&'static str],
+    /// JSON 루트에서 읽을 파일 이름. 없으면 모든 `.json`.
+    json_name: Option<&'static str>,
+    /// HOME 기준 DB 경로와 질의. 실패하면 그 소스만 조용히 빈다.
+    sqlite: &'static [(&'static str, &'static str)],
+}
+
+const NONE: &[&str] = &[];
+const NO_SQL: &[(&str, &str)] = &[];
+
+// Cursor 는 세션 목록을 `composerHeaders` 테이블로 옮기는 중이다. 옛 배치도
+// 함께 물어본다 — 같은 세션 ID 는 뒤에서 하나로 합쳐지므로 중복은 없다.
+const CURSOR_HEADERS: &str = "select h.composerId as id, coalesce(h.lastUpdatedAt, h.recency, h.createdAt) as updated_ms, coalesce(h.isSubagent, 0) as auxiliary, d.value as blob from composerHeaders h left join cursorDiskKV d on d.key = 'composerData:' || h.composerId where coalesce(h.isArchived, 0) = 0 order by updated_ms desc limit 50";
+const CURSOR_DISK_KV: &str = "select substr(key, 14) as id, value as blob from cursorDiskKV where key like 'composerData:%' limit 50";
+
+const BUILTIN: &[Builtin] = &[
+    Builtin {
+        name: "claude",
+        display: "Claude Code",
+        exec: &["claude", "claude-code"],
+        markers: &["@anthropic-ai/claude-code"],
+        jsonl: Some(".claude/projects"),
+        json: NONE,
+        json_name: None,
+        sqlite: NO_SQL,
+    },
+    Builtin {
+        name: "codex",
+        display: "Codex",
+        exec: &["codex", "codex-cli"],
+        markers: &["@openai/codex"],
+        jsonl: Some(".codex/sessions"),
+        json: NONE,
+        json_name: None,
+        sqlite: NO_SQL,
+    },
+    Builtin {
+        name: "gemini",
+        display: "Gemini CLI",
+        exec: &["gemini", "gemini-cli"],
+        markers: &["@google/gemini-cli"],
+        jsonl: None,
+        json: &[".gemini/tmp"],
+        json_name: Some("logs.json"),
+        sqlite: NO_SQL,
+    },
+    Builtin {
+        name: "opencode",
+        display: "opencode",
+        exec: &["opencode"],
+        markers: &["opencode-ai"],
+        jsonl: None,
+        json: &[
+            ".local/share/opencode/storage/session/info",
+            "AppData/Local/opencode/storage/session/info",
+        ],
+        json_name: None,
+        sqlite: NO_SQL,
+    },
+    Builtin {
+        name: "aider",
+        display: "Aider",
+        exec: &["aider"],
+        markers: NONE,
+        jsonl: None,
+        json: NONE,
+        json_name: None,
+        sqlite: NO_SQL,
+    },
+    Builtin {
+        name: "cursor",
+        display: "Cursor",
+        exec: &["cursor-agent"],
+        markers: NONE,
+        jsonl: None,
+        json: NONE,
+        json_name: None,
+        sqlite: &[
+            (
+                "AppData/Roaming/Cursor/User/globalStorage/state.vscdb",
+                CURSOR_HEADERS,
+            ),
+            (
+                "AppData/Roaming/Cursor/User/globalStorage/state.vscdb",
+                CURSOR_DISK_KV,
+            ),
+            (
+                ".config/Cursor/User/globalStorage/state.vscdb",
+                CURSOR_HEADERS,
+            ),
+            (
+                "Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+                CURSOR_HEADERS,
+            ),
+        ],
+    },
+    Builtin {
+        name: "copilot",
+        display: "Copilot CLI",
+        exec: &["copilot", "github-copilot-cli"],
+        markers: &["@github/copilot"],
+        jsonl: Some(".copilot/session-state"),
+        json: NONE,
+        json_name: None,
+        sqlite: NO_SQL,
+    },
+    Builtin {
+        name: "goose",
+        display: "Goose",
+        exec: &["goose"],
+        markers: NONE,
+        jsonl: None,
+        json: NONE,
+        json_name: None,
+        sqlite: NO_SQL,
+    },
+    Builtin {
+        name: "cline",
+        display: "Cline",
+        exec: NONE,
+        markers: NONE,
+        jsonl: None,
+        json: &[
+            "AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/tasks",
+            "AppData/Roaming/Cursor/User/globalStorage/saoudrizwan.claude-dev/tasks",
+            ".config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks",
+            "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/tasks",
+        ],
+        json_name: Some("api_conversation_history.json"),
+        sqlite: NO_SQL,
+    },
+    Builtin {
+        name: "roo",
+        display: "Roo Code",
+        exec: NONE,
+        markers: NONE,
+        jsonl: None,
+        json: &[
+            "AppData/Roaming/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
+            "AppData/Roaming/Cursor/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
+            ".config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
+        ],
+        json_name: Some("api_conversation_history.json"),
+        sqlite: NO_SQL,
+    },
+    Builtin {
+        name: "vscode",
+        display: "VS Code Chat",
+        exec: NONE,
+        markers: NONE,
+        jsonl: None,
+        json: &[
+            "AppData/Roaming/Code/User/workspaceStorage",
+            ".config/Code/User/workspaceStorage",
+            "Library/Application Support/Code/User/workspaceStorage",
+        ],
+        json_name: None,
+        sqlite: NO_SQL,
+    },
+    Builtin {
+        name: "continue",
+        display: "Continue",
+        exec: &["continue"],
+        markers: &["@continuedev/cli"],
+        jsonl: None,
+        json: &[".continue/sessions"],
+        json_name: None,
+        sqlite: NO_SQL,
+    },
 ];
 
 /// 이 프로세스가 보는 "내 홈".
@@ -187,32 +346,61 @@ fn expand(raw: &str) -> Vec<PathBuf> {
 fn builtins() -> Vec<Def> {
     BUILTIN
         .iter()
-        .map(|(name, display, exec, markers, dir)| {
-            let mut transcript_dirs: Vec<PathBuf> = dir
-                .map(|d| home_candidates().into_iter().map(|h| h.join(d)).collect())
-                .unwrap_or_default();
+        .map(|b| {
+            let under_homes = |suffix: &str| -> Vec<PathBuf> {
+                home_candidates()
+                    .into_iter()
+                    .map(|h| h.join(suffix))
+                    .collect()
+            };
+            let mut transcript_dirs: Vec<PathBuf> = b.jsonl.map(under_homes).unwrap_or_default();
             // Include the explicitly configured Codex home alongside other local sessions.
             // User adapters still replace this built-in definition below.
-            if *name == "codex" {
+            if b.name == "codex" {
                 if let Some(root) = std::env::var_os("CODEX_HOME").filter(|root| !root.is_empty()) {
                     transcript_dirs.push(PathBuf::from(root).join("sessions"));
                 }
             }
-            if *name == "copilot" {
-                if let Some(root) = std::env::var_os("COPILOT_HOME").filter(|root| !root.is_empty()) {
+            if b.name == "copilot" {
+                if let Some(root) = std::env::var_os("COPILOT_HOME").filter(|root| !root.is_empty())
+                {
                     transcript_dirs.push(PathBuf::from(root).join("session-state"));
                 }
             }
             transcript_dirs.sort();
             transcript_dirs.dedup();
+
+            let mut json_dirs: Vec<PathBuf> = b.json.iter().flat_map(|d| under_homes(d)).collect();
+            json_dirs.sort();
+            json_dirs.dedup();
+
+            let mut queries: Vec<Query> = b
+                .sqlite
+                .iter()
+                .flat_map(|(file, sql)| {
+                    under_homes(file).into_iter().map(|f| Query {
+                        file: f,
+                        sql: (*sql).to_string(),
+                    })
+                })
+                .collect();
+            // 같은 DB 에 같은 질의를 두 번 던지지 않는다.
+            queries.sort_by(|a, b| (&a.file, &a.sql).cmp(&(&b.file, &b.sql)));
+            queries.dedup_by(|a, b| a.file == b.file && a.sql == b.sql);
+
             Def {
                 agent: Agent {
-                    name,
-                    display,
-                    has_reader: !transcript_dirs.is_empty(),
+                    name: b.name,
+                    display: b.display,
+                    has_reader: !transcript_dirs.is_empty()
+                        || !json_dirs.is_empty()
+                        || !queries.is_empty(),
                 },
-                exec: exec.iter().map(|s| s.to_string()).collect(),
-                markers: markers.iter().map(|s| s.to_string()).collect(),
+                exec: b.exec.iter().map(|s| s.to_string()).collect(),
+                markers: b.markers.iter().map(|s| s.to_string()).collect(),
+                queries,
+                json_dirs,
+                json_name: b.json_name.map(|n| n.to_string()),
                 transcript_dirs,
                 origin: Origin::Builtin,
             }
@@ -276,6 +464,44 @@ fn parse_def(path: &PathBuf, text: &str) -> Result<Def, String> {
     transcript_dirs.sort();
     transcript_dirs.dedup();
 
+    // JSON 소스 — 한 파일이 세션 하나다 (Cline·Continue·VS Code 채팅 등).
+    let mut json_dirs: Vec<PathBuf> = Vec::new();
+    if let Some(Val::Str(d)) = kv.get("transcript.json_dir") {
+        json_dirs.extend(expand(d));
+    }
+    for d in strings(&kv, "transcript.json_dirs") {
+        json_dirs.extend(expand(&d));
+    }
+    json_dirs.sort();
+    json_dirs.dedup();
+    let json_name = match kv.get("transcript.json_name") {
+        Some(Val::Str(n)) if !n.is_empty() => Some(n.clone()),
+        _ => None,
+    };
+
+    // SQLite 소스 — 열 이름이 곧 필드다. 매핑 문법을 따로 만들지 않는다.
+    let sql = match kv.get("sqlite.query") {
+        Some(Val::Str(q)) if !q.trim().is_empty() => Some(q.clone()),
+        _ => None,
+    };
+    let db = match kv.get("sqlite.file") {
+        Some(Val::Str(f)) if !f.trim().is_empty() => Some(f.clone()),
+        _ => None,
+    };
+    let queries: Vec<Query> = match (db, sql) {
+        (Some(db), Some(sql)) => expand(&db)
+            .into_iter()
+            .map(|file| Query {
+                file,
+                sql: sql.clone(),
+            })
+            .collect(),
+        // 반쪽짜리 정의는 조용히 무시하지 않는다. doctor 가 이유를 보여준다.
+        (Some(_), None) => return Err("sqlite.file 에는 sqlite.query 가 필요합니다".into()),
+        (None, Some(_)) => return Err("sqlite.query 에는 sqlite.file 이 필요합니다".into()),
+        (None, None) => Vec::new(),
+    };
+
     // 프로세스가 살아있는 동안만 유효하면 되므로 한 번 새는 건 문제가 아니다.
     // 어댑터는 시작 시 한 번만 읽는다.
     let name: &'static str = Box::leak(name.into_boxed_str());
@@ -285,10 +511,15 @@ fn parse_def(path: &PathBuf, text: &str) -> Result<Def, String> {
         agent: Agent {
             name,
             display,
-            has_reader: !transcript_dirs.is_empty(),
+            has_reader: !transcript_dirs.is_empty()
+                || !json_dirs.is_empty()
+                || !queries.is_empty(),
         },
         exec,
         markers,
+        queries,
+        json_dirs,
+        json_name,
         transcript_dirs,
         origin: Origin::User(path.clone()),
     })
@@ -357,6 +588,23 @@ pub fn by_name(name: &str) -> Option<Agent> {
 
 pub fn all() -> Vec<Agent> {
     table().iter().map(|d| d.agent).collect()
+}
+
+/// JSON 소스 루트와 파일 이름 필터.
+pub fn json_source(name: &str) -> (&'static [PathBuf], Option<&'static str>) {
+    match table().iter().find(|d| d.agent.name == name) {
+        Some(d) => (d.json_dirs.as_slice(), d.json_name.as_deref()),
+        None => (&[], None),
+    }
+}
+
+/// SQLite 소스 목록.
+pub fn queries(name: &str) -> &'static [Query] {
+    table()
+        .iter()
+        .find(|d| d.agent.name == name)
+        .map(|d| d.queries.as_slice())
+        .unwrap_or(&[])
 }
 
 /// 트랜스크립트 루트 목록. transcript.rs 가 이것만 보고 움직인다.

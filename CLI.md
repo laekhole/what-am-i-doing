@@ -102,11 +102,19 @@ waid --json --watch | your-own-thing
 
 프로세스 감지: Claude Code, Codex, Gemini CLI, opencode, Aider, Cursor CLI, Copilot CLI, Goose
 
-트랜스크립트 판독(= `llm`/`task`/마지막 `status`): Claude Code, Codex, Copilot CLI
+기록 판독(= `llm`/`task`/마지막 `status`): 저장 형식에 따라 세 갈래다.
+
+| 형식 | 에이전트 | 읽는 것 |
+|---|---|---|
+| JSONL 트랜스크립트 | Claude Code, Codex, Copilot CLI | 요청·모델·cwd·상태 이벤트 |
+| JSON 파일(세션 하나 = 파일 하나) | Cline, Roo Code, VS Code Chat, Continue, Gemini CLI, opencode | 요청·모델·cwd (상태는 미확인) |
+| SQLite | Cursor | 세션 목록·요청·갱신 시각 (상태는 미확인) |
+
+JSON·SQLite 소스에는 턴 종료 이벤트가 없다. 그래서 상태를 지어내지 않고 **미확인**으로 두며, 시각이 기록에서 나오지 않으면 파일 시각 추정으로 표시한다. SQLite 는 운영체제가 이미 가진 엔진을 실행 시점에 빌려 쓴다(Windows `winsqlite3.dll`, macOS·Linux `libsqlite3`). 없으면 그 소스만 꺼지고 `waid doctor` 가 이유를 보여준다. DB 는 **읽기 전용**으로 열고, 편집기가 잡고 있으면 사본을 떠서 한 번만 다시 시도한다.
 
 나머지는 프로세스만 감지하며 상태는 `unknown`이다. 명시적인 실행 옵션이 없으면 모델·작업도 미확인이다. Windows에서는 알려진 CLI와 Node/Bun/Deno/Python의 인자만 제한된 읽기 권한으로 조회한다. 조회 거부 시 실행 파일 이름으로 폴백한다. 별도 PowerShell 폴링·관리자 권한·외부 라이브러리를 요구하지 않는다.
 
-패키지 표지는 실행 스크립트 경로의 구성 요소에서만 비교한다. `node server.js @github/copilot`, `rg @google/gemini-cli`, eval 코드 안의 언급은 세션이 아니다. npx/pnpm/uv/uvx 같은 설치·실행 관리자는 제외하고 실제 자식 CLI를 감지한다. 임의의 런처 옵션·Cursor IDE·VS Code 확장·WSL 내부 프로세스는 지원 범위에 포함하지 않는다.
+패키지 표지는 실행 스크립트 경로의 구성 요소에서만 비교한다. `node server.js @github/copilot`, `rg @google/gemini-cli`, eval 코드 안의 언급은 세션이 아니다. npx/pnpm/uv/uvx 같은 설치·실행 관리자는 제외하고 실제 자식 CLI를 감지한다. 임의의 런처 옵션·WSL 내부 프로세스는 프로세스 감지 범위에 포함하지 않는다. Cursor IDE 와 VS Code 확장은 프로세스로는 잡지 않고 저장된 기록으로만 읽는다 — 편집기 창 자체를 세션으로 오탐하지 않기 위해서다.
 
 Copilot은 [공식 저장 경로](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/chronicle)의 `~/.copilot/session-state/<id>/events.jsonl`을 읽는다. [COPILOT_HOME](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)을 설정하면 그 아래 session-state도 읽는다. 다른 --config-dir 경로는 사용자 어댑터로 설정한다. 인증 설정 파일이나 SQLite DB는 읽지 않는다.
 
@@ -132,9 +140,38 @@ dir  = "~/.mytool/sessions"          # 선택. 있으면 llm/task/status 가 열
 dirs = ["/opt/agent/logs"]           # 루트가 여럿이면 목록으로
 ```
 
+JSONL 이 아닌 형식도 같은 파일에서 설정한다.
+
+```toml
+[transcript]
+json_dir  = "~/.mytool/threads"      # 세션 하나 = JSON 파일 하나
+json_name = "conversation.json"      # 선택. 한 폴더에 파일이 여럿일 때 이름 고정
+
+[sqlite]
+file  = "~/AppData/Roaming/MyTool/state.db"
+query = "select id as id, title as summary, prompt as task, updated_at as updated_ms from threads order by updated_ms desc limit 50"
+```
+
+**SQLite 는 열 이름이 곧 필드다.** 매핑 문법을 따로 만들지 않았다 — `as` 는 이미 SQL 에 있다.
+
+| 열 | 뜻 |
+|---|---|
+| `id` | 세션 식별자 (필수) |
+| `task` | 현재 요청 |
+| `summary` | 대표 요청 또는 제목 |
+| `project` | 프로젝트 경로. `file://` URI 도 받는다 |
+| `updated_ms` / `updated_s` | 마지막 활동 시각 (밀리초 / 초) |
+| `model` | 모델 |
+| `auxiliary` | 0 이 아니면 보조 세션 |
+| `blob` | JSON 문자열. 위 열이 없을 때 이 안에서 찾는다 |
+
+`blob` 은 편집기가 대화를 통째로 JSON 으로 넣어 둔 열을 위한 것이다. 열이 비어 있으면 `text`·`textPreview`·`name`·`cwd`·`model` 같은 이름을 그 JSON 안에서 찾는다.
+
+질의가 실패해도(스키마 변경 등) 앱은 계속 돈다. 그 소스만 비고 `waid doctor` 의 **소스 문제**에 사유가 남는다.
+
 정규식이 아니라 실행 파일 이름 목록이다. 커맨드라인 전체를 정규식으로 훑으면 `vim claude.md`가 Claude Code로 잡힌다. 우리가 묻는 것은 "이 프로세스의 실행 파일이 에이전트인가"뿐이다.
 
-`[transcript] dir` 을 주면 그 경로의 JSONL을 훑어 지원하는 이벤트에서 모델·요청·cwd·상태를 읽는다. 새로운 로그 형식은 리더 수정이 필요할 수 있다.
+`[transcript] dir` 을 주면 그 경로의 JSONL을, `json_dir` 을 주면 그 경로의 JSON 파일을 훑어 모델·요청·cwd·상태를 읽는다. JSON 파일은 4 MiB 까지만 읽고, 사용자 요청이 하나도 없는 문서는 세션으로 만들지 않는다 — 편집기 폴더에 굴러다니는 설정 JSON 이 카드가 되면 안 된다. 완전히 새로운 이벤트 이름을 쓰는 형식은 리더 수정이 필요할 수 있다.
 
 ### 여러 실행 환경을 한 화면에
 

@@ -9,6 +9,7 @@ mod proc;
 mod render;
 mod serve;
 mod session;
+mod sqlite;
 mod theme;
 mod tmpl;
 mod time;
@@ -274,6 +275,15 @@ fn doctor() {
         else if procfs { "/proc (정확: cwd 확보 가능)" } else { "ps 폴백 (cwd 없음)" }
     );
 
+    println!(
+        "SQLite          {}",
+        if sqlite::available() {
+            "OS 라이브러리 사용 가능 (편집기 DB 읽기 O)"
+        } else {
+            "없음 — SQLite 소스는 꺼집니다"
+        }
+    );
+
     let home = std::env::var("HOME").unwrap_or_else(|_| "(unset)".into());
     println!("HOME            {home}");
     if let Some(home) = adapters::home() {
@@ -337,7 +347,21 @@ fn doctor() {
                 p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
             ),
         };
-        let reader = if a.has_reader { "트랜스크립트 O" } else { "트랜스크립트 X" };
+        let mut kinds: Vec<&str> = Vec::new();
+        if !d.transcript_dirs.is_empty() {
+            kinds.push("jsonl");
+        }
+        if !d.json_dirs.is_empty() {
+            kinds.push("json");
+        }
+        if !d.queries.is_empty() {
+            kinds.push("sqlite");
+        }
+        let reader = if kinds.is_empty() {
+            "읽기 X".to_string()
+        } else {
+            kinds.join("+")
+        };
         println!("  {:<12} {:<16} 실행 중 {:<3} {}", a.name, reader, n, origin);
     }
 
@@ -349,9 +373,13 @@ fn doctor() {
         println!("  {:<12} {} 개", a.name, ts.len());
         // 루트를 전부 보여주고, 각각 실제로 존재하는지 표시한다.
         // "어느 셸에서 띄웠든 한 화면에"가 안 될 때 여기서 원인이 보여야 한다.
-        for root in &d.transcript_dirs {
+        for root in d.transcript_dirs.iter().chain(d.json_dirs.iter()) {
             let mark = if root.is_dir() { "O" } else { "· 없음" };
             println!("      [{mark}] {}", root.display());
+        }
+        for q in &d.queries {
+            let mark = if q.file.is_file() { "O" } else { "· 없음" };
+            println!("      [{mark}] {} (sqlite)", q.file.display());
         }
         for t in ts.iter().take(3) {
             println!(
@@ -360,6 +388,15 @@ fn doctor() {
                 t.cwd.as_ref().map(|c| c.display().to_string()).unwrap_or_else(|| "?".into()),
                 t.model.clone().unwrap_or_else(|| "?".into())
             );
+        }
+    }
+
+    // 위 목록을 만들며 실패한 질의. "왜 Cursor 세션이 안 보이지"의 답이다.
+    let source_problems = transcript::source_problems();
+    if !source_problems.is_empty() {
+        println!("\n소스 문제");
+        for p in &source_problems {
+            println!("  ! {p}");
         }
     }
 }

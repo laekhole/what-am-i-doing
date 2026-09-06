@@ -542,7 +542,8 @@ fn adapter_markers_alone_are_enough() {
 fn builtin_table_is_intact_after_refactor() {
     let names: Vec<&str> = adapters::all().iter().map(|a| a.name).collect();
     for expected in [
-        "claude", "codex", "gemini", "opencode", "aider", "cursor", "copilot", "goose",
+        "claude", "codex", "gemini", "opencode", "aider", "cursor", "copilot", "goose", "cline",
+        "roo", "vscode", "continue",
     ] {
         assert!(names.contains(&expected), "{expected} 가 사라졌다");
     }
@@ -550,6 +551,11 @@ fn builtin_table_is_intact_after_refactor() {
     assert!(adapters::by_name("claude").unwrap().has_reader);
     assert!(adapters::by_name("copilot").unwrap().has_reader);
     assert!(!adapters::by_name("aider").unwrap().has_reader);
+    // JSONL 이 아닌 소스도 리더다 — Cursor 는 SQLite, Cline 은 JSON 파일이다.
+    assert!(adapters::by_name("cursor").unwrap().has_reader);
+    assert!(adapters::by_name("cline").unwrap().has_reader);
+    assert!(!adapters::queries("cursor").is_empty());
+    assert!(!adapters::json_source("cline").0.is_empty());
 }
 
 // ------------------------------------------------------- 세션 식별자
@@ -1112,4 +1118,135 @@ fn copilot_turn_end_is_not_session_completion() {
         (r#"{"type":"session.error","data":{}}"#, State::Error),
         (r#"{"type":"session.shutdown","data":{"shutdownType":"error"}}"#, State::Error),
     ] { assert_eq!(transcript::event_state(&json::parse(event).unwrap()), Some(expected)); }
+}
+
+// ------------------------------------------------------- SQLite 소스 (v0.6)
+
+#[test]
+fn sqlite_reads_rows_by_column_name() {
+    // OS 의 SQLite 를 빌려 쓴다. 없는 환경에서는 소스가 조용히 꺼져야 한다.
+    if !crate::sqlite::available() {
+        assert!(crate::sqlite::query(std::path::Path::new("none.db"), "select 1").is_err());
+        return;
+    }
+    let path = std::env::temp_dir().join(format!("waid-sqlite-test-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    crate::sqlite::exec(&path, "create table t (id text, task text, updated_ms integer)").unwrap();
+    crate::sqlite::exec(
+        &path,
+        "insert into t values ('a', '첫 요청', 1700000000000), ('b', '', 1700000001000)",
+    )
+    .unwrap();
+    let rows = crate::sqlite::query(&path, "select id, task, updated_ms from t order by id").unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(crate::sqlite::get(&rows[0], "id"), Some("a"));
+    assert_eq!(crate::sqlite::get(&rows[0], "task"), Some("첫 요청"));
+    assert_eq!(crate::sqlite::get(&rows[0], "updated_ms"), Some("1700000000000"));
+    // 빈 값은 없는 것으로 다룬다 — 카드에 빈 문자열을 띄우지 않는다.
+    assert_eq!(crate::sqlite::get(&rows[1], "task"), None);
+    let _ = std::fs::remove_file(&path);
+}
+
+// ------------------------------------------- JSONL 이 아닌 소스 (§4.1, v0.6)
+
+#[test]
+fn json_file_becomes_one_session() {
+    // Cline·Roo 처럼 세션 하나를 JSON 배열 한 파일로 쓰는 형식.
+    let dir = std::env::temp_dir().join(format!("waid-json-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("api_conversation_history.json");
+    std::fs::write(
+        &path,
+        r#"[
+          {"role":"user","content":"첫 요청","timestamp":1700000000000,"cwd":"D:/work"},
+          {"role":"assistant","content":"작업 중","model":"claude-sonnet-5"},
+          {"role":"user","content":"두 번째 요청","timestamp":1700000060000}
+        ]"#,
+    )
+    .unwrap();
+    let t = crate::transcript::read_json(&path, 1).expect("세션으로 읽혀야 한다");
+    // 대표 요청은 첫 요청, 작업은 최근 요청이다 — JSONL 과 같은 규칙이다.
+    assert_eq!(t.first_prompt.as_deref(), Some("첫 요청"));
+    assert_eq!(t.current_prompt.as_deref(), Some("두 번째 요청"));
+    assert_eq!(t.model.as_deref(), Some("sonnet-5"));
+    assert_eq!(t.cwd, Some(std::path::PathBuf::from("D:/work")));
+    // 파일 이름이 고정된 형식은 상위 폴더가 세션 식별자다.
+    assert_eq!(
+        t.session_id.as_deref(),
+        dir.file_name().and_then(|n| n.to_str())
+    );
+    // 밀리초 타임스탬프는 초로 내려온다.
+    assert_eq!(t.last_event_at, 1700000060);
+    assert!(!t.inferred_time);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn json_without_a_user_request_is_not_a_session() {
+    // 편집기 폴더에는 설정 JSON 이 굴러다닌다. 카드로 만들면 안 된다.
+    let path = std::env::temp_dir().join(format!("waid-json-cfg-{}.json", std::process::id()));
+    std::fs::write(&path, r#"{"version":1,"entries":{}}"#).unwrap();
+    assert!(crate::transcript::read_json(&path, 1).is_none());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn file_uri_becomes_a_local_path() {
+    // 편집기 계열은 경로를 URI 로 저장한다.
+    assert_eq!(
+        crate::transcript::local_path("file:///d%3A/work/repo"),
+        Some(std::path::PathBuf::from("d:/work/repo"))
+    );
+    assert_eq!(
+        crate::transcript::local_path("D:\\work"),
+        Some(std::path::PathBuf::from("D:\\work"))
+    );
+    // 상대 경로는 기준을 알 수 없다. 틀린 프로젝트를 보여주느니 비운다.
+    assert_eq!(crate::transcript::local_path("../work"), None);
+    assert_eq!(crate::transcript::local_path(""), None);
+}
+
+#[test]
+fn sqlite_row_becomes_a_session() {
+    // 열 이름이 곧 필드다. 매핑 문법을 따로 두지 않는다.
+    let db = std::path::PathBuf::from("state.vscdb");
+    let row: crate::sqlite::Row = vec![
+        ("id".into(), "abc".into()),
+        ("updated_ms".into(), "1700000000000".into()),
+        ("auxiliary".into(), "1".into()),
+        (
+            "blob".into(),
+            r#"{"name":"제목","text":"최근 요청","fullConversationHeadersOnly":[{"grouping":{"textPreview":"첫 요청"}}]}"#
+                .into(),
+        ),
+    ];
+    let t = crate::transcript::row_transcript(&db, &row, 5).expect("행 하나가 세션 하나다");
+    assert_eq!(t.session_id.as_deref(), Some("abc"));
+    assert_eq!(t.current_prompt.as_deref(), Some("최근 요청"));
+    // 제목보다 실제 첫 요청이 우선한다.
+    assert_eq!(t.first_prompt.as_deref(), Some("첫 요청"));
+    assert!(t.auxiliary);
+    assert_eq!(t.last_event_at, 1700000000);
+    assert!(!t.inferred_time);
+    // DB 행에는 턴 경계가 없다. 상태를 지어내지 않는다.
+    assert!(t.event_state.is_none());
+
+    // 요청도 제목도 없는 빈 대화는 카드가 되지 않는다.
+    let empty: crate::sqlite::Row = vec![("id".into(), "x".into()), ("blob".into(), "{}".into())];
+    assert!(crate::transcript::row_transcript(&db, &empty, 5).is_none());
+}
+
+#[test]
+fn sqlite_source_survives_a_changed_schema() {
+    // 편집기가 스키마를 바꾸면 그 소스만 비어야 한다. 앱은 계속 돈다.
+    if !crate::sqlite::available() {
+        return;
+    }
+    let path = std::env::temp_dir().join(format!("waid-schema-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    crate::sqlite::exec(&path, "create table other (x text)").unwrap();
+    assert!(crate::sqlite::query(&path, "select id from composerHeaders").is_err());
+    // 같은 DB 의 다른 질의는 여전히 동작한다.
+    assert!(crate::sqlite::query(&path, "select x as id from other").is_ok());
+    let _ = std::fs::remove_file(&path);
 }
