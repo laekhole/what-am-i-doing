@@ -762,7 +762,8 @@ fn transcript_without_process_keeps_cwd_task_and_waiting() {
         auxiliary: false,
         path: "fixture.jsonl".into(),
         last_event_at: 100,
-        cwd: Some("project".into()),
+        // Keep this fixture outside the checkout, including detached tag builds.
+        cwd: Some(std::env::temp_dir().join("waid-session-fixture/project")),
         model: Some("claude-opus-4-6".into()),
         first_prompt: Some("Windows MVP".into()),
         event_state: Some(State::Waiting),
