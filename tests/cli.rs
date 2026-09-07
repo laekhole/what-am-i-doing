@@ -36,6 +36,7 @@ fn native_binary_serves_transcript_without_process_and_streams_updates() {
     let log = transcripts.join("session.jsonl");
     fs::write(&log, "{\"type\":\"user\",\"cwd\":\"project\",\"message\":{\"content\":\"MVP fixture\"}}\n{\"type\":\"assistant\",\"message\":{\"model\":\"test-model\",\"stop_reason\":\"end_turn\"}}\n").unwrap();
     fixture.child = Some(Command::new(env!("CARGO_BIN_EXE_waid"))
+        .current_dir(&fixture.dir)
         .args(["--agent", "fixture", "--html", "--watch", "--port", "0", "--interval", "1"])
         .env("WAID_ADAPTERS", &adapters).stderr(Stdio::piped()).stdout(Stdio::null()).spawn().unwrap());
     let stderr = fixture.child.as_mut().unwrap().stderr.take().unwrap();
@@ -94,6 +95,7 @@ fn configured_codex_home_streams_turn_transitions_and_partial_writes() {
         "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n",
     )).unwrap();
     fixture.child = Some(Command::new(env!("CARGO_BIN_EXE_waid"))
+        .current_dir(&fixture.dir)
         .args(["--agent", "codex", "--json", "--watch", "--interval", "1"])
         .env("HOME", &home).env("USERPROFILE", &home).env("CODEX_HOME", &codex)
         .env("WAID_ADAPTERS", fixture.dir.join("no-adapters"))
@@ -167,6 +169,7 @@ fn history_includes_old_idle_and_metadata_only_logs_without_completing_them() {
     }
     let run = |history| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_waid"));
+        command.current_dir(&fixture.dir);
         command.args(["--json", "--agent", "fixture"]).env("WAID_ADAPTERS", &adapters);
         if history { command.arg("--history"); }
         let output = command.output().unwrap();
@@ -200,6 +203,7 @@ fn copilot_default_and_configured_roots_discover_only_session_logs() {
         fs::write(session.join("telemetry.jsonl"), "{\"type\":\"user.message\",\"data\":{\"content\":\"not-a-session\"}}\n").unwrap();
     }
     let output = Command::new(env!("CARGO_BIN_EXE_waid"))
+        .current_dir(&fixture.dir)
         .args(["--agent", "copilot", "--json", "--history"])
         .env("HOME", &home).env("USERPROFILE", &home).env("COPILOT_HOME", &configured)
         .env("WAID_ADAPTERS", fixture.dir.join("no-adapters"))
