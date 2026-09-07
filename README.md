@@ -60,11 +60,14 @@ For the GNU target, add `--target x86_64-pc-windows-gnu` to the core and desktop
 
 ## Using the app
 
-The default window is **360×420 logical pixels**. Each session appears as a card with a distinct **project name, task name, status badge, and agent/model**. Status badges combine symbols, colors, and text. The waid logo appears at the top, and harness logos appear on cards. The title bar has **Always on top**, **Minimize**, and **Close** controls. Drag the title area to move the window and its edges to resize it.
+The default window is **600×780 logical pixels**, with expandable session cards in one column and an optional two-column view. Each card shows the project, latest request, status badge, and model beneath the status. Bundled Pretendard SemiBold body text and Bold headings keep text clear. The waid logo appears at the top, and harness logos appear on cards. Drag the title area to move the window and its edges to resize it.
 
 - **Always on top** keeps the window above other normal windows. It is separate from session **Pin**.
 - **Transparency** opens a **0–60%** slider. Always-on-top and transparency settings persist across restarts.
-- **···** expands the details, search, pin, dismiss, and template controls. Double-click a list item or press Enter to read a long request in the details view.
+- Click a card header to expand the latest request, answer, and first prompt. Use the prompt's copy button to copy it. Collapsed cards show minutes ago within an hour, hours ago within 24 hours, and `yy-mm-dd` afterward; expanded cards always show `yy-mm-dd`.
+- Click a harness logo or **Open session** to switch to the matching existing Orca session. This uses the original session ID; an unavailable session produces a message instead of opening a different conversation.
+- **Minimize** and **Close** hide the window in the system tray. Click the tray icon to restore it, or choose **Exit** from its menu to quit.
+- **···** expands the details, search, pin, dismiss, and template controls. Double-click a two-column list item or press Enter to open its session.
 - **Search** (`Ctrl+F`) opens the expanded view. Search tasks, projects, models, agents, and folders, combined with status and agent filters. Use **Compact** or Esc to return to the small window.
 - **Dismiss** (`Ctrl+D`) removes the selected session from the default list. Find it in **Show all** and use **Restore** to bring it back. A dismissed session returns automatically when a **new user request** is logged. Idle status, waiting for a response, or a missing process alone never dismisses it automatically.
 - **Pin** (`Ctrl+P`) keeps a session at the top; **Hide** (`Ctrl+H`) hides it from the list. **Show all** includes dismissed, hidden, and auxiliary entries.

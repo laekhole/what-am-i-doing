@@ -401,6 +401,8 @@ fn populated_default_template_keeps_all_five_fields() {
     use crate::session::{Confidence, Session, State, Task};
     let mut session = Session {
         request_at: None,
+        last_answer: None,
+        session_id: None,
         summary: None,
         request_marker: None,
         auxiliary: false,
@@ -585,6 +587,8 @@ fn dedupe_extends_suffix_until_titles_are_unique() {
     };
     let mk = |id: &str| crate::session::Session {
         request_at: None,
+        last_answer: None,
+        session_id: None,
         summary: None,
         request_marker: None,
         auxiliary: false,
@@ -755,8 +759,9 @@ fn transcript_without_process_keeps_cwd_task_and_waiting() {
     use crate::session::{self, Confidence, State};
     let mut transcript = crate::transcript::Transcript {
         request_at: None,
+        last_answer: None,
         inferred_time: false,
-        session_id: None,
+        session_id: Some("original-session-id".into()),
         current_prompt: None,
         request_marker: None,
         auxiliary: false,
@@ -773,6 +778,9 @@ fn transcript_without_process_keeps_cwd_task_and_waiting() {
     assert_eq!(session.state, State::Waiting);
     assert_eq!(session.title, "project");
     assert_eq!(session.pid, None);
+    assert_eq!(session.session_id.as_deref(), Some("original-session-id"));
+    assert!(session::to_json(&[session.clone()], 200, false)
+        .contains("\"session_id\":\"original-session-id\""));
     assert_eq!(session.task.confidence, Confidence::Inferred);
     assert_eq!(session.llm_id.as_deref(), Some("claude-opus-4-6"));
     assert_eq!(session.llm_display.as_deref(), Some("opus-4.6"));
@@ -883,6 +891,29 @@ fn normalized_prompt_is_bounded_without_splitting_unicode() {
             .count(),
         200
     );
+}
+
+#[test]
+fn conversation_answer_is_text_from_the_current_turn_only() {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("waid-answer-{}.jsonl", std::process::id()));
+    let mut file = std::fs::File::create(&path).unwrap();
+    writeln!(file, "{}", r#"{"type":"user","message":{"content":"첫 요청"}}"#).unwrap();
+    for answer in [
+        r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"답변 하나"}]}}"#,
+        r#"{"type":"response_item","payload":{"role":"assistant","content":[{"type":"output_text","text":"답변 둘"}]}}"#,
+        r#"{"type":"assistant.message","data":{"content":"답변 셋"}}"#,
+    ] {
+        writeln!(file, "{answer}").unwrap(); file.flush().unwrap();
+        let t = crate::transcript::read(&path, 1).unwrap();
+        assert!(t.last_answer.as_deref().unwrap().starts_with("답변"));
+        assert!(!t.last_answer.as_deref().unwrap().contains("private"));
+    }
+    writeln!(file, "{}", r#"{"type":"user","message":{"content":"새 요청"}}"#).unwrap(); file.flush().unwrap();
+    assert!(crate::transcript::read(&path, 2).unwrap().last_answer.is_none());
+    writeln!(file, "{}", r#"{"type":"assistant","message":{"content":[{"type":"tool_use","input":{"text":"not an answer"}}]}}"#).unwrap(); file.flush().unwrap();
+    assert!(crate::transcript::read(&path, 3).unwrap().last_answer.is_none());
+    drop(file); std::fs::remove_file(path).unwrap();
 }
 
 #[test]

@@ -6,9 +6,9 @@ param(
     [string]$OutputDirectory = (Join-Path $PSScriptRoot 'target/release/bundle')
 )
 $ErrorActionPreference = 'Stop'
-$files = @('waid-desktop.exe', 'waid.exe') | ForEach-Object {
+$files = @('waid-desktop.exe', 'waid.exe', 'FONT-LICENSE.txt') | ForEach-Object {
     $file = Get-Item -LiteralPath (Join-Path $BinaryDirectory $_)
-    if ($file.PSIsContainer -or $file.Length -eq 0) { throw "Missing binary: $_" }
+    if ($file.PSIsContainer -or $file.Length -eq 0) { throw "Missing release file: $_" }
     $file.FullName
 }
 $name = "waid-$Tag-windows-x64.zip"
@@ -20,11 +20,11 @@ if ((Test-Path -LiteralPath $zip) -or (Test-Path -LiteralPath $sums)) {
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 Compress-Archive -LiteralPath $files -DestinationPath $zip -CompressionLevel Optimal
 
-# Verify both executable contents, not just whether a ZIP file was created.
+# Verify the executables and bundled font license inside the ZIP.
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
 try {
-    if ($archive.Entries.Count -ne 2) { throw 'The portable ZIP must contain exactly two executables.' }
+    if ($archive.Entries.Count -ne $files.Count) { throw 'The portable ZIP must contain both executables and the font license.' }
     foreach ($file in $files) {
         $entry = $archive.GetEntry([System.IO.Path]::GetFileName($file))
         if (-not $entry) { throw "ZIP entry missing: $file" }

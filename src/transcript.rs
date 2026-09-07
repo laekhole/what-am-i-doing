@@ -28,6 +28,7 @@ const MAX_AGE_SECS: i64 = 24 * 3600;
 
 #[derive(Debug, Clone)]
 pub struct Transcript {
+    pub last_answer: Option<String>,
     pub session_id: Option<String>,
     pub current_prompt: Option<String>,
     pub request_marker: Option<String>,
@@ -224,6 +225,10 @@ pub fn read(path: &Path, mtime: i64) -> Option<Transcript> {
     let request = tail_json
         .iter()
         .find_map(|v| first_user_text(v).map(|text| (v, text)));
+    let last_answer = tail_json.iter()
+        .take_while(|v| first_user_text(v).is_none())
+        .find_map(assistant_text)
+        .or_else(|| if request.is_none() { previous.and_then(|t| t.last_answer.clone()) } else { None });
     let current_prompt = request
         .as_ref()
         .map(|(_, text)| text.chars().take(4000).collect())
@@ -309,6 +314,7 @@ pub fn read(path: &Path, mtime: i64) -> Option<Transcript> {
         .map(|c| c.transcript.last_event_at)
         .unwrap_or(mtime);
     let transcript = Transcript {
+        last_answer,
         session_id,
         current_prompt,
         request_marker,
@@ -423,10 +429,25 @@ fn first_user_text(v: &Json) -> Option<String> {
     clean_user_text(&text)
 }
 
-/// 사용자가 친 게 아니라 하네스가 주입한 텍스트를 걸러낸다.
-///
-/// 이걸 안 하면 거의 모든 세션의 task 컬럼이 "Caveat: The messages below..."
-/// 로 똑같이 채워진다. 실제로 처음 만들면 반드시 밟는 함정이다.
+/// Visible assistant text only; thinking and tool blocks are excluded.
+fn assistant_text(v: &Json) -> Option<String> {
+    if copilot_child(v) { return None; }
+    let kind = v.get("type").and_then(Json::as_str);
+    let content = match kind {
+        Some("assistant.message") => v.get("data")?.get("content")?,
+        Some("event_msg") if v.get("payload")?.get("type")?.as_str() == Some("agent_message") => v.get("payload")?.get("message")?,
+        _ => {
+            let message = if kind == Some("response_item") { v.get("payload")? } else { v };
+            if message.get("role").and_then(Json::as_str) != Some("assistant")
+                && message.get("type").and_then(Json::as_str) != Some("assistant") { return None; }
+            message.get("message").unwrap_or(message).get("content")?
+        }
+    };
+    content.text_content().filter(|s| !s.trim().is_empty())
+        .map(|s| s.chars().take(4000).collect())
+}
+
+/// Filter harness-injected context from real user requests.
 fn clean_user_text(text: &str) -> Option<String> {
     let mut text = text.trim();
     for _ in 0..16 {
@@ -745,6 +766,7 @@ pub fn read_json(path: &Path, mtime: i64) -> Option<Transcript> {
 
     Some(Transcript {
         request_at: None,
+        last_answer: events.iter().rev().take_while(|v| first_user_text(v).is_none()).find_map(assistant_text),
         request_marker: Some(request_marker(&[
             current_prompt.as_deref().unwrap_or_default(),
             &last_event_at.to_string(),
@@ -839,6 +861,7 @@ pub(crate) fn row_transcript(file: &Path, row: &crate::sqlite::Row, stamp: i64) 
 
     Some(Transcript {
         request_at: None,
+        last_answer: None,
         request_marker: Some(request_marker(&[
             current_prompt.as_deref().or(first_prompt.as_deref()).unwrap_or_default(),
             &last_event_at.unwrap_or(stamp).to_string(),

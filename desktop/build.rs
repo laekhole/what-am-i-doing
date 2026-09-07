@@ -17,6 +17,12 @@ fn main() {
     println!("cargo:rerun-if-changed={}", core.display());
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let profile = out.ancestors().nth(3).unwrap();
+    println!("cargo:rerun-if-changed=assets/fonts/LICENSE.txt");
+    std::fs::write(
+        profile.join("FONT-LICENSE.txt"),
+        include_bytes!("assets/fonts/LICENSE.txt"),
+    )
+    .expect("write the bundled font license");
     let bytes = std::fs::read(&core).expect(
         "build the native waid core first, or set WAID_CORE_PATH to the matching target binary",
     );
@@ -33,6 +39,10 @@ fn embed_icon() {
     let resource = manifest_dir.join("icon.rc");
     let icon = manifest_dir.parent().unwrap().join("assets/waid.ico");
     println!("cargo:rerun-if-changed={}", resource.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir.join("app.manifest").display()
+    );
     println!("cargo:rerun-if-changed={}", icon.display());
 
     let out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
@@ -71,8 +81,12 @@ fn embed_icon() {
         "resource compiler failed for {}",
         icon.display()
     );
-    assert!(output.is_file(), "resource compiler did not create {}", output.display());
-    println!("cargo:rustc-link-arg-bin=waid-desktop={}", output.display());
+    assert!(
+        output.is_file(),
+        "resource compiler did not create {}",
+        output.display()
+    );
+    println!("cargo:rustc-link-arg={}", output.display());
 }
 
 fn find_tool(name: &str, manifest_dir: &Path) -> PathBuf {
@@ -93,7 +107,6 @@ fn tool_on_path(name: &str) -> bool {
     let Some(path) = std::env::var_os("PATH") else {
         return false;
     };
-    std::env::split_paths(&path).any(|dir| {
-        dir.join(name).is_file() || dir.join(format!("{name}.exe")).is_file()
-    })
+    std::env::split_paths(&path)
+        .any(|dir| dir.join(name).is_file() || dir.join(format!("{name}.exe")).is_file())
 }

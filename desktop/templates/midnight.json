@@ -1,15 +1,15 @@
 {
   "version": 1,
   "name": "Midnight",
-  "font_size": 13,
+  "font_size": 12,
   "padding": 10,
-  "line_gap": 3,
+  "line_gap": 2,
   "fields": [
     "task",
-    "status",
-    "project",
     "agent",
-    "model"
+    "project",
+    "model",
+    "status"
   ],
   "colors": {
     "background": "#101827",

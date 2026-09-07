@@ -12,6 +12,11 @@ use std::{
 #[cfg(windows)]
 mod native;
 mod ui;
+#[allow(dead_code)]
+#[path = "../../src/time.rs"]
+mod time;
+#[cfg(windows)]
+mod activate;
 #[cfg(windows)]
 mod visual;
 
@@ -20,6 +25,8 @@ const MAX_SNAPSHOT: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Row {
+    last_answer: String,
+    session_id: String,
     agent_id: String,
     request_marker: String,
     request_at: Option<i64>,
@@ -38,9 +45,36 @@ struct Row {
 }
 
 impl Row {
+    fn date_label(&self, expanded: bool, now: i64) -> String {
+        if !expanded {
+            if let Some(age) = time::from_iso8601(&self.since).and_then(|stamp| now.checked_sub(stamp)) {
+                match age {
+                    0..=59 => return "방금 전".into(),
+                    60..=3599 => return format!("{}분 전", age / 60),
+                    3600..=86399 => return format!("{}시간 전", age / 3600),
+                    _ => {}
+                }
+            }
+        }
+        self.short_date().into()
+    }
+    fn short_date(&self) -> &str {
+        let date = self.since.split('T').next().unwrap_or_default();
+        match date.as_bytes() {
+            [a, b, c, d, b'-', e, f, b'-', g, h]
+                if [a, b, c, d, e, f, g, h].iter().all(|c| c.is_ascii_digit()) => &date[2..],
+            _ => date,
+        }
+    }
+    fn project(&self) -> &str {
+        self.title
+            .rsplit_once('·')
+            .filter(|(_, suffix)| suffix.len() >= 4 && self.id.starts_with(suffix))
+            .map_or(&self.title, |(project, _)| project)
+    }
     fn status(&self) -> &str {
         match self.state.as_str() {
-            "waiting" => "대기 중",
+            "waiting" => "내 차례",
             "working" => "작업 중",
             "idle" => "유휴",
             "done" => "종결",
@@ -52,7 +86,7 @@ impl Row {
     fn accessible_text(&self) -> String {
         format!(
             "프로젝트  {}\n태스크  {}\n상태  {}\n{} · {}",
-            self.title,
+            self.project(),
             self.task,
             self.status(),
             self.agent,
@@ -195,6 +229,8 @@ fn snapshot_rows(bytes: &[u8]) -> io::Result<Vec<Row>> {
                 ""
             };
             Row {
+                last_answer: field(&s["last_answer"], 4000),
+                session_id: s["session_id"].as_str().unwrap_or("").to_string(),
                 request_marker: s["request_marker"].as_str().unwrap_or("").to_string(),
                 request_at: s["request_at"].as_i64(),
                 summary: field(&s["summary"], 4000),
@@ -278,14 +314,64 @@ mod tests {
     }
 
     #[test]
+    fn card_dates_use_two_digit_years_and_preserve_unknowns() {
+        for (since, expected) in [
+            ("2026-09-08T12:34:56Z", "26-09-08"),
+            ("2024-02-29", "24-02-29"),
+            ("—", "—"),
+            ("날짜 없음", "날짜 없음"),
+            ("2026-09", "2026-09"),
+            ("", ""),
+        ] {
+            assert_eq!(Row { since: since.into(), ..Row::default() }.short_date(), expected);
+        }
+    }
+
+    #[test]
+    fn collapsed_dates_age_by_minutes_and_hours_but_expanded_dates_stay_absolute() {
+        let now = time::from_iso8601("2026-09-08T12:00:00Z").unwrap();
+        for (age, expected) in [
+            (0, "방금 전"), (59, "방금 전"), (60, "1분 전"),
+            (28 * 60, "28분 전"), (50 * 60, "50분 전"), (3599, "59분 전"),
+            (3600, "1시간 전"), (7200, "2시간 전"), (86399, "23시간 전"),
+            (86400, "26-09-07"), (-1, "26-09-08"),
+        ] {
+            let row = Row { since: time::to_iso8601(now - age), ..Row::default() };
+            assert_eq!(row.date_label(false, now), expected, "age {age}");
+            assert_eq!(row.date_label(true, now), row.short_date());
+        }
+        let row = Row { since: "2026-09-08T20:32:00+09:00".into(), ..Row::default() };
+        assert_eq!(row.date_label(false, now), "28분 전");
+        let row = Row { since: "—".into(), ..Row::default() };
+        assert_eq!(row.date_label(false, now), "—");
+    }
+
+    #[test]
+    fn project_labels_hide_only_the_session_suffix() {
+        let mut row = Row {
+            id: "1206c6e9".into(),
+            title: "what-am-i-doing·1206".into(),
+            ..Row::default()
+        };
+        assert_eq!(row.project(), "what-am-i-doing");
+        assert!(!row.accessible_text().contains("1206"));
+        row.title = "project·release".into();
+        assert_eq!(row.project(), "project·release");
+        row.title = "project·3383".into();
+        assert_eq!(row.project(), "project·3383");
+    }
+
+    #[test]
     fn harness_identity_is_separate_from_model_and_display_name() {
         let value = serde_json::json!({"schema":1,"sessions":[
-            {"agent":{"name":"claude","display":"My coding tool"},"llm":{"display":"gpt-test"}},
+            {"session_id":"original-id","agent":{"name":"claude","display":"My coding tool"},"llm":{"display":"gpt-test"}},
             {"agent":{"name":"codex","display":"Custom alias"},"llm":{"display":"claude-test"}},
             {"agent":{"name":"custom","display":"Codex"},"llm":{"display":"gpt-test"}}
         ]});
         let rows = snapshot_rows(value.to_string().as_bytes()).unwrap();
         assert_eq!(rows[0].agent_id, "claude");
+        assert_eq!(rows[0].session_id, "original-id");
+        assert!(rows[1].session_id.is_empty());
         assert_eq!(rows[1].agent_id, "codex");
         assert_eq!(rows[2].agent_id, "custom");
     }
@@ -298,7 +384,7 @@ mod tests {
         let rows = snapshot_rows(value.to_string().as_bytes()).unwrap();
         assert_eq!(
             rows[0].accessible_text(),
-            "프로젝트  repo main\n태스크  ≈ 한글 작업\n상태  대기 중\nCodex · —"
+            "프로젝트  repo main\n태스크  ≈ 한글 작업\n상태  내 차례\nCodex · —"
         );
         assert_eq!(rows[1].accessible_text(), "프로젝트  —\n태스크  —\n상태  미확인\n— · —");
         assert_eq!(field(&serde_json::json!("가나다"), 2), "가나…");

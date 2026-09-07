@@ -1,15 +1,17 @@
 //! Small native drawing helpers. GDI+ and logo resources are owned by the window.
 use std::ptr::null_mut;
 use windows_sys::Win32::{
-    Foundation::RECT,
+    Foundation::{HANDLE, RECT},
     Graphics::{Gdi::*, GdiPlus::*},
     UI::WindowsAndMessaging::*,
 };
 
 pub struct Visuals {
     token: usize,
+    pub fonts: [HANDLE; 2],
     pub app: HICON,
     pub app_small: HICON,
+    pub mascot: HICON,
     pub codex: HICON,
     pub claude: HICON,
 }
@@ -25,8 +27,22 @@ impl Visuals {
             let logo = include_bytes!("../assets/waid.png");
             Self {
                 token,
+                fonts: [
+                    include_bytes!("../assets/fonts/Pretendard-Bold.otf").as_slice(),
+                    include_bytes!("../assets/fonts/Pretendard-SemiBold.otf").as_slice(),
+                ]
+                .map(|bytes| {
+                    let mut count = 0;
+                    AddFontMemResourceEx(
+                        bytes.as_ptr() as *const _,
+                        bytes.len() as u32,
+                        null_mut(),
+                        &mut count,
+                    )
+                }),
                 app: png_icon_sized(logo, GetSystemMetrics(SM_CXICON)),
                 app_small: png_icon_sized(logo, GetSystemMetrics(SM_CXSMICON)),
+                mascot: png_icon(include_bytes!("../../assets/waid-mascot.png")),
                 codex: png_icon(include_bytes!("../assets/openai.png")),
                 claude: ico_icon(include_bytes!("../assets/claude.ico")),
             }
@@ -44,7 +60,18 @@ impl Visuals {
 impl Drop for Visuals {
     fn drop(&mut self) {
         unsafe {
-            for icon in [self.app, self.app_small, self.codex, self.claude] {
+            for font in self.fonts {
+                if !font.is_null() {
+                    RemoveFontMemResourceEx(font);
+                }
+            }
+            for icon in [
+                self.app,
+                self.app_small,
+                self.mascot,
+                self.codex,
+                self.claude,
+            ] {
                 if !icon.is_null() {
                     DestroyIcon(icon);
                 }

@@ -24,6 +24,7 @@ use windows_sys::Win32::{
     },
 };
 
+mod accordion;
 const SEARCH: usize = 10;
 const STATUS: usize = 11;
 const AGENT: usize = 12;
@@ -54,6 +55,7 @@ const OPACITY: usize = 47;
 const OPACITY_SLIDER: usize = 48;
 const MINIMIZE: usize = 49;
 const CLOSE_WINDOW: usize = 50;
+const TWO_COLUMNS: usize = 51;
 const CLASS: &str = "waid.sessions.v2";
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const TRAY_ID: u32 = 1;
@@ -86,12 +88,15 @@ unsafe fn draw(dc: HDC, s: &str, mut rect: RECT, font: HFONT, color: u32, flags:
 }
 
 struct Window {
+    date_tick: Cell<i64>,
+    feed: accordion::Feed,
+    activation: RefCell<Option<(String, std::sync::mpsc::Receiver<Result<(), String>>)>>,
     visuals: Visuals,
     opacity_open: Cell<bool>,
     expanded: Cell<bool>,
     menu_open: Cell<bool>,
     compact_rect: Cell<RECT>,
-    images: Cell<HIMAGELIST>,
+    tile_height: Cell<i32>,
     force_rebuild: Cell<bool>,
     controls: RefCell<BTreeMap<usize, HWND>>,
     ready: Cell<bool>,
@@ -124,12 +129,15 @@ impl Window {
         };
         let skin = Skin::parse(&settings.template).expect("bundled default template");
         Self {
+            date_tick: Cell::new(0),
+            feed: accordion::Feed::default(),
+            activation: RefCell::new(None),
             visuals: Visuals::new(),
             opacity_open: Cell::new(false),
             expanded: Cell::new(false),
             menu_open: Cell::new(false),
             compact_rect: Cell::new(RECT::default()),
-            images: Cell::new(0),
+            tile_height: Cell::new(100),
             force_rebuild: Cell::new(true),
             controls: RefCell::new(BTreeMap::new()),
             ready: Cell::new(false),
@@ -192,9 +200,21 @@ impl Window {
     unsafe fn fonts(&self, hwnd: HWND) {
         let skin = self.skin.borrow().clone();
         let mut old_fonts = Vec::new();
-        for (slot, size, weight) in [
-            (&self.body, skin.font_size, FW_NORMAL),
-            (&self.heading, skin.font_size + 2, FW_SEMIBOLD),
+        for (slot, size, weight, face, resource) in [
+            (
+                &self.body,
+                skin.font_size,
+                FW_SEMIBOLD,
+                "Pretendard SemiBold",
+                self.visuals.fonts[1],
+            ),
+            (
+                &self.heading,
+                skin.font_size + 3,
+                FW_BOLD,
+                "Pretendard",
+                self.visuals.fonts[0],
+            ),
         ] {
             let font = CreateFontW(
                 -self.px(hwnd, size),
@@ -206,11 +226,16 @@ impl Window {
                 0,
                 0,
                 DEFAULT_CHARSET as u32,
-                0,
+                OUT_TT_PRECIS as u32,
                 0,
                 CLEARTYPE_QUALITY as u32,
                 0,
-                wide("Malgun Gothic").as_ptr(),
+                wide(if resource.is_null() {
+                    "Malgun Gothic"
+                } else {
+                    face
+                })
+                .as_ptr(),
             );
             if !font.is_null() {
                 let old = slot.replace(font);
@@ -222,6 +247,9 @@ impl Window {
         let children: Vec<HWND> = self.controls.borrow().values().copied().collect();
         for child in children {
             send(child, WM_SETFONT, self.body.get() as usize, 1);
+        }
+        for child in self.feed.buttons.borrow().iter() {
+            send(*child, WM_SETFONT, self.body.get() as usize, 1);
         }
         for font in old_fonts {
             DeleteObject(font);
@@ -235,19 +263,35 @@ impl Window {
         self.force_rebuild.set(true);
     }
     unsafe fn row_height(&self, height: i32) {
-        let image = ImageList_Create(1, height, ILC_COLOR32, 0, 1);
-        if image != 0 {
-            send(
-                self.get(LIST),
-                LVM_SETIMAGELIST,
-                LVSIL_SMALL as usize,
-                image as isize,
-            );
-            let old = self.images.replace(image);
-            if old != 0 {
-                ImageList_Destroy(old);
-            }
-        }
+        self.tile_height.set(height);
+        self.fit_list();
+    }
+    unsafe fn fit_list(&self) {
+        let list = self.get(LIST);
+        let mut bounds = RECT::default();
+        GetWindowRect(list, &mut bounds);
+        // Reserve the scrollbar gutter so adding sessions never changes the column count.
+        let info = LVTILEVIEWINFO {
+            cbSize: std::mem::size_of::<LVTILEVIEWINFO>() as u32,
+            dwMask: LVTVIM_TILESIZE,
+            dwFlags: LVTVIF_FIXEDSIZE,
+            sizeTile: SIZE {
+                cx: ((bounds.right
+                    - bounds.left
+                    - GetSystemMetricsForDpi(SM_CXVSCROLL, GetDpiForWindow(list))
+                    - 8)
+                    / if self.settings.borrow().two_columns {
+                        2
+                    } else {
+                        1
+                    })
+                .max(1),
+                cy: self.tile_height.get() + 2, // Native tile bounds exclude a two-pixel gap.
+            },
+            ..Default::default()
+        };
+        send(list, LVM_SETTILEVIEWINFO, 0, &info as *const _ as isize);
+        send(list, LVM_ARRANGE, LVA_DEFAULT as usize, 0);
     }
     unsafe fn layout(&self, hwnd: HWND) {
         if !self.ready.get() {
@@ -269,16 +313,18 @@ impl Window {
             );
         };
         let expanded = self.expanded.get();
-        mv(TOPMOST, w - 196, 8, 100, 28);
-        mv(MINIMIZE, w - 82, 8, 32, 28);
-        mv(CLOSE_WINDOW, w - 44, 8, 32, 28);
-        mv(OPACITY, 16, 48, 116, 28);
+        ShowWindow(self.get(accordion::FEED), if !expanded && !self.settings.borrow().two_columns { SW_SHOWNA } else { SW_HIDE });
+        mv(TOPMOST, w - 184, 10, 88, 30);
+        mv(MINIMIZE, w - 82, 10, 30, 30);
+        mv(CLOSE_WINDOW, w - 46, 10, 30, 30);
+        mv(TWO_COLUMNS, w - 88, 62, 60, 24);
+        mv(OPACITY, 16, 104, 104, 32);
         let extra = if self.opacity_open.get() { 36 } else { 0 };
         ShowWindow(
             self.get(OPACITY_SLIDER),
             if extra > 0 { SW_SHOWNA } else { SW_HIDE },
         );
-        mv(OPACITY_SLIDER, 128, 84, w - 148, 24);
+        mv(OPACITY_SLIDER, 128, 146, w - 148, 24);
         for id in [
             SEARCH,
             STATUS,
@@ -315,43 +361,41 @@ impl Window {
         }
         ShowWindow(self.get(MORE), if expanded { SW_HIDE } else { SW_SHOWNA });
         if !expanded {
-            mv(ALL, w - 132, 48, 86, 28);
-            mv(MORE, w - 40, 48, 26, 28);
+            mv(ALL, w - 156, 104, 96, 32);
+            mv(MORE, w - 52, 104, 36, 32);
+            ShowWindow(self.get(FILTER), SW_SHOWNA);
+            mv(FILTER, 128, 104, (w - 292).min(76), 32);
             let menu_open = self.menu_open.get();
-            let actions = [SHOW_DETAIL, FILTER, PIN, CLOSE_SESSION, EDITOR];
+            let actions = [SHOW_DETAIL, PIN, CLOSE_SESSION, EDITOR];
             for (i, id) in actions.into_iter().enumerate() {
                 ShowWindow(self.get(id), if menu_open { SW_SHOWNA } else { SW_HIDE });
-                let width = (w - 32) / 5;
-                mv(id, 8 + i as i32 * (width + 4), 84 + extra, width, 28);
+                let width = (w - 50) / 4;
+                mv(id, 16 + i as i32 * (width + 6), 146 + extra, width, 32);
             }
-            let top = if menu_open { 120 } else { 84 } + extra;
-            mv(LIST, 8, top, w - 16, h - top - 26);
-            let mut list_rect = RECT::default();
-            GetClientRect(self.get(LIST), &mut list_rect);
-            send(
-                self.get(LIST),
-                LVM_SETCOLUMNWIDTH,
-                0,
-                (list_rect.right - 1).max(1) as isize,
-            );
+            let top = if menu_open { 190 } else { 148 } + extra;
+            mv(LIST, 13, top, w - 26, h - top - 36);
+            mv(accordion::FEED, 13, top, w - 26, h - top - 36);
+            self.layout_feed(hwnd);
+            ShowWindow(self.get(LIST), if self.settings.borrow().two_columns { SW_SHOWNA } else { SW_HIDE });
+            self.fit_list();
             InvalidateRect(hwnd, null(), 1);
             return;
         }
         for id in [SHOW_DETAIL, FILTER] {
             ShowWindow(self.get(id), SW_HIDE);
         }
-        mv(ALL, w - 206, 48, 86, 28);
-        mv(BACK, w - 112, 48, 92, 28);
+        mv(ALL, w - 222, 104, 96, 32);
+        mv(BACK, w - 116, 104, 96, 32);
         let search = (w - 370).max(220);
-        mv(SEARCH, 20, 88 + extra, search, 32);
-        mv(STATUS, search + 32, 88 + extra, 142, 300);
-        mv(AGENT, search + 186, 88 + extra, w - search - 206, 300);
-        mv(PIN, 20, 132 + extra, 90, 30);
-        mv(CLOSE_SESSION, 118, 132 + extra, 100, 30);
-        mv(AUX, 232, 132 + extra, 125, 30);
-        mv(HIDDEN, 366, 132 + extra, 125, 30);
-        mv(EDITOR, w - 160, 132 + extra, 140, 30);
-        let top = 180 + extra;
+        mv(SEARCH, 32, 156 + extra, search - 24, 24);
+        mv(STATUS, search + 32, 150 + extra, 142, 300);
+        mv(AGENT, search + 186, 150 + extra, w - search - 206, 300);
+        mv(PIN, 20, 196 + extra, 90, 32);
+        mv(CLOSE_SESSION, 118, 196 + extra, 100, 32);
+        mv(AUX, 232, 196 + extra, 125, 32);
+        mv(HIDDEN, 366, 196 + extra, 125, 32);
+        mv(EDITOR, w - 160, 196 + extra, 140, 32);
+        let top = 244 + extra;
         let bottom = h - 40;
         if w >= 1000 {
             let left = (w * 56 / 100).max(450);
@@ -381,14 +425,33 @@ impl Window {
                 detail_h - if self.editing.get() { 86 } else { 0 },
             );
         }
-        let mut list_rect = RECT::default();
-        GetClientRect(self.get(LIST), &mut list_rect);
-        send(
-            self.get(LIST),
-            LVM_SETCOLUMNWIDTH,
+        let mut detail_bounds = RECT::default();
+        GetClientRect(self.get(DETAIL), &mut detail_bounds);
+        let mut detail_window = RECT::default();
+        GetWindowRect(self.get(DETAIL), &mut detail_window);
+        let region = CreateRoundRectRgn(
             0,
-            (list_rect.right - 1).max(1) as isize,
+            0,
+            detail_window.right - detail_window.left + 1,
+            detail_window.bottom - detail_window.top + 1,
+            self.px(hwnd, 32),
+            self.px(hwnd, 32),
         );
+        if SetWindowRgn(self.get(DETAIL), region, 1) == 0 {
+            DeleteObject(region);
+        }
+        let inset = self.px(hwnd, 14);
+        detail_bounds.left += inset;
+        detail_bounds.top += inset;
+        detail_bounds.right -= inset;
+        detail_bounds.bottom -= inset;
+        send(
+            self.get(DETAIL),
+            EM_SETRECT,
+            0,
+            &detail_bounds as *const _ as isize,
+        );
+        self.fit_list();
         let mut detail = RECT::default();
         GetWindowRect(self.get(DETAIL), &mut detail);
         let mut p = POINT {
@@ -426,7 +489,7 @@ impl Window {
                 0,
                 0,
                 self.px(hwnd, 800),
-                self.px(hwnd, 640),
+                self.px(hwnd, 760),
                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
         } else {
@@ -436,14 +499,14 @@ impl Window {
                 null_mut(),
                 rect.left,
                 rect.top,
-                (rect.right - rect.left).max(self.px(hwnd, 280)),
-                (rect.bottom - rect.top).max(self.px(hwnd, 220)),
+                (rect.right - rect.left).max(self.px(hwnd, 480)),
+                (rect.bottom - rect.top).max(self.px(hwnd, 440)),
                 SWP_NOZORDER | SWP_NOACTIVATE,
             );
         }
         self.layout(hwnd);
         if !open {
-            SetFocus(self.get(LIST));
+            SetFocus(self.session_focus());
         }
     }
     unsafe fn menu(&self, hwnd: HWND) {
@@ -463,6 +526,36 @@ impl Window {
             self.visible.borrow().get(index as usize).cloned()
         }
     }
+    unsafe fn session_focus(&self) -> HWND {
+        if self.expanded.get() || self.settings.borrow().two_columns {
+            self.get(LIST)
+        } else {
+            self.feed.buttons.borrow().get(send(self.get(LIST), LB_GETCURSEL, 0, 0).max(0) as usize)
+                .copied().unwrap_or(self.get(FILTER))
+        }
+    }
+    unsafe fn activate_selected(&self, hwnd: HWND) {
+        if self.activation.borrow().is_some() || self.editing.get() {
+            return;
+        }
+        let Some(row) = self.selected() else { return };
+        if self.demo
+            || row.session_id.is_empty()
+            || self.settings.borrow().closed.contains_key(&row.id)
+        {
+            *self.notice.borrow_mut() =
+                "열린 창·탭과의 연결을 확인할 수 없어 상세 내용을 표시합니다.".into();
+            self.command(hwnd, SHOW_DETAIL, 0);
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        *self.activation.borrow_mut() = Some((row.id.clone(), rx));
+        *self.notice.borrow_mut() = "세션이 열린 창·탭을 확인하고 있습니다…".into();
+        InvalidateRect(hwnd, null(), 1);
+        std::thread::spawn(move || {
+            let _ = tx.send(super::activate::open(&row));
+        });
+    }
     unsafe fn detail(&self) {
         if self.editing.get() {
             return;
@@ -477,7 +570,7 @@ impl Window {
                 "unknown" => "해석할 수 있는 상태 기록 없음",
                 _ => "트랜스크립트의 마지막 기록 · 현재 생존 여부 미확인",
             };
-            format!("프로젝트  {}\r\n\r\n태스크  {}\r\n\r\n상태  {}\r\n에이전트  {}\r\n모델  {}\r\n마지막 활동 (UTC)  {}\r\n\r\n{}\r\n\r\n작업 출처  {}\r\n대표 요청\r\n{}\r\n\r\n폴더\r\n{}\r\n\r\n세션 ID  {}",row.title,row.task,row.status(),row.agent,row.model,row.since,evidence,if row.task_source=="transcript_first_prompt"{"첫 요청 (현재 요청은 읽기 범위 밖)"}else{"최근 요청 또는 사용자 라벨"},row.summary,row.cwd,row.id)
+            format!("{}\r\n\r\n{}\r\n\r\n상태  {}\r\n에이전트  {}\r\n모델  {}\r\n마지막 활동 (UTC)  {}\r\n\r\n{}\r\n\r\n작업 출처  {}\r\n대표 요청\r\n{}\r\n\r\n폴더\r\n{}",row.project(),row.task,row.status(),row.agent,row.model,row.since,evidence,if row.task_source=="transcript_first_prompt"{"첫 요청 (현재 요청은 읽기 범위 밖)"}else{"최근 요청 또는 사용자 라벨"},row.summary,row.cwd)
         } else {
             "세션을 선택하면 전체 작업 내용과 근거를 확인할 수 있습니다.\r\n\r\n이전 세션도 수집합니다. 종결한 세션은 전체 보기에서 확인하고, 새 요청이 감지되면 기본 목록으로 돌아옵니다.".into()
         };
@@ -559,14 +652,8 @@ impl Window {
             },
         );
         self.detail();
-        let mut bounds = RECT::default();
-        GetClientRect(list, &mut bounds);
-        send(
-            list,
-            LVM_SETCOLUMNWIDTH,
-            0,
-            (bounds.right - 1).max(1) as isize,
-        );
+        self.fit_list();
+        self.rebuild_feed(hwnd);
         InvalidateRect(list, null(), 1);
         InvalidateRect(hwnd, null(), 1);
         self.busy.set(false);
@@ -614,6 +701,40 @@ impl Window {
         }
     }
     unsafe fn tick(&self, hwnd: HWND) {
+        let second = crate::time::now();
+        let previous = self.date_tick.replace(second);
+        // Age labels advance even when no new log record arrives; repaint only changed labels.
+        if previous != second && IsWindowVisible(self.get(accordion::FEED)) != 0 {
+            for (button, row) in self.feed.buttons.borrow().iter().zip(self.visible.borrow().iter()) {
+                if row.date_label(false, previous) != row.date_label(false, second) {
+                    InvalidateRect(*button, null(), 0);
+                }
+            }
+        }
+        let activated =
+            self.activation
+                .borrow()
+                .as_ref()
+                .and_then(|(id, rx)| match rx.try_recv() {
+                    Ok(result) => Some((id.clone(), result)),
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        Some((id.clone(), Err("창·탭 연결 확인이 중단됐습니다.".into())))
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                });
+        if let Some((id, result)) = activated {
+            self.activation.borrow_mut().take();
+            match result {
+                Ok(()) => *self.notice.borrow_mut() = "기존 세션 탭으로 이동했습니다.".into(),
+                Err(message) => {
+                    *self.notice.borrow_mut() = message;
+                    if self.selected().is_some_and(|r| r.id == id) && !self.editing.get() {
+                        self.command(hwnd, SHOW_DETAIL, 0);
+                    }
+                }
+            }
+            InvalidateRect(hwnd, null(), 1);
+        }
         let next = self
             .updates
             .lock()
@@ -662,6 +783,16 @@ impl Window {
             self.layout(hwnd);
         }
         match id {
+            TWO_COLUMNS => {
+                let top = send(self.get(LIST), LB_GETTOPINDEX, 0, 0);
+                self.settings.borrow_mut().two_columns =
+                    send(self.get(TWO_COLUMNS), BM_GETCHECK, 0, 0) == BST_CHECKED as isize;
+                self.fit_list();
+                send(self.get(LIST), LB_SETTOPINDEX, top as usize, 0);
+                InvalidateRect(self.get(LIST), null(), 1);
+                self.changed();
+                self.layout(hwnd);
+            }
             TOPMOST => {
                 let next = !self.settings.borrow().always_on_top;
                 self.settings.borrow_mut().always_on_top = next;
@@ -843,19 +974,20 @@ impl Window {
         let id = item.CtlID as usize;
         let active = id == TOPMOST && self.settings.borrow().always_on_top
             || id == ALL && self.settings.borrow().show_all
-            || id == OPACITY && self.opacity_open.get();
+            || id == OPACITY && self.opacity_open.get()
+            || id == MORE && self.menu_open.get();
         let pressed = item.itemState & ODS_SELECTED != 0;
         let background = if active || pressed {
             skin.selection
         } else {
-            skin.background
+            skin.surface
         };
         let border = if item.itemState & ODS_FOCUS != 0 {
             Some(skin.accent)
         } else {
             None
         };
-        visual::rounded(item.hDC, item.rcItem, self.px(hwnd, 8), background, border);
+        visual::rounded(item.hDC, item.rcItem, self.px(hwnd, 15), background, border);
         let label = match id {
             MINIMIZE => "−".into(),
             CLOSE_WINDOW => "×".into(),
@@ -891,9 +1023,9 @@ impl Window {
         fill(item.hDC, &item.rcItem, skin.background);
         let card = RECT {
             left: item.rcItem.left + p(3),
-            top: item.rcItem.top + p(3),
+            top: item.rcItem.top + p(2),
             right: item.rcItem.right - p(3),
-            bottom: item.rcItem.bottom - p(7),
+            bottom: item.rcItem.bottom - p(10),
         };
         let shadow = RECT {
             top: card.top + p(2),
@@ -903,39 +1035,39 @@ impl Window {
         visual::rounded(
             item.hDC,
             shadow,
-            p(16),
-            visual::blend(skin.background, skin.foreground, 7),
+            p(22),
+            visual::blend(skin.background, skin.foreground, 4),
             None,
         );
         visual::rounded(
             item.hDC,
             card,
-            p(16),
+            p(22),
             if selected {
                 skin.selection
             } else {
                 skin.surface
             },
             Some(if selected {
-                visual::blend(skin.selection, skin.accent, 48)
+                visual::blend(skin.selection, skin.accent, 30)
             } else {
-                visual::blend(skin.surface, skin.foreground, 10)
+                visual::blend(skin.surface, skin.foreground, 4)
             }),
         );
         let pad = p(skin.padding);
         let tile = RECT {
             left: card.left + pad,
             top: card.top + pad,
-            right: card.left + pad + p(36),
-            bottom: card.top + pad + p(36),
+            right: card.left + pad + p(24),
+            bottom: card.top + pad + p(24),
         };
-        visual::rounded(item.hDC, tile, p(10), 0xffffff, None);
+        visual::rounded(item.hDC, tile, p(14), 0xffffff, None);
         if !self.visuals.logo(
             item.hDC,
             &row.agent_id,
-            tile.left + p(4),
-            tile.top + p(4),
-            p(28),
+            tile.left + p(2),
+            tile.top + p(2),
+            p(20),
         ) {
             draw(
                 item.hDC,
@@ -948,45 +1080,170 @@ impl Window {
         }
         let line = p(skin.font_size + 4 + skin.line_gap);
         let pinned = self.settings.borrow().pinned.contains(&row.id);
+        // Reserve a column beside the task for the status and model beneath it.
+        let status_width = p(skin.font_size * 7 + 8).min((card.right - card.left) / 3);
+        if skin.compact {
+            let badge = RECT {
+                left: card.right - pad - status_width,
+                right: card.right - pad,
+                top: card.top + pad + line,
+                bottom: card.top + pad + line * 2,
+            };
+            let color = *skin.state_colors.get(&row.state).unwrap_or(&skin.accent);
+            visual::rounded(item.hDC, badge, line / 2, skin.background, None);
+            draw(
+                item.hDC,
+                if row.state == "idle" {
+                    "유휴"
+                } else {
+                    row.status()
+                },
+                badge,
+                self.body.get(),
+                color,
+                DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS,
+            );
+            if skin.fields.iter().any(|field| field == "model") {
+                draw(
+                    item.hDC,
+                    &row.model,
+                    RECT { top: badge.bottom + p(2), bottom: badge.bottom + line, ..badge },
+                    self.body.get(),
+                    skin.muted,
+                    DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS,
+                );
+            }
+        }
+        let mut y = card.top + pad;
         for (i, fields) in skin.lines().iter().enumerate() {
             let task = fields.contains(&"task");
-            let project = fields.contains(&"project");
             let status = fields.contains(&"status");
             let mut rect = RECT {
-                left: tile.right + p(10),
+                left: if i == 0 || skin.compact {
+                    tile.right + p(8)
+                } else {
+                    card.left + pad
+                },
                 right: card.right - pad,
-                top: card.top + pad + i as i32 * line,
-                bottom: card.top + pad + (i as i32 + 1) * line,
+                top: y,
+                bottom: y + if task { line * 2 } else { line },
             };
-            let label = fields.iter().map(|f| skin.text(&row, f, pinned)).collect::<Vec<_>>().join(" · ");
-            let state_color = *skin.state_colors.get(&row.state).unwrap_or(&skin.accent);
+            y = rect.bottom;
+            if skin.compact && i == 0 {
+                let mut labels = Vec::new();
+                for field in fields {
+                    let label = skin.text(&row, field, pinned);
+                    let font = if *field == "project" {
+                        self.heading.get()
+                    } else {
+                        self.body.get()
+                    };
+                    let old = SelectObject(item.hDC, font);
+                    let mut measured = RECT::default();
+                    DrawTextW(
+                        item.hDC,
+                        wide(&label).as_ptr(),
+                        -1,
+                        &mut measured,
+                        DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX,
+                    );
+                    SelectObject(item.hDC, old);
+                    labels.push((label, font, measured.right.max(1)));
+                }
+                let gap = p(8);
+                let available = (rect.right - rect.left - gap * (labels.len() as i32 - 1)).max(1);
+                let total: i32 = labels.iter().map(|(_, _, width)| width).sum();
+                if total > available {
+                    let mut remaining = available;
+                    for (_, _, width) in labels.iter_mut().skip(1) {
+                        *width = (*width).min(available / 3);
+                        remaining -= *width;
+                    }
+                    labels[0].2 = remaining;
+                }
+                for (index, (label, font, width)) in labels.iter().enumerate() {
+                    let part = RECT {
+                        right: rect.left + width,
+                        ..rect
+                    };
+                    draw(
+                        item.hDC,
+                        label,
+                        part,
+                        *font,
+                        if index == 0 {
+                            skin.foreground
+                        } else {
+                            skin.muted
+                        },
+                        DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER,
+                    );
+                    rect.left = part.right + gap;
+                }
+                continue;
+            }
+            if skin.compact {
+                rect.right -= status_width + p(8);
+            }
             if status {
+                let label = skin.text(&row, "status", pinned);
                 let mut measured = RECT::default();
                 let old = SelectObject(item.hDC, self.body.get());
-                DrawTextW(item.hDC, wide(&label).as_ptr(), -1, &mut measured, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+                DrawTextW(
+                    item.hDC,
+                    wide(&label).as_ptr(),
+                    -1,
+                    &mut measured,
+                    DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX,
+                );
                 SelectObject(item.hDC, old);
-                rect.right = rect.right.min(rect.left + measured.right + p(16));
-                visual::rounded(item.hDC, rect, p(6), if selected { skin.selection } else { skin.surface }, Some(state_color));
-                rect.left += p(8);
-                rect.right -= p(8);
+                let available = rect.right - rect.left;
+                let width = (measured.right + p(20)).min(if fields.len() > 1 {
+                    available * 3 / 5
+                } else {
+                    available
+                });
+                let badge = RECT {
+                    left: rect.right - width,
+                    bottom: rect.bottom - p(1),
+                    ..rect
+                };
+                let color = *skin.state_colors.get(&row.state).unwrap_or(&skin.accent);
+                visual::rounded(item.hDC, badge, line / 2, skin.background, None);
+                draw(
+                    item.hDC,
+                    &label,
+                    badge,
+                    self.body.get(),
+                    color,
+                    DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS,
+                );
+                rect.right = badge.left - p(8);
             }
             draw(
                 item.hDC,
-                &label,
+                &fields
+                    .iter()
+                    .filter(|f| **f != "status")
+                    .map(|f| skin.text(&row, f, pinned))
+                    .collect::<Vec<_>>()
+                    .join(" · "),
                 rect,
-                if project {
+                if task && !skin.compact {
                     self.heading.get()
                 } else {
                     self.body.get()
                 },
-                if status {
-                    state_color
-                } else if task || project {
+                if task {
                     skin.foreground
                 } else {
                     skin.muted
                 },
-                DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER,
+                if task {
+                    DT_WORDBREAK | DT_END_ELLIPSIS | DT_EDITCONTROL
+                } else {
+                    DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER
+                },
             );
         }
     }
@@ -998,33 +1255,83 @@ impl Window {
         let mut r = RECT::default();
         GetClientRect(hwnd, &mut r);
         let p = |n| self.px(hwnd, n);
-        DrawIconEx(dc, p(12), p(6), self.visuals.app, p(32), p(32), 0, null_mut(), DI_NORMAL);
+        DrawIconEx(
+            dc,
+            p(16),
+            p(9),
+            self.visuals.mascot,
+            p(32),
+            p(32),
+            0,
+            null_mut(),
+            DI_NORMAL,
+        );
         draw(
             dc,
-            &format!(
-                "{} · {}",
-                if self.demo { "샘플" } else { "waid" },
-                self.visible.borrow().len()
-            ),
+            if self.demo { "waid / 샘플" } else { "waid" },
             RECT {
-                left: p(50),
-                top: p(8),
-                right: r.right - p(200),
-                bottom: p(36),
+                left: p(56),
+                top: p(10),
+                right: r.right - p(188),
+                bottom: p(40),
             },
             self.heading.get(),
             skin.foreground,
             DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
         );
+        let hero = RECT {
+            left: p(16),
+            top: p(54),
+            right: r.right - p(16),
+            bottom: p(94),
+        };
+        visual::rounded(dc, hero, p(24), skin.selection, None);
+        let rows = self.visible.borrow();
+        let waiting = rows.iter().filter(|row| row.state == "waiting").count();
+        let summary = if self.loading.get() {
+            "AI 친구들의 소식을 가져오는 중".into()
+        } else {
+            format!("세션 {}개 · 내 차례 {}개", rows.len(), waiting)
+        };
+        drop(rows);
+        draw(
+            dc,
+            &summary,
+            RECT {
+                left: p(32),
+                top: p(60),
+                right: hero.right - p(84),
+                bottom: p(88),
+            },
+            self.body.get(),
+            skin.muted,
+            DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+        );
+        if self.expanded.get() {
+            let extra = if self.opacity_open.get() { 36 } else { 0 };
+            let w = r.right * 96 / GetDpiForWindow(hwnd).max(96) as i32;
+            visual::rounded(
+                dc,
+                RECT {
+                    left: p(20),
+                    top: p(148 + extra),
+                    right: p(20 + (w - 370).max(220)),
+                    bottom: p(188 + extra),
+                },
+                p(16),
+                skin.surface,
+                Some(visual::blend(skin.surface, skin.muted, 18)),
+            );
+        }
         if self.opacity_open.get() {
             draw(
                 dc,
                 "선명 ↔ 투명",
                 RECT {
                     left: p(16),
-                    top: p(84),
+                    top: p(146),
                     right: p(126),
-                    bottom: p(108),
+                    bottom: p(170),
                 },
                 self.body.get(),
                 skin.muted,
@@ -1033,6 +1340,7 @@ impl Window {
         }
         let count = self.visible.borrow().len();
         let total = self.rows.borrow().len();
+        ShowWindow(self.get(accordion::FEED), if count > 0 && !self.expanded.get() && !self.settings.borrow().two_columns { SW_SHOWNA } else { SW_HIDE });
         if count == 0 {
             let list = self.get(LIST);
             let mut rect = RECT::default();
@@ -1046,11 +1354,11 @@ impl Window {
             draw(
                 dc,
                 if self.loading.get() {
-                    "세션을 읽는 중입니다."
+                    "조금만 기다려 주세요.\nAI 친구들의 소식을 가져오고 있어요."
                 } else if total == 0 {
-                    "최근 활동을 찾지 못했습니다.\n저장 경로와 waid doctor 결과를 확인하세요."
+                    "아직 조용하네요.\nAI와 작업을 시작하면 여기에 모아드릴게요."
                 } else {
-                    "조건에 맞는 세션이 없습니다.\n검색어·필터 또는 숨김/보조 포함을 확인하세요."
+                    "찾는 세션이 없어요.\n검색어나 필터를 바꾸거나 전체 보기를 눌러보세요."
                 },
                 RECT {
                     left: at.x + p(16),
@@ -1063,7 +1371,9 @@ impl Window {
                 DT_WORDBREAK,
             );
         } else {
-            ShowWindow(self.get(LIST), SW_SHOWNA);
+            if ShowWindow(self.get(LIST), if self.expanded.get() || self.settings.borrow().two_columns { SW_SHOWNA } else { SW_HIDE }) == 0 {
+                self.fit_list();
+            }
         }
         let message = if !self.core_error.borrow().is_empty() {
             format!(
@@ -1073,24 +1383,26 @@ impl Window {
         } else if !self.notice.borrow().is_empty() {
             self.notice.borrow().clone()
         } else {
-            if self.expanded.get() {
+            if self.demo {
+                "샘플 미리보기 · 실제 AI 세션이 아니에요".into()
+            } else if self.expanded.get() {
                 "Ctrl+F 검색 · Ctrl+D 종결 · Esc 간단히".into()
             } else {
-                "더블클릭 상세 · Ctrl+D 종결".into()
+                "2초마다 새 소식 · 카드를 눌러 대화 펼치기".into()
             }
         };
         draw(
             dc,
             &message,
             RECT {
-                left: p(8),
-                top: r.bottom - p(23),
-                right: r.right - p(8),
-                bottom: r.bottom - p(3),
+                left: p(20),
+                top: r.bottom - p(30),
+                right: r.right - p(20),
+                bottom: r.bottom - p(6),
             },
             self.body.get(),
             skin.muted,
-            DT_SINGLELINE | DT_END_ELLIPSIS,
+            DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER,
         );
         EndPaint(hwnd, &ps);
     }
@@ -1226,9 +1538,6 @@ impl Window {
 impl Drop for Window {
     fn drop(&mut self) {
         unsafe {
-            if self.images.get() != 0 {
-                ImageList_Destroy(self.images.get());
-            }
             for font in [self.body.get(), self.heading.get()] {
                 if !font.is_null() {
                     DeleteObject(font);
@@ -1282,7 +1591,7 @@ unsafe fn remove_tray_icon(hwnd: HWND) {
 unsafe fn restore_window(s: &Window, hwnd: HWND) {
     ShowWindow(hwnd, SW_RESTORE);
     SetForegroundWindow(hwnd);
-    SetFocus(s.get(LIST));
+    SetFocus(s.session_focus());
 }
 
 unsafe fn tray_menu(s: &Window, hwnd: HWND) {
@@ -1381,8 +1690,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         WM_COMMAND => s.command(hwnd, wp & 0xffff, (wp >> 16) & 0xffff),
         WM_GETMINMAXINFO => {
             (*(lp as *mut MINMAXINFO)).ptMinTrackSize = POINT {
-                x: s.px(hwnd, if s.expanded.get() { 720 } else { 280 }),
-                y: s.px(hwnd, if s.expanded.get() { 500 } else { 220 }),
+                x: s.px(hwnd, if s.expanded.get() { 720 } else { 480 }),
+                y: s.px(hwnd, if s.expanded.get() { 620 } else { 440 }),
             };
         }
         WM_DPICHANGED => {
@@ -1460,8 +1769,50 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         }
         WM_NOTIFY if wp == LIST => {
             let header = &*(lp as *const NMHDR);
-            if header.code == NM_DBLCLK {
-                s.command(hwnd, SHOW_DETAIL, 0);
+            if header.code == NM_CUSTOMDRAW {
+                let item = &*(lp as *const NMLVCUSTOMDRAW);
+                if item.nmcd.dwDrawStage == CDDS_PREPAINT {
+                    return CDRF_NOTIFYITEMDRAW as isize;
+                }
+                if item.nmcd.dwDrawStage == CDDS_ITEMPREPAINT {
+                    let mut rect = RECT {
+                        left: LVIR_BOUNDS as i32,
+                        ..Default::default()
+                    };
+                    send(
+                        s.get(LIST),
+                        LVM_GETITEMRECT,
+                        item.nmcd.dwItemSpec,
+                        &mut rect as *mut _ as isize,
+                    );
+                    s.draw_row(
+                        hwnd,
+                        &DRAWITEMSTRUCT {
+                            itemID: item.nmcd.dwItemSpec as u32,
+                            itemState: if send(
+                                s.get(LIST),
+                                LVM_GETITEMSTATE,
+                                item.nmcd.dwItemSpec,
+                                LVIS_SELECTED as isize,
+                            ) != 0
+                            {
+                                ODS_SELECTED
+                            } else {
+                                0
+                            },
+                            hDC: item.nmcd.hdc,
+                            rcItem: rect,
+                            ..Default::default()
+                        },
+                    );
+                    return CDRF_SKIPDEFAULT as isize;
+                }
+                return CDRF_DODEFAULT as isize;
+            }
+            if (header.code == NM_CLICK || header.code == NM_DBLCLK)
+                && (*(lp as *const NMITEMACTIVATE)).iItem >= 0
+            {
+                s.activate_selected(hwnd);
             }
             if header.code == LVN_ITEMCHANGED && !s.busy.get() && s.ready.get() {
                 s.rebuild(hwnd);
@@ -1478,6 +1829,16 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC | WM_CTLCOLORLISTBOX => {
             let skin = s.skin.borrow();
             SetTextColor(wp as HDC, skin.foreground);
+            if lp as HWND == s.get(TWO_COLUMNS) {
+                SetBkColor(wp as HDC, skin.selection);
+                SetDCBrushColor(wp as HDC, skin.selection);
+                return GetStockObject(DC_BRUSH) as isize;
+            }
+            if [s.get(AUX), s.get(HIDDEN)].contains(&(lp as HWND)) {
+                SetBkColor(wp as HDC, skin.background);
+                SetDCBrushColor(wp as HDC, skin.background);
+                return GetStockObject(DC_BRUSH) as isize;
+            }
             SetBkColor(wp as HDC, skin.surface);
             return s.surface.get() as isize;
         }
@@ -1533,8 +1894,8 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
         WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
         work.left + 32 * dpi / 96,
         work.top + 64 * dpi / 96,
-        (360 * dpi / 96).min((work.right - work.left).max(280)),
-        (420 * dpi / 96).min((work.bottom - work.top).max(220)),
+        (600 * dpi / 96).min((work.right - work.left).max(480)),
+        (780 * dpi / 96).min((work.bottom - work.top).max(440)),
         null_mut(),
         null_mut(),
         instance,
@@ -1545,7 +1906,12 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
     }
     // The class icon only covers windows created after registration; set both sizes here.
     SendMessageW(hwnd, WM_SETICON, ICON_BIG as usize, s.visuals.app as isize);
-    SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, s.visuals.app_small as isize);
+    SendMessageW(
+        hwnd,
+        WM_SETICON,
+        ICON_SMALL as usize,
+        s.visuals.app_small as isize,
+    );
     let corner: u32 = DWMWCP_ROUND as u32;
     DwmSetWindowAttribute(
         hwnd,
@@ -1555,7 +1921,7 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
     );
     DeleteMenu(GetSystemMenu(hwnd, 0), SC_MAXIMIZE, MF_BYCOMMAND);
     let setup = (|| -> io::Result<()> {
-        s.add(hwnd, SEARCH, "EDIT", "", WS_BORDER | ES_AUTOHSCROLL as u32)?;
+        s.add(hwnd, SEARCH, "EDIT", "", ES_AUTOHSCROLL as u32)?;
         send(
             s.get(SEARCH),
             EM_SETCUEBANNER,
@@ -1572,7 +1938,7 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
         )?;
         for label in [
             "모든 상태",
-            "대기 중",
+            "내 차례",
             "작업 중",
             "오류",
             "유휴",
@@ -1629,42 +1995,31 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
         send(s.get(OPACITY_SLIDER), TBM_SETPAGESIZE, 0, 10);
         s.add(hwnd, AUX, "BUTTON", "보조 포함", BS_AUTOCHECKBOX as u32)?;
         s.add(hwnd, HIDDEN, "BUTTON", "숨김 포함", BS_AUTOCHECKBOX as u32)?;
+        s.add(hwnd, TWO_COLUMNS, "BUTTON", "2열", BS_AUTOCHECKBOX as u32)?;
         s.add(
             hwnd,
             LIST,
             "SysListView32",
             "세션 목록",
-            LVS_REPORT
-                | LVS_OWNERDRAWFIXED
-                | LVS_SINGLESEL
-                | LVS_NOCOLUMNHEADER
-                | LVS_SHOWSELALWAYS
-                | LVS_SHAREIMAGELISTS,
+            LVS_ICON | LVS_AUTOARRANGE | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
         )?;
-        let column = LVCOLUMNW {
-            mask: LVCF_WIDTH,
-            cx: 500,
-            ..Default::default()
-        };
-        send(
-            s.get(LIST),
-            LVM_INSERTCOLUMNW,
-            0,
-            &column as *const _ as isize,
-        );
+        if send(s.get(LIST), LVM_SETVIEW, LV_VIEW_TILE as usize, 0) == -1 {
+            return Err(io::Error::other("Windows 타일 목록을 열지 못했습니다."));
+        }
         send(
             s.get(LIST),
             LVM_SETEXTENDEDLISTVIEWSTYLE,
             0,
-            (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER) as isize,
+            LVS_EX_DOUBLEBUFFER as isize,
         );
         s.add(
             hwnd,
             DETAIL,
             "EDIT",
             "",
-            WS_VSCROLL | WS_BORDER | (ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY) as u32,
+            WS_VSCROLL | (ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY) as u32,
         )?;
+        s.create_feed(hwnd)?;
         send(s.get(DETAIL), EM_SETLIMITTEXT, ui::MAX_CONFIG as usize, 0);
         if SetTimer(hwnd, 1, 250, None) == 0 {
             return Err(io::Error::last_os_error());
@@ -1677,6 +2032,16 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
     }
     s.fonts(hwnd);
     let settings = s.settings.borrow().clone();
+    send(
+        s.get(TWO_COLUMNS),
+        BM_SETCHECK,
+        if settings.two_columns {
+            BST_CHECKED
+        } else {
+            BST_UNCHECKED
+        } as usize,
+        0,
+    );
     set_text(s.get(SEARCH), &settings.search);
     send(
         s.get(STATUS),
@@ -1796,7 +2161,11 @@ pub fn run() -> io::Result<()> {
         }
         ShowWindow(hwnd, SW_SHOWNORMAL);
         state.window_preferences(hwnd);
-        SetFocus(state.get(LIST));
+        state.tick(hwnd);
+        if demo && !state.settings.borrow().two_columns {
+            state.toggle_card(hwnd, 0);
+        }
+        SetFocus(state.session_focus());
         let mut msg = MSG::default();
         loop {
             match GetMessageW(&mut msg, null_mut(), 0, 0) {
@@ -1838,9 +2207,16 @@ pub fn run() -> io::Result<()> {
                     }
                     if msg.message == WM_KEYDOWN
                         && msg.wParam == VK_RETURN as usize
+                        && state.feed.logos.borrow().contains(&msg.hwnd)
+                    {
+                        SendMessageW(msg.hwnd, BM_CLICK, 0, 0);
+                        continue;
+                    }
+                    if msg.message == WM_KEYDOWN
+                        && msg.wParam == VK_RETURN as usize
                         && msg.hwnd == state.get(LIST)
                     {
-                        state.command(hwnd, SHOW_DETAIL, 0);
+                        state.activate_selected(hwnd);
                         continue;
                     }
                     if IsDialogMessageW(hwnd, &msg) == 0 {
@@ -1899,6 +2275,7 @@ fn demo_rows() -> Vec<Row> {
         agent: agent.into(),
         model: model.into(),
         summary: "샘플 데이터 · 실제 AI 세션이 아닙니다.".into(),
+        last_answer: "키보드만으로 모든 입력란을 이동하고 오류 안내를 확인할 수 있도록 개선했습니다. 다음 작업은 원래 세션에서 이어서 요청할 수 있습니다.".into(),
         cwd: "샘플 프로젝트".into(),
         since: "2026-09-06T00:00:00Z".into(),
         evidence: "demo".into(),
@@ -1938,9 +2315,30 @@ mod tests {
         let state = Window::new(Updates::default(), path.clone(), true);
         unsafe {
             assert!(!state.visuals.app.is_null(), "waid logo must decode");
+            assert!(!state.visuals.mascot.is_null(), "header mascot must decode");
             assert!(!state.visuals.codex.is_null(), "OpenAI logo must decode");
             assert!(!state.visuals.claude.is_null(), "Claude logo must decode");
             let hwnd = create_window(&state).unwrap();
+            assert!(
+                state.visuals.fonts.iter().all(|font| !font.is_null()),
+                "bundled fonts load"
+            );
+            let dc = GetDC(hwnd);
+            for (font, weight) in [(state.body.get(), FW_SEMIBOLD), (state.heading.get(), FW_BOLD)] {
+                let old = SelectObject(dc, font);
+                let mut metrics = TEXTMETRICW::default();
+                assert_ne!(GetTextMetricsW(dc, &mut metrics), 0);
+                assert_eq!(metrics.tmWeight, weight as i32, "selected font has the requested weight");
+                let mut face = [0u16; 64];
+                let len = GetTextFaceW(dc, face.len() as i32, face.as_mut_ptr());
+                assert!(
+                    String::from_utf16_lossy(&face[..len.saturating_sub(1) as usize])
+                        .starts_with("Pretendard"),
+                    "requested font is selected instead of a fallback"
+                );
+                SelectObject(dc, old);
+            }
+            ReleaseDC(hwnd, dc);
             assert_ne!(
                 send(hwnd, WM_GETICON, ICON_SMALL as usize, 0),
                 0,
@@ -2073,14 +2471,17 @@ mod tests {
         let state = Window::new(Updates::default(), path.clone(), true);
         unsafe {
             let hwnd = create_window(&state).unwrap();
+            state.check_feed(hwnd);
+            state.settings.borrow_mut().two_columns = true;
+            state.layout(hwnd);
             let mut bounds = RECT::default();
             GetWindowRect(hwnd, &mut bounds);
-            assert_eq!(bounds.right - bounds.left, state.px(hwnd, 360));
+            assert_eq!(bounds.right - bounds.left, state.px(hwnd, 600));
             assert_eq!(
                 GetWindowLongPtrW(state.get(DETAIL), GWL_STYLE) as u32 & WS_VISIBLE,
                 0
             );
-            assert!(state.skin.borrow().row_height() <= 110);
+            assert!(state.skin.borrow().row_height() <= 108);
             for height in [153, 306, 600] {
                 state.row_height(height as i32);
                 state.force_rebuild.set(true);
@@ -2088,14 +2489,67 @@ mod tests {
                 state.rebuild(hwnd);
                 assert!(
                     send(state.get(LIST), LB_GETITEMHEIGHT, 0, 0) >= height,
-                    "height {height}"
+                    "height {height}, actual {}, view {}",
+                    send(state.get(LIST), LB_GETITEMHEIGHT, 0, 0),
+                    send(state.get(LIST), LVM_GETVIEW, 0, 0)
                 );
             }
             state.fonts(hwnd);
             *state.updates.lock().unwrap() = Some(Ok(demo_rows()));
             state.tick(hwnd);
             assert_eq!(send(state.get(LIST), LB_GETCOUNT, 0, 0), 3);
+            let mut list_bounds = RECT::default();
+            GetClientRect(state.get(LIST), &mut list_bounds);
+            let tile = |index| {
+                let mut rect = RECT {
+                    left: LVIR_BOUNDS as i32,
+                    ..Default::default()
+                };
+                assert_ne!(
+                    send(
+                        state.get(LIST),
+                        LVM_GETITEMRECT,
+                        index,
+                        &mut rect as *mut _ as isize
+                    ),
+                    0
+                );
+                rect
+            };
+            assert_eq!(
+                tile(0).top,
+                tile(1).top,
+                "first two sessions share a grid row"
+            );
+            assert!(tile(1).left >= tile(0).right, "columns do not overlap");
+            assert!(
+                tile(2).top >= tile(0).bottom,
+                "third session starts the next row"
+            );
             let mut many = Vec::new();
+            // A real card notification falls back to details; blank space does nothing.
+            let selection = state.selected().unwrap().id;
+            let mut click = NMITEMACTIVATE {
+                hdr: NMHDR { hwndFrom: state.get(LIST), idFrom: LIST, code: NM_CLICK },
+                iItem: -1,
+                ..Default::default()
+            };
+            SendMessageW(hwnd, WM_NOTIFY, LIST, &click as *const _ as isize);
+            assert!(!state.expanded.get());
+            click.iItem = 0;
+            SendMessageW(hwnd, WM_NOTIFY, LIST, &click as *const _ as isize);
+            assert!(state.expanded.get());
+            assert_eq!(state.selected().unwrap().id, selection);
+            assert!(state.notice.borrow().contains("연결을 확인할 수 없어"));
+            state.command(hwnd, BACK, 0);
+            let (tx, rx) = std::sync::mpsc::channel();
+            *state.activation.borrow_mut() = Some((selection, rx));
+            tx.send(Err("연결 종료".into())).unwrap();
+            state.tick(hwnd);
+            assert!(state.activation.borrow().is_none());
+            assert!(state.expanded.get());
+            assert_eq!(&*state.notice.borrow(), "연결 종료");
+            state.command(hwnd, BACK, 0);
             for i in 0..30 {
                 let mut row = demo_rows()[0].clone();
                 row.id = format!("sample-{i:02}");
@@ -2104,6 +2558,38 @@ mod tests {
             }
             *state.updates.lock().unwrap() = Some(Ok(many.clone()));
             state.tick(hwnd);
+            GetClientRect(state.get(LIST), &mut list_bounds);
+            assert!(
+                tile(1).right <= list_bounds.right,
+                "second column fits with a scrollbar"
+            );
+            assert!(
+                tile(5).bottom <= list_bounds.bottom,
+                "six sessions fit without scrolling"
+            );
+            state.expand(hwnd, true);
+            assert!(
+                tile(1).left >= tile(0).right,
+                "resizing repositions both columns"
+            );
+            state.expand(hwnd, false);
+            let selected_before_layout = state.selected().unwrap().id;
+            send(
+                state.get(TWO_COLUMNS),
+                BM_SETCHECK,
+                BST_UNCHECKED as usize,
+                0,
+            );
+            state.command(hwnd, TWO_COLUMNS, 0);
+            assert!(!state.settings.borrow().two_columns);
+            assert!(tile(1).top >= tile(0).bottom, "unchecked means one column");
+            assert_eq!(state.selected().unwrap().id, selected_before_layout);
+            state.save();
+            assert!(!Settings::read(&path).unwrap().two_columns);
+            send(state.get(TWO_COLUMNS), BM_SETCHECK, BST_CHECKED as usize, 0);
+            state.command(hwnd, TWO_COLUMNS, 0);
+            assert_eq!(tile(0).top, tile(1).top, "checked means two columns");
+            assert_eq!(state.selected().unwrap().id, selected_before_layout);
             state.busy.set(true);
             send(state.get(LIST), LB_SETCURSEL, 8, 0);
             send(state.get(LIST), LB_SETTOPINDEX, 7, 0);
@@ -2282,20 +2768,33 @@ unsafe fn send(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             };
             SendMessageW(hwnd, LVM_SETITEMSTATE, wp, &item as *const _ as isize)
         }
-        LB_GETTOPINDEX => SendMessageW(hwnd, LVM_GETTOPINDEX, 0, 0),
+        LB_GETTOPINDEX => {
+            // ponytail: linear scan of session tiles; cache the scroll origin for thousands of sessions.
+            let count = SendMessageW(hwnd, LVM_GETITEMCOUNT, 0, 0);
+            for index in 0..count {
+                let mut rect = RECT {
+                    left: LVIR_BOUNDS as i32,
+                    ..Default::default()
+                };
+                SendMessageW(
+                    hwnd,
+                    LVM_GETITEMRECT,
+                    index as usize,
+                    &mut rect as *mut _ as isize,
+                );
+                if rect.bottom > 0 {
+                    return index;
+                }
+            }
+            0
+        }
         LB_SETTOPINDEX => {
             let mut r = RECT {
                 left: LVIR_BOUNDS as i32,
                 ..Default::default()
             };
-            SendMessageW(hwnd, LVM_GETITEMRECT, 0, &mut r as *mut _ as isize);
-            let top = SendMessageW(hwnd, LVM_GETTOPINDEX, 0, 0);
-            SendMessageW(
-                hwnd,
-                LVM_SCROLL,
-                0,
-                (wp as isize - top) * (r.bottom - r.top) as isize,
-            )
+            SendMessageW(hwnd, LVM_GETITEMRECT, wp, &mut r as *mut _ as isize);
+            SendMessageW(hwnd, LVM_SCROLL, 0, r.top as isize)
         }
         LB_GETITEMHEIGHT => {
             let mut r = RECT {

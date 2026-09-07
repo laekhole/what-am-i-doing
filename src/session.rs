@@ -77,6 +77,8 @@ pub struct Task {
 
 #[derive(Debug, Clone)]
 pub struct Session {
+    pub last_answer: Option<String>,
+    pub session_id: Option<String>,
     pub summary: Option<String>,
     pub request_marker: Option<String>,
     pub request_at: Option<i64>,
@@ -192,6 +194,8 @@ pub(crate) fn from_pair(p: Option<&Process>, agent: Agent, t: &Transcript, now: 
             .into_owned()
     });
     Session {
+        last_answer: t.last_answer.clone(),
+        session_id: t.session_id.clone(),
         summary: t.first_prompt.clone(),
         request_marker: t.request_marker.clone(),
         request_at: t.request_at,
@@ -225,6 +229,8 @@ pub(crate) fn from_pair(p: Option<&Process>, agent: Agent, t: &Transcript, now: 
 fn from_process_only(p: &Process, agent: Agent, _now: i64) -> Session {
     let branch = p.cwd.as_deref().and_then(git_branch);
     Session {
+        last_answer: None,
+        session_id: None,
         summary: None,
         request_marker: None,
         request_at: None,
@@ -469,6 +475,7 @@ pub fn to_json(sessions: &[Session], now: i64, pretty: bool) -> String {
     for s in sessions {
         w.begin_obj();
         w.field_str("id", &s.id);
+        w.field_opt_str("session_id", s.session_id.as_deref());
         w.field_str("title", &s.title);
 
         w.field_obj("agent");
@@ -488,6 +495,7 @@ pub fn to_json(sessions: &[Session], now: i64, pretty: bool) -> String {
         w.end_obj();
 
         w.field_opt_str("summary", s.summary.as_deref());
+        w.field_opt_str("last_answer", s.last_answer.as_deref());
         w.field_opt_str("request_marker", s.request_marker.as_deref());
         match s.request_at {
             Some(at) => w.field_num("request_at", at),

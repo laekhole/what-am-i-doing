@@ -150,28 +150,34 @@ impl Skin {
         Ok(skin)
     }
     pub fn row_height(&self) -> i32 {
-        10 + self.padding * 2 + self.lines().len() as i32 * (self.font_size + 4 + self.line_gap)
+        12 + self.padding * 2
+            + (self.lines().len() as i32 + 1) * (self.font_size + 4 + self.line_gap)
     }
     pub fn lines(&self) -> Vec<Vec<&str>> {
-        let mut lines: Vec<Vec<&str>> = vec![vec!["project"]];
-        for field in self.fields.iter().filter(|f| f.as_str() != "project") {
-            let separate = ["task", "status", "activity"].contains(&field.as_str()) || !self.compact;
-            if !separate
-                && lines
-                    .last()
-                    .is_some_and(|line| line.len() == 1 && ["agent", "model"].contains(&line[0]))
-            {
-                lines.last_mut().unwrap().push(field);
-            } else {
-                lines.push(vec![field]);
+        if self.compact {
+            let mut header = vec!["project"];
+            header.extend(
+                self.fields
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|f| *f == "agent"),
+            );
+            let mut lines = vec![header, vec!["task"]];
+            if self.fields.iter().any(|f| f == "activity") {
+                lines.push(vec!["activity"]);
             }
+            return lines;
         }
-        lines
+        self.fields
+            .iter()
+            .map(|field| vec![field.as_str()])
+            .collect()
     }
     pub fn text(&self, row: &Row, field: &str, pinned: bool) -> String {
         match field {
-            "task" => format!("태스크  {}", row.task),
-            "project" => format!("{}프로젝트  {}", if pinned { "★ " } else { "" }, row.title),
+            "task" => format!("{}{}", if pinned { "★ " } else { "" }, row.task),
+            "project" => row.project().into(),
+            "agent" if self.compact && row.agent == "Claude Code" => "Claude".into(),
             "agent" => row.agent.clone(),
             "model" => row.model.clone(),
             "status" => format!(
@@ -184,7 +190,7 @@ impl Skin {
                     ""
                 }
             ),
-            "activity" => format!("마지막 기록  {}", row.since),
+            "activity" => format!("마지막 기록  {}", row.short_date()),
             _ => String::new(),
         }
     }
@@ -192,6 +198,7 @@ impl Skin {
 
 #[derive(Clone, Debug)]
 pub struct Settings {
+    pub two_columns: bool,
     pub always_on_top: bool,
     pub opacity: u8,
     pub closed: BTreeMap<String, Row>,
@@ -208,6 +215,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            two_columns: false,
             always_on_top: false,
             opacity: 100,
             closed: BTreeMap::new(),
@@ -316,6 +324,7 @@ impl Settings {
             }
         }
         s.always_on_top = v["always_on_top"].as_bool().unwrap_or(false);
+        s.two_columns = v["two_columns"].as_bool().unwrap_or(false);
         s.opacity = v["opacity"]
             .as_u64()
             .filter(|n| (40..=100).contains(n))
@@ -348,7 +357,7 @@ impl Settings {
     }
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let closed: Vec<Value> = self.closed.values().map(row_value).collect();
-        let v = json!({"version":1,"always_on_top":self.always_on_top,"opacity":self.opacity,"closed":closed,"show_all":self.show_all,"pinned":self.pinned,"hidden":self.hidden,"search":self.search,"state":self.state,"agent":self.agent,"show_aux":self.show_aux,"show_hidden":self.show_hidden,"template":self.template});
+        let v = json!({"version":1,"two_columns":self.two_columns,"always_on_top":self.always_on_top,"opacity":self.opacity,"closed":closed,"show_all":self.show_all,"pinned":self.pinned,"hidden":self.hidden,"search":self.search,"state":self.state,"agent":self.agent,"show_aux":self.show_aux,"show_hidden":self.show_hidden,"template":self.template});
         atomic_write(path, &serde_json::to_string_pretty(&v)?)
     }
 }
@@ -401,11 +410,18 @@ mod tests {
         assert_ne!(a, b);
         assert_ne!(a.background, b.background);
         assert_ne!(a.fields, b.fields);
-        assert_eq!(a.lines(), vec![vec!["project"], vec!["task"], vec!["status"], vec!["agent", "model"]]);
-        let row = Row { title: "waid".into(), task: "상태 표시 개선".into(), state: "waiting".into(), ..Row::default() };
-        assert_eq!(a.text(&row, "project", false), "프로젝트  waid");
-        assert_eq!(a.text(&row, "task", false), "태스크  상태 표시 개선");
-        assert!(a.text(&row, "status", false).contains("대기 중"));
+        assert_eq!(
+            a.lines(),
+            vec![vec!["project", "agent"], vec!["task"]]
+        );
+        assert_eq!(a.row_height(), 92);
+        let mut expanded = a.clone();
+        expanded.compact = false;
+        assert_eq!(expanded.lines().len(), expanded.fields.len());
+        let mut activity = a.clone();
+        activity.fields.push("activity".into());
+        assert_eq!(activity.lines().last().unwrap(), &["activity"]);
+        assert_eq!(activity.row_height(), 112);
         let mut v: Value = serde_json::from_str(DEFAULT).unwrap();
         v["fields"] = json!(["task", "project"]);
         assert!(Skin::parse(&v.to_string()).is_err());
@@ -480,6 +496,8 @@ mod tests {
             },
         ];
         let mut s = Settings::default();
+        assert!(!s.two_columns);
+        s.two_columns = false;
         s.pinned.insert("a".into());
         assert_eq!(s.visible(&rows)[0].id, "a");
         s.search = "한글".into();
@@ -495,13 +513,14 @@ mod tests {
         assert_eq!(loaded.search, s.search);
         assert_eq!(loaded.hidden, s.hidden);
         assert_eq!(loaded.template, s.template);
+        assert!(!loaded.two_columns);
         fs::remove_file(path).unwrap();
     }
 }
 
 fn row_value(row: &Row) -> Value {
     let cut = |s: &str, n: usize| s.chars().take(n).collect::<String>();
-    json!({"agent_id":row.agent_id,"id":row.id,"request_marker":row.request_marker,"request_at":row.request_at,"title":row.title,"agent":row.agent,"model":row.model,"state":row.state,"since":row.since,"evidence":row.evidence,"task_source":row.task_source,"auxiliary":row.auxiliary,"task":cut(&row.task,512),"summary":cut(&row.summary,200),"cwd":cut(&row.cwd,512)})
+    json!({"last_answer":cut(&row.last_answer,1000),"session_id":row.session_id,"agent_id":row.agent_id,"id":row.id,"request_marker":row.request_marker,"request_at":row.request_at,"title":row.title,"agent":row.agent,"model":row.model,"state":row.state,"since":row.since,"evidence":row.evidence,"task_source":row.task_source,"auxiliary":row.auxiliary,"task":cut(&row.task,512),"summary":cut(&row.summary,200),"cwd":cut(&row.cwd,512)})
 }
 fn saved_row(v: &Value) -> Option<Row> {
     let id = v["id"]
@@ -510,6 +529,13 @@ fn saved_row(v: &Value) -> Option<Row> {
         .to_string();
     Some(Row {
         request_at: v["request_at"].as_i64(),
+        last_answer: crate::field(&v["last_answer"], 4000),
+        session_id: v["session_id"]
+            .as_str()
+            .unwrap_or("")
+            .chars()
+            .take(128)
+            .collect(),
         agent_id: v["agent_id"]
             .as_str()
             .unwrap_or("")

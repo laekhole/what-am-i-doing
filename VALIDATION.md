@@ -196,3 +196,36 @@ node tests/windows-processes.cjs
 - Cline·Roo Code·VS Code Chat·Continue·Gemini CLI·opencode 는 **경로만 등록했고 실제 데이터로 대조하지 않았다.** 이 PC 에는 해당 대화 기록이 없다(`~/.continue/sessions/sessions.json` 은 빈 배열, VS Code 의 `chat.ChatSessionStore.index` 도 비어 있음). 형식이 다르면 목록에 안 뜰 수 있으며, 이를 지원 완료로 간주하지 않는다.
 - macOS·Linux 의 `libsqlite3` 경로와 WAL 로 잠긴 DB 의 사본 폴백은 이 환경에서 재현하지 못했다. 편집기 실행 중 읽기는 미검증이다.
 - 이번 변경은 코어 수집에 한정한다. 새 에이전트 카드의 실제 화면 확인은 하지 않았다.
+
+## 2026-09-08 — 카드에서 기존 Orca 세션 탭으로 이동
+
+- 코어 75개·CLI 통합 4개·데스크톱 11개 테스트 통과. 원본 세션 ID의 JSON/UI 전달, 같은 폴더의 다른 세션, 탭 재사용, 종료·원격·중복 연결 거부를 검사했다. 카드 클릭 알림은 상세 보기로 폴백하고 빈 영역 클릭은 무시하며, 비동기 연결 실패 시 선택이 유지되는 것도 네이티브 테스트로 확인했다.
+- 로컬 Orca 1.4.197에서 현재 Codex 세션 ID와 `ORCA_TERMINAL_HANDLE`을 대조하고 공개 CLI의 기존 탭 전환 성공 응답을 확인했다. 재현: Orca의 Codex 터미널에서 `cargo test --manifest-path desktop/Cargo.toml --release --locked current_orca_session_switches -- --ignored`. 기본 테스트에서는 실제 탭을 전환하지 않는다.
+- 릴리스 실행 파일을 빌드했다. Orca 훅 기록 v2를 읽기 전용으로 사용하며 현재 실행 권한 기록·pane·세션을 대조한다. Orca 기록 형식 변경은 상세 보기로 폴백한다. PowerShell·Windows Terminal 개별 탭, ChatGPT·Claude 일반 채팅 수집·대화 이동은 미지원이다. 이번 실환경 전환 검증은 Codex에 한정하며 Claude Code 실환경 전환은 미검증이다.
+
+## 2026-09-08 — 1열 대화 카드 시안 반영
+
+- 기본 1열 목록을 네이티브 버튼·읽기 전용 텍스트 컨트롤로 구성했다. 카드 안에서 요청·마지막 답변·첫 요청 요약을 펼치고 접으며, 첫 요청 복사와 기존 세션 열기를 제공한다. 기본 글자 14px, 프로젝트 17px, 날짜·상태 배지, 스크롤을 적용했다. 기존 2열·검색·종결·템플릿·창 설정은 유지한다.
+- 코어 기존 75개 + 새 답변 회귀 1개, CLI 4개, 데스크톱 11개 검사 통과. 새 검사는 Claude/Codex/Copilot의 텍스트 답변, 사고·도구 블록 제외, 새 요청 후 이전 답변 제거를 확인한다. 네이티브 검사에는 카드 교체·높이·본문 갱신·스크롤 범위·접기를 추가했다. 실제 Orca 탭 전환 검사는 기존처럼 1개 ignored다.
+- JSON 스냅샷에 선택적 last_answer를 추가했다. 기존 읽기 범위 안에서 최대 4,000자를 수집하고 종결 저장은 1,000자로 제한한다. SQLite 답변 수집, 메시지별 시각, 직접 전송·첨부는 이번 변경에 포함하지 않는다.
+- 별도 설정의 --demo 창에서 카드 펼침을 실제 화면과 접근성 트리로 확인했다. 사용자 대화는 시각 검증에 사용하지 않았다. 가려진 캡처와 상태가 변하지 않은 합성 클릭은 성공 증거에서 제외했다. 혼합 DPI·스크린리더·장시간 사용은 미검증이다.
+
+## 2026-09-08 — 글자 굵기와 대비 개선
+
+- 본문은 내장 Pretendard SemiBold(600), 제목은 실제 Bold(700) 폰트를 사용한다. 요청 미리보기는 1열·2열 모두 본문 색으로 표시하고 Daylight 보조 색상을 #3F4F6D로 진하게 조정했다.
+- Windows GetTextMetricsW로 실제 선택된 굵기 600/700과 Pretendard 서체를 확인했다. 앱 검사 11개 통과, 실제 탭 전환 검사 1개는 기존대로 ignored다. 기존 크기·ClearType·사용자 투명도 설정은 유지한다.
+
+## 2026-09-08 — 짧은 날짜와 상태 아래 모델
+
+- 카드 날짜·활동 요약을 yy-mm-dd로 줄이고 1열·compact 2열의 상태 배지 아래에 모델을 표시했다. 날짜 미확인은 그대로 유지하며 상세 화면의 원본 활동 시각은 보존한다.
+- 데스크톱 12개 테스트 통과, 실제 탭 전환 1개 ignored. ISO 시각·날짜만 있는 값·윤일·빈 값·한글 미확인 값의 표시를 검사했다. 기존 카드·선택·로고·정리·템플릿·폰트 검사도 통과했다.
+
+### 날짜 표시 후속 조정
+
+접힌 1열 카드의 최근 기록은 1분 미만 방금 전, 1시간 미만 N분 전, 24시간 미만 N시간 전, 그 이후 yy-mm-dd로 표시한다. 펼친 카드는 항상 yy-mm-dd다. 코어의 기존 RFC 3339 파서를 재사용하며 새 로그가 없어도 시간 경계에서 표시를 갱신한다. 날짜·시간대·1분/1시간/24시간 경계·미확인·미래 시각·펼침 상태를 포함한 데스크톱 14개 테스트 통과, 실제 탭 전환 1개 ignored.
+
+## Remote integration check (2026-09-08)
+
+- Rebased the desktop card changes onto the remote activity tracking, tray behavior, and signed release packaging.
+- Release tests: core 76 passed, CLI 4 passed, desktop 16 passed; the live Orca session-switch test remains explicitly ignored. Core and desktop release builds succeeded.
+- The portable package check verified both executable hashes and the bundled font license inside the ZIP.

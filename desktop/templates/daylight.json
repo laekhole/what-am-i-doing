@@ -1,23 +1,23 @@
 {
   "version": 1,
   "name": "Daylight",
-  "font_size": 13,
+  "font_size": 14,
   "padding": 10,
-  "line_gap": 3,
+  "line_gap": 2,
   "fields": [
     "task",
     "project",
-    "status",
     "agent",
-    "model"
+    "model",
+    "status"
   ],
   "colors": {
-    "background": "#F3F4F7",
+    "background": "#F5F7FB",
     "surface": "#FFFFFF",
-    "text": "#202534",
-    "muted": "#525C70",
-    "selection": "#EDF2FC",
-    "accent": "#3159A5"
+    "text": "#101B38",
+    "muted": "#3F4F6D",
+    "selection": "#EDF3FF",
+    "accent": "#1555DB"
   },
   "icons": {
     "waiting": "◉",
