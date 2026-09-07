@@ -40,6 +40,7 @@ Section "waid"
     WriteUninstaller "$INSTDIR\uninstall.exe"
     CreateShortcut "$SMPROGRAMS\waid.lnk" "$INSTDIR\waid-desktop.exe"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\waid" "DisplayName" "waid"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\waid" "DisplayIcon" "$INSTDIR\waid-desktop.exe,0"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\waid" "DisplayVersion" "${WAID_VERSION}"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\waid" "InstallLocation" "$INSTDIR"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\waid" "UninstallString" '"$INSTDIR\uninstall.exe"'

@@ -153,13 +153,13 @@ impl Skin {
         10 + self.padding * 2 + self.lines().len() as i32 * (self.font_size + 4 + self.line_gap)
     }
     pub fn lines(&self) -> Vec<Vec<&str>> {
-        let mut lines: Vec<Vec<&str>> = Vec::new();
-        for field in &self.fields {
-            let separate = field == "task" || field == "activity" || !self.compact;
+        let mut lines: Vec<Vec<&str>> = vec![vec!["project"]];
+        for field in self.fields.iter().filter(|f| f.as_str() != "project") {
+            let separate = ["task", "status", "activity"].contains(&field.as_str()) || !self.compact;
             if !separate
                 && lines
                     .last()
-                    .is_some_and(|line| line.len() == 1 && !["task", "activity"].contains(&line[0]))
+                    .is_some_and(|line| line.len() == 1 && ["agent", "model"].contains(&line[0]))
             {
                 lines.last_mut().unwrap().push(field);
             } else {
@@ -170,8 +170,8 @@ impl Skin {
     }
     pub fn text(&self, row: &Row, field: &str, pinned: bool) -> String {
         match field {
-            "task" => format!("{}{}", if pinned { "★ " } else { "" }, row.task),
-            "project" => row.title.clone(),
+            "task" => format!("태스크  {}", row.task),
+            "project" => format!("{}프로젝트  {}", if pinned { "★ " } else { "" }, row.title),
             "agent" => row.agent.clone(),
             "model" => row.model.clone(),
             "status" => format!(
@@ -401,6 +401,11 @@ mod tests {
         assert_ne!(a, b);
         assert_ne!(a.background, b.background);
         assert_ne!(a.fields, b.fields);
+        assert_eq!(a.lines(), vec![vec!["project"], vec!["task"], vec!["status"], vec!["agent", "model"]]);
+        let row = Row { title: "waid".into(), task: "상태 표시 개선".into(), state: "waiting".into(), ..Row::default() };
+        assert_eq!(a.text(&row, "project", false), "프로젝트  waid");
+        assert_eq!(a.text(&row, "task", false), "태스크  상태 표시 개선");
+        assert!(a.text(&row, "status", false).contains("대기 중"));
         let mut v: Value = serde_json::from_str(DEFAULT).unwrap();
         v["fields"] = json!(["task", "project"]);
         assert!(Skin::parse(&v.to_string()).is_err());
@@ -496,7 +501,7 @@ mod tests {
 
 fn row_value(row: &Row) -> Value {
     let cut = |s: &str, n: usize| s.chars().take(n).collect::<String>();
-    json!({"agent_id":row.agent_id,"id":row.id,"request_marker":row.request_marker,"title":row.title,"agent":row.agent,"model":row.model,"state":row.state,"since":row.since,"evidence":row.evidence,"task_source":row.task_source,"auxiliary":row.auxiliary,"task":cut(&row.task,512),"summary":cut(&row.summary,200),"cwd":cut(&row.cwd,512)})
+    json!({"agent_id":row.agent_id,"id":row.id,"request_marker":row.request_marker,"request_at":row.request_at,"title":row.title,"agent":row.agent,"model":row.model,"state":row.state,"since":row.since,"evidence":row.evidence,"task_source":row.task_source,"auxiliary":row.auxiliary,"task":cut(&row.task,512),"summary":cut(&row.summary,200),"cwd":cut(&row.cwd,512)})
 }
 fn saved_row(v: &Value) -> Option<Row> {
     let id = v["id"]
@@ -504,6 +509,7 @@ fn saved_row(v: &Value) -> Option<Row> {
         .filter(|s| !s.is_empty() && s.len() <= 128)?
         .to_string();
     Some(Row {
+        request_at: v["request_at"].as_i64(),
         agent_id: v["agent_id"]
             .as_str()
             .unwrap_or("")

@@ -400,6 +400,7 @@ fn tmpl_else_belongs_to_its_own_block_kind() {
 fn populated_default_template_keeps_all_five_fields() {
     use crate::session::{Confidence, Session, State, Task};
     let mut session = Session {
+        request_at: None,
         summary: None,
         request_marker: None,
         auxiliary: false,
@@ -583,6 +584,7 @@ fn dedupe_extends_suffix_until_titles_are_unique() {
         has_reader: true,
     };
     let mk = |id: &str| crate::session::Session {
+        request_at: None,
         summary: None,
         request_marker: None,
         auxiliary: false,
@@ -752,6 +754,7 @@ fn transcript_events_distinguish_turn_end_from_session_end() {
 fn transcript_without_process_keeps_cwd_task_and_waiting() {
     use crate::session::{self, Confidence, State};
     let mut transcript = crate::transcript::Transcript {
+        request_at: None,
         inferred_time: false,
         session_id: None,
         current_prompt: None,
@@ -1004,6 +1007,7 @@ fn request_marker_ignores_metadata_and_distinguishes_repeated_requests() {
     std::fs::write(&path,"{\"type\":\"user\",\"timestamp\":\"2026-09-06T00:00:00Z\",\"message\":{\"content\":\"continue\"}}\n").unwrap();
     let first = crate::transcript::read(&path, 100).unwrap();
     assert!(first.request_marker.is_some());
+    assert_eq!(first.request_at, crate::time::from_iso8601("2026-09-06T00:00:00Z"));
     let mut file = std::fs::OpenOptions::new()
         .append(true)
         .open(&path)
@@ -1027,6 +1031,12 @@ fn request_marker_ignores_metadata_and_distinguishes_repeated_requests() {
     let resumed = crate::transcript::read(&path, 102).unwrap();
     assert_eq!(first.current_prompt, resumed.current_prompt);
     assert_ne!(first.request_marker, resumed.request_marker);
+    assert_eq!(resumed.request_at, crate::time::from_iso8601("2026-09-06T00:01:00Z"));
+    writeln!(file, "{}", r#"{"type":"user","timestamp":"2026-09-06T00:02:00Z","message":{"content":"<task-notification>background job done</task-notification>Read the output file"}}"#).unwrap();
+    let notification = crate::transcript::read(&path, 103).unwrap();
+    assert_eq!(notification.current_prompt, resumed.current_prompt);
+    assert_eq!(notification.request_marker, resumed.request_marker);
+    assert_eq!(notification.request_at, resumed.request_at);
     drop(file);
     std::fs::remove_file(path).unwrap();
 }

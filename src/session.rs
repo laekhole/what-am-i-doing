@@ -79,6 +79,7 @@ pub struct Task {
 pub struct Session {
     pub summary: Option<String>,
     pub request_marker: Option<String>,
+    pub request_at: Option<i64>,
     pub auxiliary: bool,
     pub evidence: &'static str,
     pub id: String,
@@ -193,6 +194,7 @@ pub(crate) fn from_pair(p: Option<&Process>, agent: Agent, t: &Transcript, now: 
     Session {
         summary: t.first_prompt.clone(),
         request_marker: t.request_marker.clone(),
+        request_at: t.request_at,
         auxiliary: t.auxiliary,
         evidence: if t.event_state == Some(State::Working) && age > WORKING_WITHIN {
             "stale"
@@ -225,6 +227,7 @@ fn from_process_only(p: &Process, agent: Agent, _now: i64) -> Session {
     Session {
         summary: None,
         request_marker: None,
+        request_at: None,
         auxiliary: false,
         evidence: "process_only",
         id: short_id(&[agent.name, &p.pid.to_string()]),
@@ -486,6 +489,10 @@ pub fn to_json(sessions: &[Session], now: i64, pretty: bool) -> String {
 
         w.field_opt_str("summary", s.summary.as_deref());
         w.field_opt_str("request_marker", s.request_marker.as_deref());
+        match s.request_at {
+            Some(at) => w.field_num("request_at", at),
+            None => w.field_opt_str("request_at", None),
+        }
         w.field_bool("auxiliary", s.auxiliary);
         w.field_obj("status");
         w.field_str("evidence", s.evidence);

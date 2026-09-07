@@ -28,3 +28,10 @@ waid-app-icon.png: 382 × 382 px
 waid-wordmark.png: 808 × 311 px
 waid-on-dark.png: 441 × 241 px
 waid-on-light.png: 433 × 241 px
+
+적용 위치
+---------
+README / GitHub 저장소 첫 화면: waid-horizontal.png (밝은 테마), waid-on-dark.png (어두운 테마)
+앱 상단 / 창 / 작업표시줄: waid-app-icon.png에서 변환한 desktop/assets/waid.png
+실행 파일 / 트레이 / 설치·제거 / 시작 메뉴: waid.ico (같은 앱 타일의 16~256px 크기별 이미지)
+아이콘 재생성: 저장소 루트에서 powershell -File assets/build-icons.ps1

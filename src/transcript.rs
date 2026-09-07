@@ -31,6 +31,7 @@ pub struct Transcript {
     pub session_id: Option<String>,
     pub current_prompt: Option<String>,
     pub request_marker: Option<String>,
+    pub request_at: Option<i64>,
     pub auxiliary: bool,
     pub path: PathBuf,
     pub last_event_at: i64,
@@ -239,6 +240,10 @@ pub fn read(path: &Path, mtime: i64) -> Option<Transcript> {
             ])
         })
         .or_else(|| previous.and_then(|t| t.request_marker.clone()));
+    let request_at = match request.as_ref() {
+        Some((v, _)) => v.get("timestamp").and_then(Json::as_str).and_then(time::from_iso8601),
+        None => previous.and_then(|t| t.request_at),
+    };
     let session_id = head_json
         .iter()
         .find_map(|v| {
@@ -307,6 +312,7 @@ pub fn read(path: &Path, mtime: i64) -> Option<Transcript> {
         session_id,
         current_prompt,
         request_marker,
+        request_at,
         auxiliary,
         path: path.to_path_buf(),
         last_event_at: event_time.unwrap_or(inferred_at),
@@ -446,6 +452,7 @@ fn clean_user_text(text: &str) -> Option<String> {
         || text.starts_with("[Request interrupted")
         || text.starts_with("This session is being continued")
         || text.starts_with("# AGENTS.md instructions")
+        || text.starts_with("<task-notification>")
     {
         None
     } else {
@@ -737,6 +744,7 @@ pub fn read_json(path: &Path, mtime: i64) -> Option<Transcript> {
     let last_event_at = observed.unwrap_or(mtime);
 
     Some(Transcript {
+        request_at: None,
         request_marker: Some(request_marker(&[
             current_prompt.as_deref().unwrap_or_default(),
             &last_event_at.to_string(),
@@ -830,6 +838,7 @@ pub(crate) fn row_transcript(file: &Path, row: &crate::sqlite::Row, stamp: i64) 
         .or_else(|| blob.as_ref().and_then(time_value));
 
     Some(Transcript {
+        request_at: None,
         request_marker: Some(request_marker(&[
             current_prompt.as_deref().or(first_prompt.as_deref()).unwrap_or_default(),
             &last_event_at.unwrap_or(stamp).to_string(),

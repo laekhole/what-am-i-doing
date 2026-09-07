@@ -1,6 +1,6 @@
 # App and harness marks
 
-`waid.png` is waid's own logo, resized to 256px from `assets/waid_logo.png` in the repository root and embedded in the app as its window and taskbar icon. `../assets/waid.ico`, built from the same source, is embedded in the executable and used by the installer.
+`waid.png` is the 256px version of the approved `assets/waid-app-icon.png` tile, used in the app header, window and taskbar. Root `assets/waid.ico` contains 16–256px versions of that same tile for the executable, tray and installer. Regenerate both with `powershell -File assets/build-icons.ps1` from the repository root.
 
 The marks below identify the harness that produced a session; they are not waid branding or model indicators. They are embedded in the app and require no network access at runtime.
 

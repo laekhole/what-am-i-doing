@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{
+    collections::BTreeMap,
     io::{self, BufRead, BufReader, Read},
     path::Path,
     process::{Child, Command, Stdio},
@@ -21,6 +22,7 @@ const MAX_SNAPSHOT: u64 = 16 * 1024 * 1024;
 struct Row {
     agent_id: String,
     request_marker: String,
+    request_at: Option<i64>,
     summary: String,
     cwd: String,
     since: String,
@@ -38,9 +40,9 @@ struct Row {
 impl Row {
     fn status(&self) -> &str {
         match self.state.as_str() {
-            "waiting" => "내 차례",
+            "waiting" => "대기 중",
             "working" => "작업 중",
-            "idle" => "중단 / 유휴",
+            "idle" => "유휴",
             "done" => "종결",
             "error" => "오류",
             _ => "미확인",
@@ -49,13 +51,45 @@ impl Row {
 
     fn accessible_text(&self) -> String {
         format!(
-            "{} · {}\n{}\n{} · {}",
+            "프로젝트  {}\n태스크  {}\n상태  {}\n{} · {}",
             self.title,
-            self.status(),
             self.task,
+            self.status(),
             self.agent,
             self.model
         )
+    }
+}
+
+// Observe every core snapshot before the UI's latest-value slot can replace it.
+struct Activity {
+    started_at: i64,
+    requests: BTreeMap<String, (String, bool)>,
+}
+impl Activity {
+    fn apply(&mut self, rows: &mut [Row]) {
+        for row in rows {
+            // These sources have no reliable turn boundaries.
+            if !["transcript", "inferred_time", "stale"].contains(&row.evidence.as_str())
+            {
+                continue;
+            }
+            let (marker, active) = self.requests.entry(row.id.clone()).or_insert_with(|| {
+                (row.request_marker.clone(), row.request_at.is_some_and(|at| at >= self.started_at))
+            });
+            if !row.request_marker.is_empty() && *marker != row.request_marker {
+                *marker = row.request_marker.clone();
+                *active = true;
+            }
+            if !*active {
+                row.state = "idle".into();
+                row.evidence = "before_launch".into();
+            } else if row.state == "unknown" && row.evidence == "stale" {
+                // No timeout: only a logged completion, interruption or error ends the turn.
+                row.state = "working".into();
+                row.evidence = "awaiting_completion".into();
+            }
+        }
     }
 }
 
@@ -75,6 +109,12 @@ impl Drop for Core {
 }
 
 fn start_core(exe: &Path) -> io::Result<(Core, Updates)> {
+    let mut activity = Activity {
+        started_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default().as_secs() as i64,
+        requests: BTreeMap::new(),
+    };
     let mut command = Command::new(exe);
     command
         .args(["--json", "--watch", "--history"])
@@ -102,7 +142,10 @@ fn start_core(exe: &Path) -> io::Result<(Core, Updates)> {
         let mut reader = BufReader::new(stdout);
         loop {
             let (message, ended) = match read_snapshot(&mut reader) {
-                Ok(Some(rows)) => (Ok(rows), false),
+                Ok(Some(mut rows)) => {
+                    activity.apply(&mut rows);
+                    (Ok(rows), false)
+                }
                 Ok(None) => (
                     Err("코어가 종료됐습니다. 앱을 다시 실행하세요.".into()),
                     true,
@@ -153,6 +196,7 @@ fn snapshot_rows(bytes: &[u8]) -> io::Result<Vec<Row>> {
             };
             Row {
                 request_marker: s["request_marker"].as_str().unwrap_or("").to_string(),
+                request_at: s["request_at"].as_i64(),
                 summary: field(&s["summary"], 4000),
                 cwd: field(&s["cwd"], 1000),
                 since: field(&s["status"]["since"], 48),
@@ -207,6 +251,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn activity_tracks_requests_since_launch_until_explicit_completion() {
+        let mut activity = Activity { started_at: 100, requests: BTreeMap::new() };
+        let mut observe = |id: &str, marker: &str, at, state: &str, evidence: &str| {
+            let mut rows = vec![Row {
+                id: id.into(), request_marker: marker.into(), request_at: at,
+                state: state.into(), evidence: evidence.into(), ..Row::default()
+            }];
+            activity.apply(&mut rows);
+            rows.remove(0)
+        };
+        assert_eq!(observe("old", "a", Some(90), "waiting", "transcript").state, "idle");
+        assert_eq!(observe("old", "a", Some(90), "working", "transcript").state, "idle");
+        assert_eq!(observe("old", "b", Some(110), "working", "transcript").state, "working");
+        assert_eq!(observe("old", "b", Some(110), "unknown", "stale").state, "working");
+        assert_eq!(observe("old", "b", Some(110), "waiting", "transcript").state, "waiting");
+        assert_eq!(observe("old", "b", Some(110), "waiting", "transcript").state, "waiting");
+        // Even an identical prompt has a distinct request marker; fast replies may finish between polls.
+        assert_eq!(observe("old", "c", Some(120), "waiting", "transcript").state, "waiting");
+        assert_eq!(observe("old", "d", None, "working", "inferred_time").state, "working");
+        assert_eq!(observe("old", "d", None, "idle", "transcript").state, "idle");
+        assert_eq!(observe("old", "e", Some(130), "error", "transcript").state, "error");
+        assert_eq!(observe("new", "a", Some(140), "working", "transcript").state, "working");
+        assert_eq!(observe("late-history", "a", Some(80), "waiting", "transcript").state, "idle");
+        assert_eq!(observe("unsupported", "a", None, "unknown", "unknown").state, "unknown");
+    }
+
+    #[test]
     fn harness_identity_is_separate_from_model_and_display_name() {
         let value = serde_json::json!({"schema":1,"sessions":[
             {"agent":{"name":"claude","display":"My coding tool"},"llm":{"display":"gpt-test"}},
@@ -227,9 +298,9 @@ mod tests {
         let rows = snapshot_rows(value.to_string().as_bytes()).unwrap();
         assert_eq!(
             rows[0].accessible_text(),
-            "repo main · 내 차례\n≈ 한글 작업\nCodex · —"
+            "프로젝트  repo main\n태스크  ≈ 한글 작업\n상태  대기 중\nCodex · —"
         );
-        assert_eq!(rows[1].accessible_text(), "— · 미확인\n—\n— · —");
+        assert_eq!(rows[1].accessible_text(), "프로젝트  —\n태스크  —\n상태  미확인\n— · —");
         assert_eq!(field(&serde_json::json!("가나다"), 2), "가나…");
         assert_eq!(field(&serde_json::json!(" \n "), 2), "—");
         assert_eq!(field(&serde_json::json!("\0"), 2), "—");

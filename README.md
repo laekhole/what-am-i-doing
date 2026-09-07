@@ -1,8 +1,43 @@
-<img src="assets/waid_logo.png" alt="waid 로고" width="120" align="right">
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/waid-on-dark.png">
+    <img src="assets/waid-horizontal.png" alt="waid — what am I doing?" width="440">
+  </picture>
+</p>
 
 # waid — what am I doing?
 
 여러 코딩 AI 세션의 **현재 작업, 프로젝트, 에이전트·모델, 마지막으로 확인한 상태**를 한 화면에서 보는 Windows 앱입니다. Claude Code·Codex·Copilot CLI 로그를 읽기만 하며 에이전트에 명령을 보내지 않습니다. 개발 빌드이며 확인한 범위와 남은 검증은 [검증 기록](VALIDATION.md)에 있습니다.
+
+## 릴리스 다운로드와 검증
+
+[GitHub Releases](https://github.com/laekhole/what-am-i-doing/releases)에 게시되는 포터블 릴리스는 아래 세 파일로 구성됩니다. ZIP을 검증한 뒤 압축을 풀고 `waid-desktop.exe`를 실행하세요. 같은 폴더의 `waid.exe`도 필요합니다.
+
+```text
+waid-v1.0.0-windows-x64.zip
+waid-v1.0.0-windows-x64.zip.sigstore.json
+SHA256SUMS.txt
+```
+
+파일명이 같은 세 파일을 내려받은 폴더에서 아래 PowerShell 명령을 실행합니다. `v1.0.0`은 실제 다운로드한 태그로 바꾸세요. [Cosign 설치 안내](https://docs.sigstore.dev/cosign/system_config/installation/)에 따라 Cosign 3.1.3 이상이 필요합니다.
+
+```powershell
+$tag = 'v1.0.0'
+$zip = "waid-$tag-windows-x64.zip"
+$expected = (Get-Content -LiteralPath SHA256SUMS.txt -Raw).Trim()
+$actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($expected -cne "$actual  $zip") { throw '체크섬이 일치하지 않습니다.' }
+cosign verify-blob --bundle "$zip.sigstore.json" --certificate-identity "https://github.com/laekhole/what-am-i-doing/.github/workflows/release.yml@refs/tags/$tag" --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' $zip
+if ($LASTEXITCODE -ne 0) { throw '릴리스 서명 검증에 실패했습니다.' }
+```
+
+SHA-256은 파일의 일치를 확인하며, Cosign은 **이 저장소의 해당 태그·릴리스 워크플로 신원으로 서명한 파일**인지 확인합니다. 서명 검증에 실패하면 실행하지 마세요. 별도 Sigstore 서명은 Windows Authenticode 서명이 아니므로 **Smart App Control·SmartScreen 실행 허용을 보장하지 않습니다.** 이 릴리스 절차는 PC의 보안 설정을 변경하지 않습니다.
+
+유지관리자는 검토한 커밋에 `v1.0.0` 또는 `v1.0.0-rc.1` 같은 태그를 푸시하면 됩니다. [릴리스 워크플로](.github/workflows/release.yml)가 Windows x64에서 코어·앱 테스트와 빌드, ZIP 내용 검사, 체크섬 생성, GitHub OIDC 기반 keyless 서명·검증을 실행합니다. 세 파일을 Draft Release에 첨부한 뒤 공개하며, `-rc.1` 등의 접미사가 있는 태그는 사전 릴리스로 게시합니다. 서명 개인키나 인증서 비밀은 저장소에 등록하지 않습니다. Sigstore 공개 투명성 로그에는 서명 신원과 아티팩트 다이제스트가 기록됩니다.
+
+워크플로 파일을 포함한 커밋에 태그를 붙여야 합니다. CI를 통과하지 못하면 릴리스를 공개하지 않으며, 업로드·공개 도중 실패하면 남은 초안을 확인하세요. 이미 존재하는 릴리스나 자산을 자동 덮어쓰지 않습니다. ZIP의 버전은 태그를 따릅니다. 코어·앱의 Cargo 버전은 독립적으로 관리합니다.
+
+로컬에서는 `./desktop/build.ps1 -Portable -Tag v1.0.0`으로 서명 전 ZIP·체크섬을 만들 수 있습니다. 출력은 `desktop/target/release/bundle`이며 기존 결과가 있으면 덮어쓰지 않습니다. 이미 빌드한 두 EXE만 패키징하려면 `./desktop/package.ps1 -Tag v1.0.0 -OutputDirectory <새-출력-폴더>`를 사용하세요. 로컬 패키징에는 GitHub OIDC 서명이 포함되지 않습니다.
 
 ## Windows에서 실행
 
@@ -23,7 +58,7 @@ GNU 타깃을 쓰려면 양쪽 명령에 `--target x86_64-pc-windows-gnu`를 추
 
 ## 화면 사용
 
-기본 창은 **360×420 논리 픽셀**의 작은 창입니다. 각 세션을 휴대폰 알림처럼 둥근 카드로 표시하고 앞에 하네스 로고를 둡니다. 카드에는 작업 / 프로젝트·상태 / 에이전트·모델이 표시됩니다. 제목 표시줄에는 **항상 위**, **최소화**, **닫기**가 있고, 제목 부분을 끌어 이동하고 가장자리를 끌어 크기를 조절합니다.
+기본 창은 **360×420 논리 픽셀**의 작은 창입니다. 각 세션은 **프로젝트명 / 태스크명 / 상태 배지 / 에이전트·모델**을 구분한 카드로 표시합니다. 상태 배지는 기호·색상·텍스트를 함께 사용합니다. 앱 상단에는 waid 로고, 카드에는 하네스 로고가 표시됩니다. 제목 표시줄에는 **항상 위**, **최소화**, **닫기**가 있고, 제목 부분을 끌어 이동하고 가장자리를 끌어 크기를 조절합니다.
 
 - **항상 위**는 다른 일반 창보다 위에 유지합니다. 세션 **고정**과 별개입니다.
 - **투명도** 버튼을 누르면 **0~60%** 슬라이더가 펼쳐집니다. 항상 위·투명도는 재실행해도 유지합니다.
@@ -43,14 +78,16 @@ GNU 타깃을 쓰려면 양쪽 명령에 `--target x86_64-pc-windows-gnu`를 추
 
 | 화면 | 의미 |
 |---|---|
-| 내 차례 | 마지막 기록이 턴 종료입니다. 승인 요청 대기와 새 요청을 보낼 차례는 구분하지 못합니다. |
-| 작업 중 | 최근 20초 안에 요청·작업 시작·도구 활동 등을 확인했습니다. |
-| 중단 / 유휴 | 명시적인 중단 기록(turn_aborted, Copilot abort/shutdown 등)입니다. 프로세스 미발견으로 만들지 않습니다. |
+| 유휴 | 앱 실행 후 새 사용자 요청이 관측되지 않았거나 명시적인 중단 기록이 있는 세션입니다. 기존 대화는 이 상태에서 시작합니다. |
+| 작업 중 | 앱 실행 후 새 사용자 요청을 확인했습니다. 응답 종료·중단·오류 기록이 올 때까지 유지하며, 긴 작업도 시간만으로 유휴나 대기로 바꾸지 않습니다. |
+| 대기 중 | 앱 실행 후 요청한 작업의 응답이 끝났습니다. 다음 사용자 요청이 기록되면 다시 작업 중이 됩니다. |
 | 오류 | 로그 이벤트 자체의 오류입니다. 도구 출력의 error 문자열만으로 판정하지 않습니다. |
-| 미확인 | 해석할 상태가 없거나 작업 기록이 20초 넘게 갱신되지 않았습니다. 긴 도구 실행도 포함될 수 있습니다. |
+| 미확인 | 요청·응답 경계를 읽을 수 없는 소스입니다. 프로세스나 파일 갱신만으로 작업 중·대기 중을 추정하지 않습니다. |
 | 종결 | 사용자가 waid에서 정리한 세션입니다. 원본 대화·프로세스는 종료하지 않습니다. 턴 종료와 구분합니다. |
 
 앱은 **날짜 제한 없이 기존 로그도 수집**합니다. CLI는 기본 최근 24시간이며 `--history`로 제한을 해제합니다. 현재 열린 창 목록이나 세션 생존은 보증하지 않으며 JSON의 `alive: null`은 미확인입니다. 표시하는 작업은 읽기 범위에서 찾은 최근 실제 사용자 요청이고, `WAID_TASK`·프로젝트 `.waid`·실행 인자 라벨이 있으면 그것을 우선합니다.
+
+앱의 관측 기준은 실행할 때마다 새로 시작합니다. 로그가 늦게 기록되면 상태 변경도 늦어집니다. CLI/JSON의 상태는 기존처럼 마지막 로그와 20초 활동 기준을 사용하며, JSON의 `request_at`은 마지막 사용자 요청의 Unix 초 시각(시각이 없으면 null)입니다.
 
 ## 발견되지 않을 때
 

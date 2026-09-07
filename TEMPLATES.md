@@ -1,6 +1,6 @@
 # Windows UI 템플릿
 
-네이티브 앱의 JSON 템플릿입니다. CLI HTML/CSS와 별개이며 재빌드 없이 바꿀 수 있습니다. 상태 판정은 코어에만 있고 템플릿에는 실행 코드나 상태 규칙이 없습니다.
+네이티브 앱의 JSON 템플릿입니다. CLI HTML/CSS와 별개이며 재빌드 없이 바꿀 수 있습니다. 코어가 로그 이벤트를 읽고 앱이 실행 이후의 요청을 추적합니다. 템플릿에는 실행 코드나 상태 규칙이 없습니다.
 
 ## 복제 · 수정 · 미리보기 · 적용
 
@@ -13,7 +13,7 @@
 
 **가져오기**는 UTF-8 JSON을 검증해 편집 영역에 넣습니다. 미리보기 후 적용하세요. **내보내기**는 편집 중인 유효한 JSON을 저장하며 세션 데이터를 넣지 않습니다. 기존 파일을 고르면 Windows 덮어쓰기 확인을 거칩니다.
 
-[Daylight](desktop/templates/daylight.json)는 옅은 회색 배경·흰 둥근 카드와 작업 / 프로젝트·상태 / 에이전트·모델 배열입니다. [Midnight](desktop/templates/midnight.json)는 어두운 배경과 작업 / 상태·프로젝트 / 에이전트·모델 배열 및 다른 상태 기호를 사용합니다. 같은 데이터를 다른 순서·기호·색으로 표현합니다.
+[Daylight](desktop/templates/daylight.json)는 옅은 회색 배경·흰 둥근 카드, [Midnight](desktop/templates/midnight.json)는 어두운 배경과 다른 상태 기호를 사용합니다. 프로젝트는 첫 줄, 태스크와 상태 배지는 각각 독립된 줄에 표시합니다.
 
 ## 형식 version 1
 
@@ -29,11 +29,11 @@
 | colors.muted | 부가 정보 글자색 |
 | colors.selection | 선택한 행의 배경 |
 | colors.accent | 강조선·강조 글자색 |
-| font_size | 12~24, 96 DPI 기준 논리 픽셀. 기본값은 13이고 작업 제목은 2픽셀 더 큽니다. |
+| font_size | 12~24, 96 DPI 기준 논리 픽셀. 기본값은 13이고 프로젝트명은 2픽셀 더 큽니다. |
 | padding | 4~24, 행 안쪽 여백. 기본 10 |
-| compact | true / false. 기본 true: 인접한 부가 필드를 두 개씩 한 줄에 표시. task·activity는 별도 줄. false면 각 필드가 한 줄 |
+| compact | true / false. 기본 true: 인접한 agent·model을 한 줄에 표시. project·task·status·activity는 별도 줄. false면 각 필드가 한 줄 |
 | line_gap | 2~12, 항목 사이 추가 간격 |
-| fields | task, project, status, agent, model, activity 중 원하는 순서. 중복 불가. task·project·status 필수. |
+| fields | task, project, status, agent, model, activity 중 원하는 순서. project는 항상 첫 줄에 표시. 중복 불가. task·project·status 필수. |
 | icons | waiting, working, error, idle, done, unknown 각각 1~4자 기호 |
 | state_colors | 위 여섯 상태 각각의 #RRGGBB 색상 |
 
