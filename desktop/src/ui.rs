@@ -11,6 +11,7 @@ pub const STATES: &[&str] = &["waiting", "working", "error", "idle", "done", "un
 pub const DEFAULT: &str = include_str!("../templates/daylight.json");
 pub const NIGHT: &str = include_str!("../templates/midnight.json");
 pub const MAX_CONFIG: u64 = 128 * 1024;
+const MAX_SETTINGS: u64 = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Skin {
@@ -205,6 +206,7 @@ pub struct Settings {
     pub show_all: bool,
     pub pinned: BTreeSet<String>,
     pub hidden: BTreeSet<String>,
+    pub session_targets: BTreeMap<String, Value>,
     pub search: String,
     pub state: String,
     pub agent: String,
@@ -222,6 +224,7 @@ impl Default for Settings {
             show_all: false,
             pinned: BTreeSet::new(),
             hidden: BTreeSet::new(),
+            session_targets: BTreeMap::new(),
             search: String::new(),
             state: String::new(),
             agent: String::new(),
@@ -233,6 +236,10 @@ impl Default for Settings {
 }
 impl Settings {
     pub fn visible(&self, rows: &[Row]) -> Vec<Row> {
+        self.visible_at(rows, crate::time::now())
+    }
+
+    fn visible_at(&self, rows: &[Row], now: i64) -> Vec<Row> {
         let query = self.search.to_lowercase();
         let mut candidates = rows.to_vec();
         if self.show_all {
@@ -250,7 +257,10 @@ impl Settings {
         let mut visible: Vec<Row> = candidates
             .iter()
             .filter(|r| {
-                (self.show_all || self.show_aux || !r.auxiliary)
+                (self.show_aux || !r.auxiliary)
+                    && (self.show_all || self.pinned.contains(&r.id) || r.observed_since_launch
+                        || crate::time::from_iso8601(&r.since)
+                            .is_none_or(|at| now.saturating_sub(at) <= 24 * 3600))
                     && (self.show_all || (!self.closed.contains_key(&r.id) && r.state != "done"))
                     && (self.show_all || self.show_hidden || !self.hidden.contains(&r.id))
                     && (self.state.is_empty() || self.state == r.state)
@@ -276,6 +286,8 @@ impl Settings {
                                 .position(|s| *s == a.state)
                                 .cmp(&STATES.iter().position(|s| *s == b.state)),
                         )
+                        .then_with(|| crate::time::from_iso8601(&b.since)
+                            .cmp(&crate::time::from_iso8601(&a.since)))
                         .then(a.title.cmp(&b.title))
                         .then(a.id.cmp(&b.id)),
                 )
@@ -286,26 +298,83 @@ impl Settings {
         if !self.closed.contains_key(&row.id) && self.closed.len() >= 1024 {
             return Err("종결 기록은 최대 1,024개입니다.".into());
         }
-        self.closed.insert(row.id.clone(), row.clone());
+        let mut row = row.clone();
+        if row.request_marker.is_empty() {
+            row.request_marker = "none".into();
+        }
+        self.closed.insert(row.id.clone(), row);
         Ok(())
     }
-    pub fn reconcile(&mut self, rows: &[Row]) -> usize {
+    pub fn reconcile(&mut self, rows: &[Row]) -> (usize, bool) {
+        let mut migrated = self.migrate_ids(rows);
         let before = self.closed.len();
         for row in rows {
-            if let Some(closed) = self.closed.get(&row.id) {
-                let new_request =
-                    !row.request_marker.is_empty() && row.request_marker != closed.request_marker;
-                // A request can finish between polls: a fresh waiting/error record still revives it.
-                let observed = ["working", "waiting", "error"].contains(&row.state.as_str());
-                if new_request && observed {
-                    self.closed.remove(&row.id);
+            let revive = if let Some(closed) = self.closed.get_mut(&row.id) {
+                let old_version = closed.request_marker.split_once(':').map(|p| p.0);
+                let new_version = row.request_marker.split_once(':').map(|p| p.0);
+                let migration = closed.request_marker.is_empty()
+                    // A restarted core only has Orca's latest hook, not its submit time.
+                    || (row.task_source == "orca_hook" && row.request_at.is_none() && row.task == closed.task
+                        && row.request_marker != closed.request_marker)
+                    || matches!((old_version, new_version), (Some(a), Some(b)) if a.starts_with('r') && b.starts_with('r') && a != b);
+                if !row.request_marker.is_empty() && migration {
+                    closed.request_marker = row.request_marker.clone();
+                    closed.request_at = row.request_at;
+                    migrated = true;
+                } else if row.request_marker.is_empty() && old_version == Some("r1") {
+                    closed.request_marker = "none".into();
+                    migrated = true;
                 }
+                let new_request = !migration
+                    && !row.request_marker.is_empty()
+                    && row.request_marker != closed.request_marker;
+                // The turn may finish or be interrupted between polls; the request is the evidence.
+                new_request
+            } else {
+                false
+            };
+            if revive {
+                self.closed.remove(&row.id);
             }
         }
-        before - self.closed.len()
+        (before - self.closed.len(), migrated)
+    }
+
+    fn migrate_ids(&mut self, rows: &[Row]) -> bool {
+        let mut candidates: BTreeMap<&str, Vec<&Row>> = BTreeMap::new();
+        for row in rows.iter().filter(|r| !r.legacy_id.is_empty() && r.id != r.legacy_id) {
+            candidates.entry(&row.legacy_id).or_default().push(row);
+        }
+        let mut changed = false;
+        for (old, rows) in candidates {
+            let saved = self.closed.get(old);
+            let matches: Vec<_> = rows.iter().filter(|row| saved.is_none_or(|saved|
+                (saved.session_id.is_empty() || saved.session_id == row.session_id)
+                    && (saved.agent_id.is_empty() || saved.agent_id == row.agent_id)))
+                .collect();
+            // A legacy hash can name several sessions. Never transfer organization to a guess.
+            let [row] = matches.as_slice() else { continue };
+            for set in [&mut self.pinned, &mut self.hidden] {
+                if set.remove(old) {
+                    set.insert(row.id.clone());
+                    changed = true;
+                }
+            }
+            if let Some(mut saved) = self.closed.remove(old) {
+                saved.id = row.id.clone();
+                saved.legacy_id = old.into();
+                self.closed.entry(row.id.clone()).or_insert(saved);
+                changed = true;
+            }
+            if let Some(target) = self.session_targets.remove(old) {
+                self.session_targets.entry(row.id.clone()).or_insert(target);
+                changed = true;
+            }
+        }
+        changed
     }
     pub fn read(path: &Path) -> Result<Self, String> {
-        let text = read_bounded(path, 8 * 1024 * 1024)?;
+        let text = read_bounded(path, MAX_SETTINGS)?;
         let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
         if v["version"] != 1 {
             return Err("설정 파일 버전을 확인할 수 없습니다.".into());
@@ -317,11 +386,16 @@ impl Settings {
                     .iter()
                     .take(1024)
                     .filter_map(Value::as_str)
-                    .filter(|id| id.len() <= 128)
+                    .filter(|id| !id.is_empty())
                 {
                     target.insert(id.to_string());
                 }
             }
+        }
+        if let Some(targets) = v["session_targets"].as_object() {
+            s.session_targets = targets.iter().take(1024)
+                .filter(|(id, target)| !id.is_empty() && target.is_object())
+                .map(|(id, target)| (id.clone(), target.clone())).collect();
         }
         s.always_on_top = v["always_on_top"].as_bool().unwrap_or(false);
         s.two_columns = v["two_columns"].as_bool().unwrap_or(false);
@@ -357,8 +431,12 @@ impl Settings {
     }
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let closed: Vec<Value> = self.closed.values().map(row_value).collect();
-        let v = json!({"version":1,"two_columns":self.two_columns,"always_on_top":self.always_on_top,"opacity":self.opacity,"closed":closed,"show_all":self.show_all,"pinned":self.pinned,"hidden":self.hidden,"search":self.search,"state":self.state,"agent":self.agent,"show_aux":self.show_aux,"show_hidden":self.show_hidden,"template":self.template});
-        atomic_write(path, &serde_json::to_string_pretty(&v)?)
+        let v = json!({"version":1,"two_columns":self.two_columns,"always_on_top":self.always_on_top,"opacity":self.opacity,"closed":closed,"show_all":self.show_all,"pinned":self.pinned,"hidden":self.hidden,"search":self.search,"state":self.state,"agent":self.agent,"show_aux":self.show_aux,"show_hidden":self.show_hidden,"template":self.template,"session_targets":self.session_targets});
+        let text = serde_json::to_string_pretty(&v)?;
+        if text.len() as u64 > MAX_SETTINGS {
+            return Err(io::Error::other("설정 파일 크기 상한 8 MiB를 초과했습니다."));
+        }
+        atomic_write(path, &text)
     }
 }
 pub fn data_file() -> PathBuf {
@@ -403,6 +481,87 @@ pub fn atomic_write(path: &Path, text: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn remote_hook_restart_does_not_revive_a_dismissed_request() {
+        let mut row = Row { id: "orca:remote".into(), task: "same request".into(),
+            task_source: "orca_hook".into(), request_marker: "orca-request:100:same request".into(),
+            request_at: Some(100), ..Row::default() };
+        let mut settings = Settings::default();
+        settings.close(&row).unwrap();
+        row.request_at = None;
+        row.request_marker = "orca-request:110:same request".into();
+        assert_eq!(settings.reconcile(&[row.clone()]), (0, true));
+        assert_eq!(settings.reconcile(&[row.clone()]), (0, false));
+        row.request_at = Some(120);
+        row.request_marker = "orca-request:120:same request".into();
+        assert_eq!(settings.reconcile(&[row.clone()]).0, 1);
+        settings.close(&row).unwrap();
+        row.request_at = None;
+        row.task = "different request".into();
+        row.request_marker = "orca-request:130:different request".into();
+        assert_eq!(settings.reconcile(&[row]).0, 1);
+    }
+
+    #[test]
+    fn recent_list_keeps_pins_live_work_and_unknown_dates_and_all_restores_history() {
+        let now = crate::time::from_iso8601("2026-09-08T12:00:00Z").unwrap();
+        let row = |id: &str, age| Row {
+            id:id.into(), since:crate::time::to_iso8601(now - age),
+            state:"unknown".into(), ..Row::default()
+        };
+        let mut rows = vec![row("recent", 10), row("boundary", 86400), row("old", 86401),
+            row("pinned", 172800), row("long-work", 172800), Row { id:"undated".into(), ..Row::default() }];
+        rows[4].observed_since_launch = true;
+        let mut settings = Settings::default();
+        settings.pinned.insert("pinned".into());
+        let shown = settings.visible_at(&rows, now);
+        assert_eq!(shown.len(), 5);
+        assert_eq!(shown[0].id, "pinned");
+        assert!(!shown.iter().any(|r| r.id == "old"));
+        assert!(!settings.visible_at(&rows, now + 1).iter().any(|r| r.id == "boundary"));
+        settings.show_all = true;
+        assert_eq!(settings.visible_at(&rows, now).len(), 6);
+        settings.search = "old".into();
+        rows[2].task = "old request".into();
+        assert_eq!(settings.visible_at(&rows, now)[0].id, "old");
+    }
+
+    #[test]
+    fn full_ids_migrate_organization_without_guessing_legacy_collisions() {
+        let path = std::env::temp_dir().join(format!("waid-id-migration-{}.json", std::process::id()));
+        let old = Row { id:"adee487a".into(), session_id:"source-one".into(), agent_id:"codex".into(),
+            request_marker:"r2:request".into(), ..Row::default() };
+        let current = Row { id:"full-identity:".repeat(40), legacy_id:old.id.clone(), ..old.clone() };
+        let mut settings = Settings::default();
+        settings.pinned.insert(old.id.clone());
+        settings.hidden.insert(old.id.clone());
+        settings.session_targets.insert(old.id.clone(), json!({"kind":"chatgpt_link","url":"codex://threads/source-one"}));
+        settings.close(&old).unwrap();
+        assert_eq!(settings.reconcile(&[current.clone()]), (0, true));
+        assert!(settings.pinned.contains(&current.id));
+        assert!(settings.hidden.contains(&current.id));
+        assert!(settings.session_targets.contains_key(&current.id));
+        settings.save(&path).unwrap();
+        let restored = Settings::read(&path).unwrap();
+        assert!(restored.closed.contains_key(&current.id));
+        assert_eq!(restored.session_targets, settings.session_targets);
+        let saved = fs::read(&path).unwrap();
+        let mut oversized = settings.clone();
+        oversized.search = "x".repeat(MAX_SETTINGS as usize);
+        assert!(oversized.save(&path).is_err());
+        assert_eq!(fs::read(&path).unwrap(), saved);
+        let other = Row { id:"another-full-id".into(), session_id:"source-two".into(), ..current.clone() };
+        let mut ambiguous = Settings::default();
+        ambiguous.pinned.insert(old.id.clone());
+        assert_eq!(ambiguous.reconcile(&[current.clone(), other.clone()]), (0, false));
+        assert!(ambiguous.pinned.contains(&old.id));
+        ambiguous.close(&old).unwrap();
+        assert_eq!(ambiguous.reconcile(&[current.clone(), other]), (0, true));
+        assert!(ambiguous.pinned.contains(&current.id));
+        assert_eq!(ambiguous.reconcile(&[current]), (0, false));
+        fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn skins_validate_and_are_distinct() {
         let a = Skin::parse(DEFAULT).unwrap();
@@ -455,23 +614,47 @@ mod tests {
         row.since = "newer metadata".into();
         for state in ["working", "waiting", "idle", "unknown"] {
             row.state = state.into();
-            assert_eq!(settings.reconcile(&[row.clone()]), 0);
+            assert_eq!(settings.reconcile(&[row.clone()]), (0, false));
         }
         row.request_marker = "request-b".into();
         row.state = "working".into();
-        assert_eq!(settings.reconcile(&[row.clone()]), 1);
+        assert_eq!(settings.reconcile(&[row.clone()]), (1, false));
         assert_eq!(settings.visible(&[row.clone()]).len(), 1);
         settings.close(&row).unwrap();
         row.request_marker = "request-c".into();
         row.state = "waiting".into();
         assert_eq!(
             settings.reconcile(&[row.clone()]),
-            1,
+            (1, false),
             "a fast completed turn must not be missed between polls"
         );
         settings.close(&row).unwrap();
+        row.request_marker = "request-d".into();
+        row.state = "unknown".into();
+        assert_eq!(settings.reconcile(&[row.clone()]), (1, false));
+        settings.close(&row).unwrap();
+        row.request_marker = "request-e".into();
+        row.state = "idle".into();
+        assert_eq!(settings.reconcile(&[row.clone()]), (1, false));
+        settings.close(&row).unwrap();
+        settings.closed.get_mut("stable").unwrap().request_marker = "r1:legacy".into();
+        row.request_marker = "r2:current".into();
+        assert_eq!(settings.reconcile(&[row.clone()]), (0, true));
+        settings.save(&path).unwrap();
+        assert_eq!(
+            Settings::read(&path).unwrap().closed["stable"].request_marker,
+            "r2:current"
+        );
+        row.request_marker = "r2:next".into();
+        assert_eq!(settings.reconcile(&[row.clone()]), (1, false));
+        settings.close(&row).unwrap();
         row.request_marker.clear();
-        assert_eq!(settings.reconcile(&[row]), 0);
+        assert_eq!(settings.reconcile(&[row]), (0, false));
+        let mut markerless = Row { id: "markerless".into(), ..Row::default() };
+        settings.close(&markerless).unwrap();
+        assert_eq!(settings.closed["markerless"].request_marker, "none");
+        markerless.request_marker = "r2:first-request".into();
+        assert_eq!(settings.reconcile(&[markerless]), (1, false));
         fs::remove_file(path).unwrap();
     }
     #[test]
@@ -497,6 +680,13 @@ mod tests {
         ];
         let mut s = Settings::default();
         assert!(!s.two_columns);
+        assert_eq!(s.visible(&rows).len(), 2);
+        s.show_all = true;
+        assert_eq!(s.visible(&rows).len(), 2);
+        s.show_aux = true;
+        assert_eq!(s.visible(&rows).len(), 3);
+        s.show_all = false;
+        s.show_aux = false;
         s.two_columns = false;
         s.pinned.insert("a".into());
         assert_eq!(s.visible(&rows)[0].id, "a");
@@ -520,28 +710,30 @@ mod tests {
 
 fn row_value(row: &Row) -> Value {
     let cut = |s: &str, n: usize| s.chars().take(n).collect::<String>();
-    json!({"last_answer":cut(&row.last_answer,1000),"session_id":row.session_id,"agent_id":row.agent_id,"id":row.id,"request_marker":row.request_marker,"request_at":row.request_at,"title":row.title,"agent":row.agent,"model":row.model,"state":row.state,"since":row.since,"evidence":row.evidence,"task_source":row.task_source,"auxiliary":row.auxiliary,"task":cut(&row.task,512),"summary":cut(&row.summary,200),"cwd":cut(&row.cwd,512)})
+    json!({"last_answer":cut(&row.last_answer,1000),"session_id":row.session_id,"agent_id":row.agent_id,"host":row.host,"id":row.id,"legacy_id":row.legacy_id,"logged_state":row.logged_state,"request_marker":row.request_marker,"request_at":row.request_at,"title":row.title,"agent":row.agent,"model":row.model,"state":row.state,"since":row.since,"evidence":row.evidence,"task_source":row.task_source,"auxiliary":row.auxiliary,"task":cut(&row.task,4000),"summary":cut(&row.summary,200),"cwd":cut(&row.cwd,512)})
 }
 fn saved_row(v: &Value) -> Option<Row> {
     let id = v["id"]
         .as_str()
-        .filter(|s| !s.is_empty() && s.len() <= 128)?
+        .filter(|s| !s.is_empty())?
         .to_string();
     Some(Row {
+        legacy_id: v["legacy_id"].as_str().unwrap_or("").to_string(),
+        logged_state: v["logged_state"].as_str().unwrap_or("").to_string(),
+        observed_since_launch: false,
         request_at: v["request_at"].as_i64(),
         last_answer: crate::field(&v["last_answer"], 4000),
         session_id: v["session_id"]
             .as_str()
             .unwrap_or("")
-            .chars()
-            .take(128)
-            .collect(),
+            .to_string(),
         agent_id: v["agent_id"]
             .as_str()
             .unwrap_or("")
             .chars()
             .take(48)
             .collect(),
+        host: v["host"].as_str().unwrap_or("").to_string(),
         id,
         request_marker: v["request_marker"]
             .as_str()
@@ -557,7 +749,7 @@ fn saved_row(v: &Value) -> Option<Row> {
         evidence: crate::field(&v["evidence"], 48),
         task_source: crate::field(&v["task_source"], 48),
         auxiliary: v["auxiliary"].as_bool().unwrap_or(false),
-        task: crate::field(&v["task"], 512),
+        task: v["task"].as_str().unwrap_or("—").chars().filter(|c| *c != '\0').take(4000).collect(),
         summary: crate::field(&v["summary"], 200),
         cwd: crate::field(&v["cwd"], 512),
     })

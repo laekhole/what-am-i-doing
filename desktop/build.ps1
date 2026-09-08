@@ -20,8 +20,6 @@ Push-Location (Split-Path -Parent $PSScriptRoot)
 try {
     & $cargoExe test --release --locked
     if ($LASTEXITCODE -ne 0) { throw 'Core tests failed.' }
-    & $cargoExe build --release --locked
-    if ($LASTEXITCODE -ne 0) { throw 'Core build failed.' }
     & $cargoExe test --manifest-path desktop/Cargo.toml --release --locked
     if ($LASTEXITCODE -ne 0) { throw 'Native shell tests failed.' }
     & $cargoExe build --manifest-path desktop/Cargo.toml --release --locked
@@ -29,8 +27,12 @@ try {
     if ($Portable) {
         & (Join-Path $PSScriptRoot 'package.ps1') -Tag $Tag
     } else {
-        New-Item -ItemType Directory -Path 'desktop/target/release/bundle/nsis' -Force | Out-Null
-        & $NsisPath /V2 (Join-Path $PSScriptRoot 'installer.nsi')
+        $metadata = & $cargoExe metadata --manifest-path desktop/Cargo.toml --no-deps --format-version 1 --locked | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
+        $version = ($metadata.packages | Where-Object name -eq 'waid-desktop').version
+        $releaseDir = (Resolve-Path -LiteralPath 'desktop/target/release').Path
+        New-Item -ItemType Directory -Path (Join-Path $releaseDir 'bundle') -Force | Out-Null
+        & $NsisPath /V2 "/DWAID_VERSION=$version" "/DWAID_RELEASE_DIR=$releaseDir" (Join-Path $PSScriptRoot 'installer.nsi')
         if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
     }
 } finally {

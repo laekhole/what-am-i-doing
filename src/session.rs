@@ -77,6 +77,7 @@ pub struct Task {
 
 #[derive(Debug, Clone)]
 pub struct Session {
+    pub prompt: Option<String>,
     pub last_answer: Option<String>,
     pub session_id: Option<String>,
     pub summary: Option<String>,
@@ -85,6 +86,7 @@ pub struct Session {
     pub auxiliary: bool,
     pub evidence: &'static str,
     pub id: String,
+    pub legacy_id: String,
     pub title: String,
     pub agent: Agent,
     pub llm_id: Option<String>,
@@ -104,6 +106,10 @@ pub fn collect(now: i64) -> Vec<Session> {
 }
 
 pub fn collect_with_history(now: i64, history: bool) -> Vec<Session> {
+    // 진단은 이번 수집의 사실이어야 한다. 잠겼던 파일이 풀리면 다음 스냅샷에서
+    // 조용해지고, 새로 막힌 소스는 그 스냅샷에서 바로 보인다.
+    crate::diag::reset();
+
     let processes: Vec<(Process, Agent)> = proc::list()
         .into_iter()
         .filter_map(|p| matchers::identify(&p).map(|a| (p, a)))
@@ -154,6 +160,7 @@ pub fn collect_with_history(now: i64, history: bool) -> Vec<Session> {
         }
     }
 
+    sessions.extend(crate::orca::collect(now, history));
     let mut seen = HashSet::new();
     sessions.retain(|s| seen.insert(s.id.clone()));
     dedupe_titles(&mut sessions);
@@ -186,14 +193,20 @@ pub(crate) fn from_pair(p: Option<&Process>, agent: Agent, t: &Transcript, now: 
         task.source = "transcript_first_prompt";
     }
 
-    let identity = t.session_id.clone().unwrap_or_else(|| {
-        t.path
-            .components()
-            .collect::<PathBuf>()
-            .to_string_lossy()
-            .into_owned()
-    });
+    let (kind, identity) = match &t.session_id {
+        Some(id) => ("session", id.clone()),
+        None => (
+            "path",
+            t.path
+                .components()
+                .collect::<PathBuf>()
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    };
+    let legacy_id = short_id(&[agent.name, &identity]);
     Session {
+        prompt: t.current_prompt.clone().or_else(|| t.first_prompt.clone()),
         last_answer: t.last_answer.clone(),
         session_id: t.session_id.clone(),
         summary: t.first_prompt.clone(),
@@ -209,7 +222,8 @@ pub(crate) fn from_pair(p: Option<&Process>, agent: Agent, t: &Transcript, now: 
         } else {
             "unknown"
         },
-        id: short_id(&[agent.name, &identity]),
+        id: source_id(kind, agent.name, &identity),
+        legacy_id,
         title: make_title(cwd.as_deref(), branch.as_deref()),
         agent,
         llm_display: t.model.as_deref().map(transcript::normalize_model),
@@ -228,7 +242,9 @@ pub(crate) fn from_pair(p: Option<&Process>, agent: Agent, t: &Transcript, now: 
 /// 알 수 없는 것은 알 수 없다고 표시한다. 추측해서 채우지 않는다(§3.1).
 fn from_process_only(p: &Process, agent: Agent, _now: i64) -> Session {
     let branch = p.cwd.as_deref().and_then(git_branch);
+    let pid = p.pid.to_string();
     Session {
+        prompt: None,
         last_answer: None,
         session_id: None,
         summary: None,
@@ -236,7 +252,8 @@ fn from_process_only(p: &Process, agent: Agent, _now: i64) -> Session {
         request_at: None,
         auxiliary: false,
         evidence: "process_only",
-        id: short_id(&[agent.name, &p.pid.to_string()]),
+        id: source_id("process", agent.name, &pid),
+        legacy_id: short_id(&[agent.name, &pid]),
         title: make_title(p.cwd.as_deref(), branch.as_deref()),
         agent,
         llm_id: None,
@@ -420,7 +437,7 @@ pub(crate) fn dedupe_titles(sessions: &mut [Session]) {
             .iter()
             .map(|s| {
                 if dup.contains(&s.title) {
-                    format!("{}·{}", s.title, &s.id[..len.min(s.id.len())])
+                    format!("{}·{}", s.title, &s.legacy_id[..len.min(s.legacy_id.len())])
                 } else {
                     s.title.clone()
                 }
@@ -429,7 +446,20 @@ pub(crate) fn dedupe_titles(sessions: &mut [Session]) {
 
         let unique: HashSet<&String> = candidates.iter().collect();
         if unique.len() == candidates.len() || len >= 8 {
-            for (s, t) in sessions.iter_mut().zip(candidates) {
+            let titles = if unique.len() == candidates.len() { candidates } else {
+                // ponytail: rare 32-bit display collisions; rank full IDs within
+                // each duplicate group. Use grouped sorting if these grow common.
+                candidates.iter().enumerate().map(|(i, title)| {
+                let mut peers: Vec<&str> = candidates.iter().enumerate()
+                    .filter(|(_, other)| *other == title)
+                    .map(|(j, _)| sessions[j].id.as_str()).collect();
+                if peers.len() < 2 { return title.clone(); }
+                peers.sort_unstable();
+                let rank = peers.iter().position(|id| *id == sessions[i].id).unwrap() + 1;
+                format!("{title}-{rank}")
+                }).collect()
+            };
+            for (s, t) in sessions.iter_mut().zip(titles) {
                 s.title = t;
             }
             return;
@@ -464,17 +494,24 @@ pub(crate) fn short_id(parts: &[&str]) -> String {
     format!("{:08x}", h as u32)
 }
 
+/// Lossless source identity. The agent length makes the encoding unambiguous
+/// even for custom adapter names containing separators.
+fn source_id(kind: &str, agent: &str, identity: &str) -> String {
+    format!("{kind}:{}:{agent}{identity}", agent.len())
+}
+
 // ------------------------------------------------------------ 직렬화
 
 pub fn to_json(sessions: &[Session], now: i64, pretty: bool) -> String {
     let mut w = crate::json::Writer::new(pretty);
     w.begin_obj();
-    w.field_num("schema", 1);
+    w.field_num("schema", 2);
     w.field_str("captured_at", &time::to_iso8601(now));
     w.field_arr("sessions");
     for s in sessions {
         w.begin_obj();
         w.field_str("id", &s.id);
+        w.field_str("legacy_id", &s.legacy_id);
         w.field_opt_str("session_id", s.session_id.as_deref());
         w.field_str("title", &s.title);
 
@@ -495,6 +532,7 @@ pub fn to_json(sessions: &[Session], now: i64, pretty: bool) -> String {
         w.end_obj();
 
         w.field_opt_str("summary", s.summary.as_deref());
+        w.field_opt_str("prompt", s.prompt.as_deref());
         w.field_opt_str("last_answer", s.last_answer.as_deref());
         w.field_opt_str("request_marker", s.request_marker.as_deref());
         match s.request_at {
@@ -529,6 +567,17 @@ pub fn to_json(sessions: &[Session], now: i64, pretty: bool) -> String {
         w.end_obj();
     }
     w.end_arr();
+    // 이번 수집에서 읽지 못한 것들. 건강한 행을 지우지 않고 빠진 것만 말한다.
+    // 문제가 없으면 키 자체가 없다 — 빈 배열은 소비자에게 새 상태를 하나 더
+    // 만들 뿐이다.
+    let warnings = crate::diag::warnings();
+    if !warnings.is_empty() {
+        w.field_arr("warnings");
+        for warning in &warnings {
+            w.elem_str(warning);
+        }
+        w.end_arr();
+    }
     w.end_obj();
     w.buf.push('\n');
     w.buf

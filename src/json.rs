@@ -345,7 +345,11 @@ pub struct Writer {
 
 impl Writer {
     pub fn new(pretty: bool) -> Self {
-        Writer { buf: String::new(), stack: Vec::new(), pretty }
+        Writer {
+            buf: String::new(),
+            stack: Vec::new(),
+            pretty,
+        }
     }
 
     fn sep(&mut self) {
@@ -433,6 +437,12 @@ impl Writer {
     pub fn field_num(&mut self, k: &str, v: i64) {
         self.key(k);
         let _ = write!(self.buf, "{}", v);
+    }
+
+    /// 배열 원소로 문자열 하나. 키 없이 값만 쌓는 유일한 자리다.
+    pub fn elem_str(&mut self, v: &str) {
+        self.sep();
+        escape(v, &mut self.buf);
     }
 
     pub fn field_bool(&mut self, k: &str, v: bool) {

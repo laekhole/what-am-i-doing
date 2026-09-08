@@ -41,7 +41,7 @@ jobs:
           rustup default stable
           if ($LASTEXITCODE -ne 0) { throw 'Rust selection failed.' }
 
-      - name: Test, build and verify portable ZIP
+      - name: Test, build and verify standalone EXE
         run: ./desktop/build.ps1 -Portable -Tag $env:RELEASE_TAG
 
       - name: Install Cosign
@@ -52,10 +52,10 @@ jobs:
       - name: Sign and verify
         working-directory: desktop/target/release/bundle
         run: |
-          $zip = "waid-$env:RELEASE_TAG-windows-x64.zip"
-          cosign sign-blob --yes --bundle "$zip.sigstore.json" $zip
+          $exe = "waid-$env:RELEASE_TAG-windows-x64.exe"
+          cosign sign-blob --yes --bundle "$exe.sigstore.json" $exe
           if ($LASTEXITCODE -ne 0) { throw 'Keyless signing failed.' }
-          cosign verify-blob --bundle "$zip.sigstore.json" --certificate-identity $env:CERTIFICATE_IDENTITY --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' $zip
+          cosign verify-blob --bundle "$exe.sigstore.json" --certificate-identity $env:CERTIFICATE_IDENTITY --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' $exe
           if ($LASTEXITCODE -ne 0) { throw 'Signature verification failed.' }
 
       - name: Upload to draft and publish
@@ -64,10 +64,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          $zip = "waid-$env:RELEASE_TAG-windows-x64.zip"
+          $exe = "waid-$env:RELEASE_TAG-windows-x64.exe"
           $releaseArgs = @('--draft', '--verify-tag', '--title', "waid $env:RELEASE_TAG", '--generate-notes')
           if ($env:RELEASE_TAG.Contains('-')) { $releaseArgs += '--prerelease' }
-          gh release create $env:RELEASE_TAG $zip "$zip.sigstore.json" SHA256SUMS.txt @releaseArgs
+          gh release create $env:RELEASE_TAG $exe "$exe.sigstore.json" SHA256SUMS.txt @releaseArgs
           if ($LASTEXITCODE -ne 0) { throw 'Draft creation or asset upload failed. Inspect the draft before retrying.' }
           gh release edit $env:RELEASE_TAG --draft=false
           if ($LASTEXITCODE -ne 0) { throw 'Publishing failed. The uploaded draft is retained.' }

@@ -18,6 +18,7 @@ use std::sync::OnceLock;
 
 const OK: i32 = 0;
 const ROW: i32 = 100;
+const DONE: i32 = 101;
 const OPEN_READONLY: i32 = 0x0000_0001;
 /// 사본을 만들 수 있는 상한. 이보다 큰 DB는 잠겨 있으면 그냥 포기한다.
 const MAX_COPY_BYTES: u64 = 256 * 1024 * 1024;
@@ -34,13 +35,8 @@ pub fn get<'a>(row: &'a Row, key: &str) -> Option<&'a str> {
 
 struct Api {
     open: unsafe extern "C" fn(*const u8, *mut *mut c_void, i32, *const u8) -> i32,
-    prepare: unsafe extern "C" fn(
-        *mut c_void,
-        *const u8,
-        i32,
-        *mut *mut c_void,
-        *mut *const u8,
-    ) -> i32,
+    prepare:
+        unsafe extern "C" fn(*mut c_void, *const u8, i32, *mut *mut c_void, *mut *const u8) -> i32,
     step: unsafe extern "C" fn(*mut c_void) -> i32,
     column_count: unsafe extern "C" fn(*mut c_void) -> i32,
     column_name: unsafe extern "C" fn(*mut c_void, i32) -> *const u8,
@@ -187,7 +183,17 @@ fn run(api: &Api, file: &Path, sql: &str, flags: i32) -> Result<Vec<Row>, String
         let names: Vec<String> = (0..columns)
             .map(|i| text_at((api.column_name)(stmt, i)))
             .collect();
-        while (api.step)(stmt) == ROW {
+        loop {
+            let result = (api.step)(stmt);
+            if result == DONE {
+                break;
+            }
+            if result != ROW {
+                let why = text_at((api.errmsg)(db));
+                (api.finalize)(stmt);
+                (api.close)(db);
+                return Err(why);
+            }
             // 값 포인터는 다음 step 까지만 유효하다. 지금 복사한다.
             rows.push(
                 names

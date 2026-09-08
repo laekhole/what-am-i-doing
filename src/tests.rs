@@ -6,11 +6,11 @@
 
 use crate::json;
 use crate::matchers;
-use crate::transcript;
-use crate::session::State;
 use crate::proc::Process;
 use crate::render::{self, width};
+use crate::session::State;
 use crate::theme::{self, Truncate, Val};
+use crate::transcript;
 use crate::transcript::{normalize_model, normalize_prompt};
 
 fn p(argv: &[&str]) -> Process {
@@ -400,6 +400,7 @@ fn tmpl_else_belongs_to_its_own_block_kind() {
 fn populated_default_template_keeps_all_five_fields() {
     use crate::session::{Confidence, Session, State, Task};
     let mut session = Session {
+        prompt: None,
         request_at: None,
         last_answer: None,
         session_id: None,
@@ -408,6 +409,7 @@ fn populated_default_template_keeps_all_five_fields() {
         auxiliary: false,
         evidence: "unknown",
         id: "test0001".into(),
+        legacy_id: "test0001".into(),
         title: "Windows MVP".into(),
         agent: crate::adapters::Agent {
             name: "codex",
@@ -576,6 +578,45 @@ fn short_id_avalanches_on_trailing_bytes() {
 }
 
 #[test]
+fn full_source_ids_survive_legacy_short_id_collisions() {
+    let agent = crate::adapters::by_name("codex").unwrap();
+    let make = |session_id: &str| crate::transcript::Transcript {
+        last_answer: None,
+        session_id: Some(session_id.into()),
+        current_prompt: Some("same request".into()),
+        request_marker: None,
+        request_at: None,
+        auxiliary: false,
+        path: session_id.into(),
+        last_event_at: 1,
+        inferred_time: false,
+        cwd: None,
+        model: None,
+        first_prompt: Some("same request".into()),
+        event_state: None,
+    };
+    let mut sessions = [
+        "00000000-0000-0000-0000-000000006c3c",
+        "00000000-0000-0000-0000-00000000b713",
+    ]
+    .map(|id| crate::session::from_pair(None, agent, &make(id), 1))
+    .to_vec();
+    assert_eq!(sessions[0].legacy_id, "adee487a");
+    assert_eq!(sessions[0].legacy_id, sessions[1].legacy_id);
+    assert_ne!(sessions[0].id, sessions[1].id);
+    let mut seen = std::collections::HashSet::new();
+    sessions.retain(|session| seen.insert(session.id.clone()));
+    assert_eq!(sessions.len(), 2);
+    for session in &mut sessions { session.title = "same-project".into(); }
+    crate::session::dedupe_titles(&mut sessions);
+    assert_ne!(sessions[0].title, sessions[1].title);
+    assert!(sessions.iter().all(|s| s.title.starts_with("same-project·adee487a-")));
+    let json = crate::session::to_json(&sessions, 1, false);
+    assert!(json.contains("\"schema\":2"));
+    assert_eq!(json.matches("\"legacy_id\":\"adee487a\"").count(), 2);
+}
+
+#[test]
 fn dedupe_extends_suffix_until_titles_are_unique() {
     use crate::adapters::Agent;
     use crate::session::{dedupe_titles, Confidence, State, Task};
@@ -586,6 +627,7 @@ fn dedupe_extends_suffix_until_titles_are_unique() {
         has_reader: true,
     };
     let mk = |id: &str| crate::session::Session {
+        prompt: None,
         request_at: None,
         last_answer: None,
         session_id: None,
@@ -594,6 +636,7 @@ fn dedupe_extends_suffix_until_titles_are_unique() {
         auxiliary: false,
         evidence: "unknown",
         id: id.to_string(),
+        legacy_id: id.to_string(),
         title: "api".into(),
         agent,
         llm_id: None,
@@ -898,22 +941,42 @@ fn conversation_answer_is_text_from_the_current_turn_only() {
     use std::io::Write;
     let path = std::env::temp_dir().join(format!("waid-answer-{}.jsonl", std::process::id()));
     let mut file = std::fs::File::create(&path).unwrap();
-    writeln!(file, "{}", r#"{"type":"user","message":{"content":"첫 요청"}}"#).unwrap();
+    writeln!(
+        file,
+        "{}",
+        r#"{"type":"user","message":{"content":"첫 요청"}}"#
+    )
+    .unwrap();
     for answer in [
         r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"답변 하나"}]}}"#,
         r#"{"type":"response_item","payload":{"role":"assistant","content":[{"type":"output_text","text":"답변 둘"}]}}"#,
         r#"{"type":"assistant.message","data":{"content":"답변 셋"}}"#,
     ] {
-        writeln!(file, "{answer}").unwrap(); file.flush().unwrap();
+        writeln!(file, "{answer}").unwrap();
+        file.flush().unwrap();
         let t = crate::transcript::read(&path, 1).unwrap();
         assert!(t.last_answer.as_deref().unwrap().starts_with("답변"));
         assert!(!t.last_answer.as_deref().unwrap().contains("private"));
     }
-    writeln!(file, "{}", r#"{"type":"user","message":{"content":"새 요청"}}"#).unwrap(); file.flush().unwrap();
-    assert!(crate::transcript::read(&path, 2).unwrap().last_answer.is_none());
-    writeln!(file, "{}", r#"{"type":"assistant","message":{"content":[{"type":"tool_use","input":{"text":"not an answer"}}]}}"#).unwrap(); file.flush().unwrap();
-    assert!(crate::transcript::read(&path, 3).unwrap().last_answer.is_none());
-    drop(file); std::fs::remove_file(path).unwrap();
+    writeln!(
+        file,
+        "{}",
+        r#"{"type":"user","message":{"content":"새 요청"}}"#
+    )
+    .unwrap();
+    file.flush().unwrap();
+    assert!(crate::transcript::read(&path, 2)
+        .unwrap()
+        .last_answer
+        .is_none());
+    writeln!(file, "{}", r#"{"type":"assistant","message":{"content":[{"type":"tool_use","input":{"text":"not an answer"}}]}}"#).unwrap();
+    file.flush().unwrap();
+    assert!(crate::transcript::read(&path, 3)
+        .unwrap()
+        .last_answer
+        .is_none());
+    drop(file);
+    std::fs::remove_file(path).unwrap();
 }
 
 #[test]
@@ -982,11 +1045,64 @@ fn latest_request_identity_and_auxiliary_are_from_envelopes() {
     assert_eq!(t.first_prompt.as_deref(), Some("first request"));
     let agent = crate::adapters::by_name("codex").unwrap();
     let a = crate::session::from_pair(None, agent, &t, 100);
+    assert_eq!(a.prompt.as_deref(), Some("latest request"));
     assert_eq!(a.task.text.as_deref(), Some("latest request"));
     let mut moved = t.clone();
     moved.path = "elsewhere.jsonl".into();
     assert_eq!(a.id, crate::session::from_pair(None, agent, &moved, 100).id);
     assert!(crate::session::to_json(&[a], 100, false).contains("\"alive\":null"));
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn document_prompts_preserve_lines_and_text_beyond_the_summary_limit() {
+    let path = std::env::temp_dir().join(format!("waid-raw-prompt-{}.json", std::process::id()));
+    let prompt = format!("# Request\n  {}\n\nlast line", "long prompt ".repeat(30));
+    let mut writer = crate::json::Writer::new(false);
+    writer.begin_obj();
+    writer.field_str("role", "user");
+    writer.field_str("content", &prompt);
+    writer.end_obj();
+    let doc = writer.buf;
+    std::fs::write(&path, &doc).unwrap();
+    let json = crate::transcript::read_json(&path, 100).unwrap();
+    assert_eq!(json.current_prompt.as_deref(), Some(prompt.as_str()));
+    let row = vec![("id".into(), "raw-prompt".into()), ("blob".into(), doc)];
+    let sqlite = crate::transcript::row_transcript(&path, &row, 100).unwrap();
+    assert_eq!(sqlite.current_prompt, json.current_prompt);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn worker_classification_reads_envelopes_and_late_dispatch_without_hiding_parent() {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("waid-worker-{}.jsonl", std::process::id()));
+    let meta = r#"{"type":"session_meta","payload":{"id":"worker","source":"cli"}}"#;
+    let worker = r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"You are working inside Orca, a multi-agent IDE. You are a dispatched worker.\nYour task ID is: task_example\nDo the task."}]}}"#;
+    std::fs::write(&path, format!("{meta}\n{{\"type\":\"user\",\"message\":{{\"content\":\"Coordinate workers\"}}}}\n")).unwrap();
+    assert!(!crate::transcript::read(&path, 100).unwrap().auxiliary);
+    let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    writeln!(file, "{worker}").unwrap();
+    let t = crate::transcript::read(&path, 101).unwrap();
+    assert!(t.auxiliary);
+    assert_eq!(t.session_id.as_deref(), Some("worker"));
+    writeln!(file, "{{\"type\":\"padding\",\"text\":\"{}\"}}", "x".repeat(300_000)).unwrap();
+    assert!(crate::transcript::read(&path, 102).unwrap().auxiliary);
+    drop(file);
+    for (metadata, expected) in [
+        (r#""source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent"}}}"#, true),
+        (r#""source":"cli","parent_thread_id":"parent""#, true),
+        (r#""source":"subagent""#, true),
+        (r#""thread_source":{"subagent":"review"}"#, true),
+        (r#""source":{"subagent":null},"parent_thread_id":null"#, false),
+        (r#""source":"cli","forked_from_id":"parent""#, false),
+    ] {
+        std::fs::write(&path, format!("{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"test\",{metadata}}}}}\n")).unwrap();
+        assert_eq!(crate::transcript::read(&path, 103).unwrap().auxiliary, expected, "{metadata}");
+    }
+    let output = format!("{meta}\n{{\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call_output\",\"output\":{worker}}}}}\n");
+    std::fs::write(&path, output).unwrap();
+    assert!(!crate::transcript::read(&path, 104).unwrap().auxiliary);
     std::fs::remove_file(path).unwrap();
 }
 
@@ -1039,7 +1155,10 @@ fn request_marker_ignores_metadata_and_distinguishes_repeated_requests() {
     std::fs::write(&path,"{\"type\":\"user\",\"timestamp\":\"2026-09-06T00:00:00Z\",\"message\":{\"content\":\"continue\"}}\n").unwrap();
     let first = crate::transcript::read(&path, 100).unwrap();
     assert!(first.request_marker.is_some());
-    assert_eq!(first.request_at, crate::time::from_iso8601("2026-09-06T00:00:00Z"));
+    assert_eq!(
+        first.request_at,
+        crate::time::from_iso8601("2026-09-06T00:00:00Z")
+    );
     let mut file = std::fs::OpenOptions::new()
         .append(true)
         .open(&path)
@@ -1063,7 +1182,10 @@ fn request_marker_ignores_metadata_and_distinguishes_repeated_requests() {
     let resumed = crate::transcript::read(&path, 102).unwrap();
     assert_eq!(first.current_prompt, resumed.current_prompt);
     assert_ne!(first.request_marker, resumed.request_marker);
-    assert_eq!(resumed.request_at, crate::time::from_iso8601("2026-09-06T00:01:00Z"));
+    assert_eq!(
+        resumed.request_at,
+        crate::time::from_iso8601("2026-09-06T00:01:00Z")
+    );
     writeln!(file, "{}", r#"{"type":"user","timestamp":"2026-09-06T00:02:00Z","message":{"content":"<task-notification>background job done</task-notification>Read the output file"}}"#).unwrap();
     let notification = crate::transcript::read(&path, 103).unwrap();
     assert_eq!(notification.current_prompt, resumed.current_prompt);
@@ -1073,13 +1195,22 @@ fn request_marker_ignores_metadata_and_distinguishes_repeated_requests() {
     std::fs::remove_file(path).unwrap();
 }
 
-
 #[test]
 fn other_agents_and_windows_runtime_entrypoints() {
     for (argv, agent) in [
         (vec![r"C:\Tools\GEMINI.EXE"], "gemini"),
-        (vec!["node.exe", r"C:\npm\@google\gemini-cli\dist\index.js"], "gemini"),
-        (vec!["NODE.EXE", "--no-warnings", r"C:\npm\@github\copilot\index.js"], "copilot"),
+        (
+            vec!["node.exe", r"C:\npm\@google\gemini-cli\dist\index.js"],
+            "gemini",
+        ),
+        (
+            vec![
+                "NODE.EXE",
+                "--no-warnings",
+                r"C:\npm\@github\copilot\index.js",
+            ],
+            "copilot",
+        ),
         (vec!["bun", r"C:\npm\opencode-ai\bin\opencode"], "opencode"),
         (vec!["python.exe", "-m", "aider"], "aider"),
         (vec!["python3.12", "-u", "-m", "aider.main"], "aider"),
@@ -1087,7 +1218,11 @@ fn other_agents_and_windows_runtime_entrypoints() {
         (vec!["cursor-agent.exe"], "cursor"),
         (vec!["goose.exe"], "goose"),
     ] {
-        assert_eq!(matchers::identify(&p(&argv)).map(|a| a.name), Some(agent), "{argv:?}");
+        assert_eq!(
+            matchers::identify(&p(&argv)).map(|a| a.name),
+            Some(agent),
+            "{argv:?}"
+        );
     }
 }
 
@@ -1103,13 +1238,16 @@ fn package_mentions_and_supervisors_are_not_sessions() {
         vec!["npx", "@google/gemini-cli"],
         vec!["uv", "run", "aider"],
         vec!["uvx", "aider"],
-    ] { assert!(matchers::identify(&p(&argv)).is_none(), "{argv:?}"); }
+    ] {
+        assert!(matchers::identify(&p(&argv)).is_none(), "{argv:?}");
+    }
 }
 
 #[test]
 fn copilot_metadata_requests_child_events_and_resume() {
     use std::io::Write;
-    let path = std::env::temp_dir().join(format!("waid-copilot-reader-{}.jsonl", std::process::id()));
+    let path =
+        std::env::temp_dir().join(format!("waid-copilot-reader-{}.jsonl", std::process::id()));
     std::fs::write(&path, concat!(
         "{\"type\":\"session.start\",\"data\":{\"sessionId\":\"copilot-test\",\"selectedModel\":\"model-one\",\"context\":{\"cwd\":\"D:/fixture/project\"}}}\n",
         "{\"type\":\"user.message\",\"id\":\"request-one\",\"timestamp\":\"2026-09-06T00:00:00Z\",\"data\":{\"content\":\"original task\"}}\n",
@@ -1118,22 +1256,59 @@ fn copilot_metadata_requests_child_events_and_resume() {
     let first = transcript::read(&path, 100).unwrap();
     assert_eq!(first.session_id.as_deref(), Some("copilot-test"));
     assert_eq!(first.model.as_deref(), Some("model-one"));
-    assert_eq!(first.cwd.as_deref(), Some(std::path::Path::new("D:/fixture/project")));
+    assert_eq!(
+        first.cwd.as_deref(),
+        Some(std::path::Path::new("D:/fixture/project"))
+    );
     assert_eq!(first.event_state, Some(State::Waiting));
-    let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
-    writeln!(f, "{}", r#"{"type":"session.model_change","data":{"newModel":"model-two"}}"#).unwrap();
-    writeln!(f, "{}", r#"{"type":"user.message","agentId":"child","data":{"content":"child request"}}"#).unwrap();
-    writeln!(f, "{}", r#"{"type":"session.error","agentId":"child","data":{"message":"child error"}}"#).unwrap();
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(
+        f,
+        "{}",
+        r#"{"type":"session.model_change","data":{"newModel":"model-two"}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        r#"{"type":"user.message","agentId":"child","data":{"content":"child request"}}"#
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "{}",
+        r#"{"type":"session.error","agentId":"child","data":{"message":"child error"}}"#
+    )
+    .unwrap();
     let metadata = transcript::read(&path, 200).unwrap();
     assert_eq!(metadata.model.as_deref(), Some("model-two"));
     assert_eq!(metadata.current_prompt.as_deref(), Some("original task"));
     assert_eq!(metadata.request_marker, first.request_marker);
     assert_eq!(metadata.last_event_at, first.last_event_at);
     assert_eq!(metadata.event_state, Some(State::Waiting));
-    writeln!(f, "{}", r#"{"type":"session.shutdown","data":{"shutdownType":"routine"}}"#).unwrap();
-    assert_eq!(transcript::read(&path, 201).unwrap().event_state, Some(State::Idle));
-    write!(f, "{}", r#"{"type":"user.message","id":"request-two","data":{"content":"new task"}"#).unwrap();
-    assert_eq!(transcript::read(&path, 202).unwrap().event_state, Some(State::Idle));
+    writeln!(
+        f,
+        "{}",
+        r#"{"type":"session.shutdown","data":{"shutdownType":"routine"}}"#
+    )
+    .unwrap();
+    assert_eq!(
+        transcript::read(&path, 201).unwrap().event_state,
+        Some(State::Idle)
+    );
+    write!(
+        f,
+        "{}",
+        r#"{"type":"user.message","id":"request-two","data":{"content":"new task"}"#
+    )
+    .unwrap();
+    assert_eq!(
+        transcript::read(&path, 202).unwrap().event_state,
+        Some(State::Idle)
+    );
     writeln!(f, "}}").unwrap();
     let resumed = transcript::read(&path, 203).unwrap();
     assert_eq!(resumed.event_state, Some(State::Working));
@@ -1141,7 +1316,11 @@ fn copilot_metadata_requests_child_events_and_resume() {
     assert_eq!(resumed.first_prompt.as_deref(), Some("original task"));
     assert_ne!(resumed.request_marker, first.request_marker);
     drop(f);
-    std::fs::write(&path, "{\"type\":\"session.start\",\"data\":{\"sessionId\":\"replaced\"}}\n").unwrap();
+    std::fs::write(
+        &path,
+        "{\"type\":\"session.start\",\"data\":{\"sessionId\":\"replaced\"}}\n",
+    )
+    .unwrap();
     let replaced = transcript::read(&path, 204).unwrap();
     assert_eq!(replaced.session_id.as_deref(), Some("replaced"));
     assert!(replaced.current_prompt.is_none());
@@ -1153,13 +1332,30 @@ fn copilot_metadata_requests_child_events_and_resume() {
 fn copilot_turn_end_is_not_session_completion() {
     for (event, expected) in [
         (r#"{"type":"assistant.turn_end","data":{}}"#, State::Working),
-        (r#"{"type":"tool.execution_complete","data":{"success":false}}"#, State::Working),
+        (
+            r#"{"type":"tool.execution_complete","data":{"success":false}}"#,
+            State::Working,
+        ),
         (r#"{"type":"session.idle","data":{}}"#, State::Waiting),
-        (r#"{"type":"session.idle","data":{"aborted":true}}"#, State::Idle),
-        (r#"{"type":"abort","data":{"reason":"user_initiated"}}"#, State::Idle),
+        (
+            r#"{"type":"session.idle","data":{"aborted":true}}"#,
+            State::Idle,
+        ),
+        (
+            r#"{"type":"abort","data":{"reason":"user_initiated"}}"#,
+            State::Idle,
+        ),
         (r#"{"type":"session.error","data":{}}"#, State::Error),
-        (r#"{"type":"session.shutdown","data":{"shutdownType":"error"}}"#, State::Error),
-    ] { assert_eq!(transcript::event_state(&json::parse(event).unwrap()), Some(expected)); }
+        (
+            r#"{"type":"session.shutdown","data":{"shutdownType":"error"}}"#,
+            State::Error,
+        ),
+    ] {
+        assert_eq!(
+            transcript::event_state(&json::parse(event).unwrap()),
+            Some(expected)
+        );
+    }
 }
 
 // ------------------------------------------------------- SQLite 소스 (v0.6)
@@ -1173,19 +1369,32 @@ fn sqlite_reads_rows_by_column_name() {
     }
     let path = std::env::temp_dir().join(format!("waid-sqlite-test-{}.db", std::process::id()));
     let _ = std::fs::remove_file(&path);
-    crate::sqlite::exec(&path, "create table t (id text, task text, updated_ms integer)").unwrap();
+    crate::sqlite::exec(
+        &path,
+        "create table t (id text, task text, updated_ms integer)",
+    )
+    .unwrap();
     crate::sqlite::exec(
         &path,
         "insert into t values ('a', '첫 요청', 1700000000000), ('b', '', 1700000001000)",
     )
     .unwrap();
-    let rows = crate::sqlite::query(&path, "select id, task, updated_ms from t order by id").unwrap();
+    let rows =
+        crate::sqlite::query(&path, "select id, task, updated_ms from t order by id").unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(crate::sqlite::get(&rows[0], "id"), Some("a"));
     assert_eq!(crate::sqlite::get(&rows[0], "task"), Some("첫 요청"));
-    assert_eq!(crate::sqlite::get(&rows[0], "updated_ms"), Some("1700000000000"));
+    assert_eq!(
+        crate::sqlite::get(&rows[0], "updated_ms"),
+        Some("1700000000000")
+    );
     // 빈 값은 없는 것으로 다룬다 — 카드에 빈 문자열을 띄우지 않는다.
     assert_eq!(crate::sqlite::get(&rows[1], "task"), None);
+    assert!(crate::sqlite::query(
+        &path,
+        "select 1 as n union all select abs(-9223372036854775808)",
+    )
+    .is_err());
     let _ = std::fs::remove_file(&path);
 }
 
@@ -1220,7 +1429,190 @@ fn json_file_becomes_one_session() {
     // 밀리초 타임스탬프는 초로 내려온다.
     assert_eq!(t.last_event_at, 1700000060);
     assert!(!t.inferred_time);
+    assert_eq!(t.request_at, Some(1700000060));
+    let marker = t.request_marker.clone();
+    std::fs::write(
+        &path,
+        r#"{
+          "updatedAt":1700000999000,
+          "messages":[
+            {"role":"user","content":"첫 요청","timestamp":1700000000000},
+            {"role":"assistant","content":"new metadata","model":"changed"},
+            {"role":"user","content":"두 번째 요청","timestamp":1700000060000,"updatedAt":1700000999000},
+            {"role":"assistant","content":"later answer","timestamp":1700000999000}
+          ]
+        }"#,
+    )
+    .unwrap();
+    let metadata = crate::transcript::read_json(&path, 999).unwrap();
+    assert_eq!(metadata.request_marker, marker);
+    std::fs::write(
+        &path,
+        r#"[
+          {"role":"user","content":"첫 요청","timestamp":1700000000000},
+          {"role":"user","content":"두 번째 요청","timestamp":1700000060000},
+          {"role":"user","content":"두 번째 요청"}
+        ]"#,
+    )
+    .unwrap();
+    assert_ne!(
+        crate::transcript::read_json(&path, 1000)
+            .unwrap()
+            .request_marker,
+        marker
+    );
+    std::fs::write(&path, r#"[{"role":"user","content":"repeat"}]"#).unwrap();
+    let repeated = crate::transcript::read_json(&path, 1001)
+        .unwrap()
+        .request_marker;
+    std::fs::write(
+        &path,
+        r#"[{"role":"user","content":"repeat"},{"role":"user","content":"repeat"}]"#,
+    )
+    .unwrap();
+    assert_ne!(
+        crate::transcript::read_json(&path, 1002)
+            .unwrap()
+            .request_marker,
+        repeated
+    );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn json_model_uses_latest_event_metadata_not_tool_payloads() {
+    let path = std::env::temp_dir().join(format!("waid-json-model-{}.json", std::process::id()));
+    std::fs::write(
+        &path,
+        r#"{"model":"root-old","messages":[
+          {"role":"assistant","content":"old","model":"event-old"},
+          {"role":"user","content":"task"},
+          {"role":"assistant","content":"done","model":"event-latest"},
+          {"type":"response_item","payload":{"type":"function_call_output","output":{"model":"tool-fake"}}}
+        ]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        crate::transcript::read_json(&path, 1)
+            .unwrap()
+            .model
+            .as_deref(),
+        Some("event-latest")
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn document_request_markers_keep_fractional_time_and_history_count() {
+    let path = std::env::temp_dir().join(format!("waid-json-marker-{}.json", std::process::id()));
+    std::fs::write(
+        &path,
+        r#"[{"role":"user","content":"repeat","timestamp":"2026-09-06T00:00:00.100Z"}]"#,
+    )
+    .unwrap();
+    let first = crate::transcript::read_json(&path, 1).unwrap();
+    std::fs::write(
+        &path,
+        r#"[{"role":"user","content":"repeat","timestamp":"2026-09-06T00:00:00.900Z"}]"#,
+    )
+    .unwrap();
+    let fractional = crate::transcript::read_json(&path, 1).unwrap();
+    assert_eq!(first.request_at, fractional.request_at);
+    assert_ne!(first.request_marker, fractional.request_marker);
+    assert!(fractional
+        .request_marker
+        .as_deref()
+        .unwrap()
+        .starts_with("r3:"));
+    std::fs::write(
+        &path,
+        r#"[
+      {"role":"user","content":"earlier","timestamp":"2026-09-05T23:59:59Z"},
+      {"role":"user","content":"repeat","timestamp":"2026-09-06T00:00:00.900Z"}
+    ]"#,
+    )
+    .unwrap();
+    let history = crate::transcript::read_json(&path, 1).unwrap();
+    assert_ne!(fractional.request_marker, history.request_marker);
+
+    let row = |blob: &str| {
+        crate::transcript::row_transcript(
+            std::path::Path::new("state.vscdb"),
+            &vec![
+                ("id".into(), "session".into()),
+                ("blob".into(), blob.into()),
+            ],
+            1,
+        )
+        .unwrap()
+    };
+    let sqlite_first = row(
+        r#"{"messages":[{"role":"user","content":"repeat","timestamp":"2026-09-06T00:00:00.100Z"}]}"#,
+    );
+    let sqlite_fractional = row(
+        r#"{"messages":[{"role":"user","content":"repeat","timestamp":"2026-09-06T00:00:00.900Z"}]}"#,
+    );
+    assert_ne!(
+        sqlite_first.request_marker,
+        sqlite_fractional.request_marker
+    );
+    let sqlite_history = row(
+        r#"{"messages":[{"role":"user","content":"earlier"},{"role":"user","content":"repeat","timestamp":"2026-09-06T00:00:00.900Z"}]}"#,
+    );
+    assert_ne!(
+        sqlite_fractional.request_marker,
+        sqlite_history.request_marker
+    );
+    assert!(sqlite_history
+        .request_marker
+        .as_deref()
+        .unwrap()
+        .starts_with("r3:"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn sqlite_cache_fingerprint_tracks_subsecond_updates_and_wal_absence() {
+    let path = std::env::temp_dir().join(format!("waid-cache-stamp-{}.db", std::process::id()));
+    std::fs::write(&path, "same").unwrap();
+    let base = std::time::UNIX_EPOCH + std::time::Duration::from_secs(2_000_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_times(
+            std::fs::FileTimes::new().set_modified(base + std::time::Duration::from_millis(100)),
+        )
+        .unwrap();
+    let first = crate::transcript::sqlite_cache_fingerprint(&path);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_times(
+            std::fs::FileTimes::new().set_modified(base + std::time::Duration::from_millis(900)),
+        )
+        .unwrap();
+    let later = crate::transcript::sqlite_cache_fingerprint(&path);
+    assert_ne!(first, later);
+    std::fs::write(&path, "different size").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_times(
+            std::fs::FileTimes::new().set_modified(base + std::time::Duration::from_millis(900)),
+        )
+        .unwrap();
+    let resized = crate::transcript::sqlite_cache_fingerprint(&path);
+    assert_ne!(later, resized);
+    let wal = std::path::PathBuf::from(format!("{}-wal", path.display()));
+    std::fs::write(&wal, "wal").unwrap();
+    let with_wal = crate::transcript::sqlite_cache_fingerprint(&path);
+    assert_ne!(resized, with_wal);
+    std::fs::remove_file(&wal).unwrap();
+    assert_eq!(resized, crate::transcript::sqlite_cache_fingerprint(&path));
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -1242,6 +1634,36 @@ fn file_uri_becomes_a_local_path() {
     assert_eq!(
         crate::transcript::local_path("D:\\work"),
         Some(std::path::PathBuf::from("D:\\work"))
+    );
+    assert_eq!(
+        crate::transcript::local_path("file:///D:/작업/프로젝트"),
+        Some(std::path::PathBuf::from("D:/작업/프로젝트"))
+    );
+    assert_eq!(
+        crate::transcript::local_path("file:///home/작업"),
+        Some(std::path::PathBuf::from("/home/작업"))
+    );
+    assert_eq!(
+        crate::transcript::local_path(
+            "file:///D:/%EC%9E%91%EC%97%85/%ED%94%84%EB%A1%9C%EC%A0%9D%ED%8A%B8"
+        ),
+        Some(std::path::PathBuf::from("D:/작업/프로젝트"))
+    );
+    assert_eq!(
+        crate::transcript::local_path("file://server/share/%EC%9E%91%EC%97%85"),
+        Some(std::path::PathBuf::from(r"\\server\share\작업"))
+    );
+    assert_eq!(
+        crate::transcript::local_path("file://localhost/D:/work"),
+        Some(std::path::PathBuf::from("D:/work"))
+    );
+    assert_eq!(crate::transcript::local_path("file:///D:/bad%ZZ"), None);
+    assert_eq!(crate::transcript::local_path("file:///D:/bad%E9"), None);
+    assert_eq!(crate::transcript::local_path("file:///D:/bad%00"), None);
+    assert_eq!(crate::transcript::local_path("file://../share/work"), None);
+    assert_eq!(
+        crate::transcript::local_path("file://server:80/share"),
+        None
     );
     // 상대 경로는 기준을 알 수 없다. 틀린 프로젝트를 보여주느니 비운다.
     assert_eq!(crate::transcript::local_path("../work"), None);
@@ -1272,6 +1694,61 @@ fn sqlite_row_becomes_a_session() {
     assert!(!t.inferred_time);
     // DB 행에는 턴 경계가 없다. 상태를 지어내지 않는다.
     assert!(t.event_state.is_none());
+
+    let mut metadata = row.clone();
+    metadata
+        .iter_mut()
+        .find(|(key, _)| key == "updated_ms")
+        .unwrap()
+        .1 = "1700009999000".into();
+    assert_eq!(
+        crate::transcript::row_transcript(&db, &metadata, 6)
+            .unwrap()
+            .request_marker,
+        t.request_marker
+    );
+    let repeated: crate::sqlite::Row = vec![
+        ("id".into(), "abc".into()),
+        ("task".into(), "repeat".into()),
+        (
+            "blob".into(),
+            r#"{"messages":[{"role":"user","id":"one","content":"repeat","createdAt":1700000000000,"updatedAt":1700000001000}]}"#.into(),
+        ),
+    ];
+    let first = crate::transcript::row_transcript(&db, &repeated, 7).unwrap();
+    let mut metadata_again = repeated.clone();
+    metadata_again
+        .iter_mut()
+        .find(|(key, _)| key == "blob")
+        .unwrap()
+        .1 = r#"{"model":"changed","messages":[{"role":"user","id":"one","content":"repeat","createdAt":1700000000000,"updatedAt":1700009999000},{"role":"assistant","content":"done"}]}"#.into();
+    assert_eq!(
+        crate::transcript::row_transcript(&db, &metadata_again, 8)
+            .unwrap()
+            .request_marker,
+        first.request_marker
+    );
+    let mut repeated_again = repeated;
+    repeated_again
+        .iter_mut()
+        .find(|(key, _)| key == "blob")
+        .unwrap()
+        .1 = r#"{"model":"changed","messages":[{"role":"user","id":"one","content":"repeat"},{"role":"assistant","content":"done"},{"role":"user","id":"two","content":"repeat"}]}"#.into();
+    assert_ne!(
+        crate::transcript::row_transcript(&db, &repeated_again, 8)
+            .unwrap()
+            .request_marker,
+        first.request_marker
+    );
+    let title_only: crate::sqlite::Row = vec![
+        ("id".into(), "renamed".into()),
+        ("summary".into(), "session title".into()),
+        ("updated_ms".into(), "1700010000000".into()),
+    ];
+    assert!(crate::transcript::row_transcript(&db, &title_only, 9)
+        .unwrap()
+        .request_marker
+        .is_none());
 
     // 요청도 제목도 없는 빈 대화는 카드가 되지 않는다.
     let empty: crate::sqlite::Row = vec![("id".into(), "x".into()), ("blob".into(), "{}".into())];

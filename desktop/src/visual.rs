@@ -14,6 +14,7 @@ pub struct Visuals {
     pub mascot: HICON,
     pub codex: HICON,
     pub claude: HICON,
+    pub orca: HICON,
 }
 impl Visuals {
     pub fn new() -> Self {
@@ -45,6 +46,7 @@ impl Visuals {
                 mascot: png_icon(include_bytes!("../../assets/waid-mascot.png")),
                 codex: png_icon(include_bytes!("../assets/openai.png")),
                 claude: ico_icon(include_bytes!("../assets/claude.ico")),
+                orca: png_icon(include_bytes!("../assets/orca.png")),
             }
         }
     }
@@ -52,6 +54,7 @@ impl Visuals {
         let icon = match agent_id {
             "codex" => self.codex,
             "claude" => self.claude,
+            "orca" => self.orca,
             _ => null_mut(),
         };
         !icon.is_null() && DrawIconEx(dc, x, y, icon, size, size, 0, null_mut(), DI_NORMAL) != 0
@@ -71,6 +74,7 @@ impl Drop for Visuals {
                 self.mascot,
                 self.codex,
                 self.claude,
+                self.orca,
             ] {
                 if !icon.is_null() {
                     DestroyIcon(icon);

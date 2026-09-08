@@ -2,6 +2,20 @@
 
 이번 변경의 기록입니다. DECISIONS.md에 남아 있는 이전 설치본·UI 측정과 구분합니다. **전체 완료 기준은 아직 미충족**이며 아래 직접 화면 검증이 남았습니다.
 
+## 단일 EXE 배포 — 2026-09-08
+
+Windows MSVC release에서 코어 단위 92개, CLI 통합 5개, 앱 단위 28개, 단독 EXE 통합 1개로 총 126개 통과. 기존 실환경 연결 검사 3개는 ignored 상태를 유지했습니다. 기존 JSON 도우미의 dead_code 경고 2개가 남습니다.
+
+`desktop/tests/standalone.rs`는 앱 EXE 하나만 한글·공백 경로에 복사하고 이름을 바꾼 뒤, 내부 수집 모드가 지정한 로그를 JSON으로 반환하는지와 내장 폰트 라이선스를 확인합니다. 실행 폴더에 코어나 기타 파일을 추출하지 않는 것도 검사합니다. 앱의 소유 코어 종료·다른 코어 생존 검사는 같은 EXE의 내부 모드로 통과했습니다.
+
+```powershell
+cargo test --release --locked --offline
+cargo test --manifest-path desktop/Cargo.toml --target-dir desktop/target/standalone --release --locked --offline
+./desktop/package.ps1 -Tag v0.2.0 -BinaryDirectory desktop/target/standalone/release -OutputDirectory desktop/target/standalone/release/bundle
+```
+
+빌드 셸에는 Windows SDK의 `rc.exe`가 필요합니다. 실행 중인 기존 앱의 EXE가 잠겨 있어 위 별도 출력 경로를 사용했습니다. 단일 배포 EXE는 4,557,824 bytes이며 체크섬과 재패키징 덮어쓰기 거부를 확인했습니다. release/check 워크플로는 actionlint, 빌드·패키징 스크립트는 PowerShell 구문 검사를 통과했습니다. GitHub 게시·서명과 선택적 NSIS 설치본 실행, 새 폰트 라이선스 메뉴의 직접 클릭은 수행하지 않았습니다. 아래 과거 기록의 두 EXE·ZIP 안내는 이전 빌드에 해당합니다.
+
 ## 환경과 재실행
 
 Windows x64, Rust 1.98.1 GNU 타깃. MSVC 빌드 도구가 없어 저장소의 무시된 `.tools`에 Rust·MinGW binutils를 준비했습니다. 시스템 설치·전역 환경을 바꾸지 않았습니다. 코어 외부 크레이트는 0개이며 앱은 serde_json과 windows-sys를 사용합니다.
@@ -229,3 +243,50 @@ node tests/windows-processes.cjs
 - Rebased the desktop card changes onto the remote activity tracking, tray behavior, and signed release packaging.
 - Release tests: core 76 passed, CLI 4 passed, desktop 16 passed; the live Orca session-switch test remains explicitly ignored. Core and desktop release builds succeeded.
 - The portable package check verified both executable hashes and the bundled font license inside the ZIP.
+
+## Adversarial review fixes (2026-09-08)
+
+- Orca orchestration run `run_7a91ce6da03f` used Claude Fable 5.1 (medium) for documentation, Opus5 (high) for collection diagnostics, gpt-6-astra (high) for desktop state and stream recovery, and gpt-5.6-sol (high) for request identity and file URI decoding. All four tasks completed and their worker resources were released.
+- Prelaunch Working/Waiting sessions now show Unknown with before-launch evidence; explicit Idle/Error remain intact. Closed JSON/SQLite sessions can revive on new request evidence regardless of inferred status. Legacy request markers migrate conservatively and persist without a false revival.
+- Collection warnings reach JSON output, doctor, and the desktop while healthy rows remain available. Warning storage and JSON reads are bounded; warnings clear after recovery. The desktop drains oversized snapshot frames and continues with the next frame instead of permanently stopping the reader.
+- File URI decoding preserves raw and percent-encoded UTF-8, including Korean paths, and rejects malformed escapes and control characters. README and PRODUCT distinguish actual-source validation, synthetic fixtures, and experimental source registrations.
+- Final Windows release checks: `cargo test --release --locked` passed 85 core tests and 5 CLI integration tests; `cargo test --manifest-path desktop/Cargo.toml --release --locked` passed 17 desktop tests with 1 live Orca session-switch test ignored. Both release builds succeeded. The desktop build used the newly built core through `WAID_CORE_PATH` and the Windows SDK resource compiler on PATH.
+- The CLI watch integration test verifies healthy rows survive malformed JSON and warnings disappear after repair. A JSONL regression test failed before the final fix and passed afterward: appended malformed lines below the cached head limit and lines crossing the sampling boundary are reported for both LF and CRLF.
+- These checks used synthetic source files and native automated tests. No new live-source comparison, manual desktop visual check, multi-hour soak, mixed-DPI check, or cross-platform run was performed. Identical repeated SQLite requests remain indistinguishable when the source exposes no distinct request ID, request timestamp, or user-message history. No release archive was rebuilt or published in this pass.
+
+## Accepted review decisions and remaining bug fixes (2026-09-08)
+
+- Orca orchestration run `run_89a7edf5ee6e` assigned the collection fixes to gpt-5.6-sol (high), native reentrancy/UI work to gpt-6-astra (high), and Windows session return to gpt-6-astra (high). All three workers completed and their terminals were released; the coordinator integrated settings migration, policy, documentation, and final checks.
+- Fixed the reproduced first-populated-window abort: no mutable feed-handle borrow spans Win32 calls that can synchronously reenter drawing, focus, layout, or destruction callbacks. The regression displays a one-column window before its first populated snapshot, updates it, removes a focused card, and repopulates it. Tray icons are recreated on `TaskbarCreated` without restarting Explorer in the test.
+- Fixed all five remaining collection findings: DB/WAL cache fingerprints retain separate precise modification times and sizes; full source IDs prevent eight-character hash collisions from deleting sessions; SQLite step failures discard partial results and report diagnostics; JSON model extraction selects the newest event metadata and excludes tool payloads; JSON/SQLite r3 request markers preserve fractional time and available user-message counts. The supplied `adee487a` collision keeps both sessions, with distinct display suffixes.
+- Applied startup Unknown plus separate last logged status, a default recent 24-hour view retaining pins/current-launch observations/undated entries, and Show all history. Existing short-ID settings migrate only when the matching full identity is unambiguous. Marker-version migration does not revive dismissed sessions. Settings exceeding the 8 MiB read limit fail before replacing the saved file.
+- Core release tests: 89 unit + 5 CLI integration passed. Desktop release suite: 26 passed; environment-dependent checks are opt-in. The six activation tests were rerun after the final PowerShell correction. Three opt-in read-only checks also passed: current Orca terminal mapping, installed ChatGPT/Claude window process identities, and a synthetic classic PowerShell console owner. Both release builds succeeded. These are 120 ordinary tests plus 3 environment-specific checks; no real agent session received input from tests.
+- Native tests covered prior-status accessibility and height, recent-list aging without a changed core snapshot, association save/clear and notices, tray restoration, and 400 template previews with stable GDI samples `[54, 54, 54, 54]`. Native GUI tests were serialized. MSVC builds used the installed Windows SDK resource compiler on task-local PATH and `WAID_CORE_PATH` pointing at the freshly built core.
+- Actual desktop visual checks used only synthetic logs and isolated settings under `.tools/adversarial-final`. At 125% scaling, the recent view showed two cards, Show all restored the 48-hour-old third card, and startup history, expanded request/answer/first-prompt text, and the Connect control were visible. Screenshot evidence is `recent.png`, `history.png`, and `expanded.png` in that ignored directory. Synthetic click responses were marked unverified by the provider; changes were independently checked in the returned accessibility tree and rendered image.
+- A synthetic PowerShell console exposed a missed case in the first implementation: a classic console's HWND can be owned directly by PowerShell. Candidate discovery now accepts that ownership while retaining console membership and process-identity validation. The opt-in regression is reproducible with an existing classic console PID: set `WAID_TEST_CONSOLE_PID`, then run `cargo test --manifest-path desktop/Cargo.toml --release --locked classic_console_owner_is_discovered -- --ignored`.
+- The final release executable's detached probe returned exactly one target for that synthetic console, including membership and creation-time checks. The actual Connect popup displayed ChatGPT, Claude, and the fixture PowerShell window. Subsequent computer-use selection returned `app_not_found`; the fixture app process and owned core remained running with no visible main window, so this was not counted as a successful window return or a reproduced process crash. No association was saved. All created fixture processes were cleaned up afterward.
+- First-stage session return uses exact existing Orca mapping, explicitly associated official ChatGPT conversation links, and manually chosen ChatGPT/Claude/classic PowerShell windows. It does not claim Windows Terminal tab identity or an undocumented Claude conversation route. Foreground-window refusal and stale bindings report errors. The [ChatGPT route](https://learn.chatgpt.com/docs/reference/commands#deep-links), [Claude sidebar workflow](https://code.claude.com/docs/en/desktop), and [pseudoconsole limitation](https://learn.microsoft.com/en-us/windows/console/getconsolewindow) were checked against official sources.
+- Release gates remain actual four-target return flows, keyboard/screen-reader checks, mixed-DPI behavior, and multi-hour real-use CPU/memory/GDI stability. Automatic checks and synthetic windows do not satisfy those gates. This remains a development build; no release archive or publication was made in this pass.
+
+## Orca SSH collection fix (2026-09-08)
+
+- Reproduced the missing-project report: the running desktop showed only recent `whatamidoing` conversations. Orca's terminal inventory placed the missing projects on an SSH execution host; their provider JSONL files were absent from the Windows collection roots.
+- Added read-only collection of Orca's local version 2 hook mirror, validating pane, connection, worktree, and launch authority. Host-scoped IDs keep remote conversations separate. Hook prompts, models, answers, and explicit events feed the existing snapshot and startup observation policy. `SubagentStop` is not parent completion.
+- The release core returned 13 remote conversations across `integrations`, `AUDPlatform`, `pre-fs`, and `renew-bid`. After rebuilding and restarting the user's desktop, its accessibility tree contained all four projects alongside `whatamidoing`. The captured pixels were occluded by Orca, so this is an accessibility-tree check, not visual-layout validation.
+- `cargo test --release --locked`: 92 unit tests and 5 CLI integration tests passed. Desktop release tests: 28 passed, 3 environment-specific checks remained ignored. Regression coverage includes stale authority, pane replacement, repeated submit identity, startup status, and dismissal preservation after the hook cache restarts. The desktop release build succeeded; its bundled core hash matched the tested core.
+- Remote records observed during a running core survive pane replacement in memory. Orca's mirror is not a transcript archive: overwritten conversations cannot be reconstructed after waid restarts. SSH session return remains unsupported; no agent received commands and no source logs were modified.
+
+## v0.2.0 preparation and hosted Windows checks (2026-09-08)
+
+- Aligned both Cargo packages and lockfiles to 0.2.0. CLI help now reads the package version at compile time; README release examples use v0.2.0.
+- Added `Windows checks` for main pushes, pull requests, and manual runs. It reuses `desktop/build.ps1` on a GitHub-hosted Windows runner and uploads an unsigned ZIP and checksum after tests and packaging checks succeed. It needs no signing credentials and does not publish releases.
+- Local checks passed: core `cargo check --release --locked --offline`, core release build, both packages' locked Cargo metadata at 0.2.0, actionlint for both workflows, and `git diff --check`.
+- The preceding fresh-build test attempt was blocked before execution with Windows error 4551; the desktop build script was blocked too. Read-only inspection found Smart App Control enabled (`VerifiedAndReputablePolicyState = 1`) and matching Code Integrity event 3077 entries naming `VerifiedAndReputableDesktop`. Windows policy was not changed. Earlier test counts above are historical evidence, not a successful rerun of this version.
+- The new workflow has not been pushed or run on GitHub. No v0.2.0 tag, release archive, or public release was created. Authenticode signing still requires a signing provider; the existing ZIP-level Sigstore signature does not supply Windows executable trust.
+
+## Minimize visibility fix (2026-09-08)
+
+- Reproduced ordinary Windows minimization removing the window's visible style: `WM_SIZE(SIZE_MINIMIZED)` called `ShowWindow(SW_HIDE)`. The added assertion failed before the fix. The custom minimize button and Windows minimization now retain a minimized window; Close still hides to the tray.
+- Passed all 4 native window tests, including minimize/restore, close/tray restoration and Explorer tray-icon recreation, and the standalone EXE integration test. Commands used `cargo test --manifest-path desktop/Cargo.toml --target-dir desktop/target/standalone --release --locked --offline` with `--bin waid-desktop native::tests::` and `--test standalone`, respectively. `git diff --check` passed.
+- Replaced the running desktop with the rebuilt EXE after checking its hash against the tested build. The restarted desktop and its owned collector were running, and Computer Use found a normal, non-minimized window with live session cards.
+- The user's exact triggering action remains unconfirmed. A live Escape-key check was not performed because Computer Use refused keyboard input without foreground focus; this is not evidence of an Escape-triggered close.

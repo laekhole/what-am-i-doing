@@ -6,36 +6,19 @@ param(
     [string]$OutputDirectory = (Join-Path $PSScriptRoot 'target/release/bundle')
 )
 $ErrorActionPreference = 'Stop'
-$files = @('waid-desktop.exe', 'waid.exe', 'FONT-LICENSE.txt') | ForEach-Object {
-    $file = Get-Item -LiteralPath (Join-Path $BinaryDirectory $_)
-    if ($file.PSIsContainer -or $file.Length -eq 0) { throw "Missing release file: $_" }
-    $file.FullName
-}
-$name = "waid-$Tag-windows-x64.zip"
-$zip = Join-Path $OutputDirectory $name
+$file = Get-Item -LiteralPath (Join-Path $BinaryDirectory 'waid-desktop.exe')
+if ($file.PSIsContainer -or $file.Length -eq 0) { throw 'Missing desktop executable.' }
+$name = "waid-$Tag-windows-x64.exe"
+$exe = Join-Path $OutputDirectory $name
 $sums = Join-Path $OutputDirectory 'SHA256SUMS.txt'
-if ((Test-Path -LiteralPath $zip) -or (Test-Path -LiteralPath $sums)) {
+if ((Test-Path -LiteralPath $exe) -or (Test-Path -LiteralPath $sums)) {
     throw 'Release output already exists. Use a fresh output directory.'
 }
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
-Compress-Archive -LiteralPath $files -DestinationPath $zip -CompressionLevel Optimal
-
-# Verify the executables and bundled font license inside the ZIP.
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
-try {
-    if ($archive.Entries.Count -ne $files.Count) { throw 'The portable ZIP must contain both executables and the font license.' }
-    foreach ($file in $files) {
-        $entry = $archive.GetEntry([System.IO.Path]::GetFileName($file))
-        if (-not $entry) { throw "ZIP entry missing: $file" }
-        $stream = $entry.Open()
-        try {
-            if ((Get-FileHash -InputStream $stream -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash) {
-                throw "ZIP contents differ from the build: $file"
-            }
-        } finally { $stream.Dispose() }
-    }
-} finally { $archive.Dispose() }
-$hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+Copy-Item -LiteralPath $file.FullName -Destination $exe
+$hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($hash -ne (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()) {
+    throw 'Release executable differs from the build.'
+}
 Set-Content -LiteralPath $sums -Value "$hash  $name" -Encoding ascii
-Write-Output $zip
+Write-Output $exe

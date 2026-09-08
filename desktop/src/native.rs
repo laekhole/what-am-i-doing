@@ -1,7 +1,7 @@
 use super::{
     ui::{self, Settings, Skin},
     visual::{self, Visuals},
-    Row, Updates,
+    publish_update, Row, Snapshot, Updates,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -14,7 +14,7 @@ use std::{
 use windows_sys::Win32::{
     Foundation::*,
     Graphics::{Dwm::*, Gdi::*},
-    System::LibraryLoader::GetModuleHandleW,
+    System::{DataExchange::*, LibraryLoader::GetModuleHandleW, Memory::*},
     UI::{
         Controls::{Dialogs::*, *},
         HiDpi::*,
@@ -56,11 +56,13 @@ const OPACITY_SLIDER: usize = 48;
 const MINIMIZE: usize = 49;
 const CLOSE_WINDOW: usize = 50;
 const TWO_COLUMNS: usize = 51;
+const ASSOCIATE: usize = 60;
 const CLASS: &str = "waid.sessions.v2";
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const TRAY_ID: u32 = 1;
 const TRAY_OPEN: usize = 100;
 const TRAY_EXIT: usize = 101;
+const TRAY_LICENSE: usize = 102;
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
@@ -73,6 +75,28 @@ unsafe fn text(hwnd: HWND) -> String {
 unsafe fn set_text(hwnd: HWND, s: &str) {
     let windows_text = s.replace("\r\n", "\n").replace('\n', "\r\n");
     SetWindowTextW(hwnd, wide(&windows_text).as_ptr());
+}
+unsafe fn clipboard_text(hwnd: HWND) -> Result<String, String> {
+    if OpenClipboard(hwnd) == 0 {
+        return Err("클립보드를 읽을 수 없습니다. 링크를 복사한 뒤 다시 시도하세요.".into());
+    }
+    let result = (|| {
+        let handle = GetClipboardData(13); // CF_UNICODETEXT
+        let bytes = if handle.is_null() { 0 } else { GlobalSize(handle) };
+        if bytes < 2 || bytes > 4096 || bytes % 2 != 0 {
+            return Err("ChatGPT 세션 링크를 텍스트로 복사하세요.".into());
+        }
+        let data = GlobalLock(handle) as *const u16;
+        if data.is_null() { return Err("복사한 링크를 읽을 수 없습니다.".into()); }
+        let text = std::slice::from_raw_parts(data, bytes / 2);
+        let result = text.iter().position(|c| *c == 0)
+            .ok_or_else(|| "복사한 링크가 올바른 텍스트가 아닙니다.".to_string())
+            .and_then(|end| String::from_utf16(&text[..end]).map_err(|_| "복사한 링크가 올바른 텍스트가 아닙니다.".into()));
+        GlobalUnlock(handle);
+        result.map(|text| text.trim().to_owned())
+    })();
+    CloseClipboard();
+    result
 }
 unsafe fn fill(dc: HDC, rect: &RECT, color: u32) {
     let brush = CreateSolidBrush(color);
@@ -88,9 +112,10 @@ unsafe fn draw(dc: HDC, s: &str, mut rect: RECT, font: HFONT, color: u32, flags:
 }
 
 struct Window {
+    taskbar_created: u32,
     date_tick: Cell<i64>,
     feed: accordion::Feed,
-    activation: RefCell<Option<(String, std::sync::mpsc::Receiver<Result<(), String>>)>>,
+    activation: RefCell<Option<(String, std::sync::mpsc::Receiver<Result<String, String>>)>>,
     visuals: Visuals,
     opacity_open: Cell<bool>,
     expanded: Cell<bool>,
@@ -112,6 +137,7 @@ struct Window {
     updates: Updates,
     notice: RefCell<String>,
     core_error: RefCell<String>,
+    collection_warnings: RefCell<Vec<String>>,
     loading: Cell<bool>,
     path: PathBuf,
     dirty: Cell<Option<Instant>>,
@@ -129,6 +155,7 @@ impl Window {
         };
         let skin = Skin::parse(&settings.template).expect("bundled default template");
         Self {
+            taskbar_created: unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) },
             date_tick: Cell::new(0),
             feed: accordion::Feed::default(),
             activation: RefCell::new(None),
@@ -153,6 +180,7 @@ impl Window {
             updates,
             notice: RefCell::new(notice),
             core_error: RefCell::new(String::new()),
+            collection_warnings: RefCell::new(Vec::new()),
             loading: Cell::new(true),
             path,
             dirty: Cell::new(None),
@@ -248,8 +276,9 @@ impl Window {
         for child in children {
             send(child, WM_SETFONT, self.body.get() as usize, 1);
         }
-        for child in self.feed.buttons.borrow().iter() {
-            send(*child, WM_SETFONT, self.body.get() as usize, 1);
+        let buttons = self.feed.buttons.borrow().clone();
+        for child in buttons {
+            send(child, WM_SETFONT, self.body.get() as usize, 1);
         }
         for font in old_fonts {
             DeleteObject(font);
@@ -313,7 +342,8 @@ impl Window {
             );
         };
         let expanded = self.expanded.get();
-        ShowWindow(self.get(accordion::FEED), if !expanded && !self.settings.borrow().two_columns { SW_SHOWNA } else { SW_HIDE });
+        let two_columns = self.settings.borrow().two_columns;
+        ShowWindow(self.get(accordion::FEED), if !expanded && !two_columns { SW_SHOWNA } else { SW_HIDE });
         mv(TOPMOST, w - 184, 10, 88, 30);
         mv(MINIMIZE, w - 82, 10, 30, 30);
         mv(CLOSE_WINDOW, w - 46, 10, 30, 30);
@@ -336,6 +366,7 @@ impl Window {
             EDITOR,
             DETAIL,
             BACK,
+            ASSOCIATE,
         ] {
             ShowWindow(self.get(id), if expanded { SW_SHOWNA } else { SW_HIDE });
         }
@@ -366,17 +397,17 @@ impl Window {
             ShowWindow(self.get(FILTER), SW_SHOWNA);
             mv(FILTER, 128, 104, (w - 292).min(76), 32);
             let menu_open = self.menu_open.get();
-            let actions = [SHOW_DETAIL, PIN, CLOSE_SESSION, EDITOR];
+            let actions = [SHOW_DETAIL, PIN, CLOSE_SESSION, ASSOCIATE, EDITOR];
             for (i, id) in actions.into_iter().enumerate() {
                 ShowWindow(self.get(id), if menu_open { SW_SHOWNA } else { SW_HIDE });
-                let width = (w - 50) / 4;
+                let width = (w - 50) / actions.len() as i32;
                 mv(id, 16 + i as i32 * (width + 6), 146 + extra, width, 32);
             }
             let top = if menu_open { 190 } else { 148 } + extra;
             mv(LIST, 13, top, w - 26, h - top - 36);
             mv(accordion::FEED, 13, top, w - 26, h - top - 36);
             self.layout_feed(hwnd);
-            ShowWindow(self.get(LIST), if self.settings.borrow().two_columns { SW_SHOWNA } else { SW_HIDE });
+            ShowWindow(self.get(LIST), if two_columns { SW_SHOWNA } else { SW_HIDE });
             self.fit_list();
             InvalidateRect(hwnd, null(), 1);
             return;
@@ -394,6 +425,7 @@ impl Window {
         mv(CLOSE_SESSION, 118, 196 + extra, 100, 32);
         mv(AUX, 232, 196 + extra, 125, 32);
         mv(HIDDEN, 366, 196 + extra, 125, 32);
+        mv(ASSOCIATE, w - 224, 196 + extra, 56, 32);
         mv(EDITOR, w - 160, 196 + extra, 140, 32);
         let top = 244 + extra;
         let bottom = h - 40;
@@ -530,7 +562,8 @@ impl Window {
         if self.expanded.get() || self.settings.borrow().two_columns {
             self.get(LIST)
         } else {
-            self.feed.buttons.borrow().get(send(self.get(LIST), LB_GETCURSEL, 0, 0).max(0) as usize)
+            let index = send(self.get(LIST), LB_GETCURSEL, 0, 0).max(0) as usize;
+            self.feed.buttons.borrow().get(index)
                 .copied().unwrap_or(self.get(FILTER))
         }
     }
@@ -539,8 +572,9 @@ impl Window {
             return;
         }
         let Some(row) = self.selected() else { return };
+        let target = self.settings.borrow().session_targets.get(&row.id).cloned();
         if self.demo
-            || row.session_id.is_empty()
+            || (row.session_id.is_empty() && target.is_none())
             || self.settings.borrow().closed.contains_key(&row.id)
         {
             *self.notice.borrow_mut() =
@@ -553,8 +587,67 @@ impl Window {
         *self.notice.borrow_mut() = "세션이 열린 창·탭을 확인하고 있습니다…".into();
         InvalidateRect(hwnd, null(), 1);
         std::thread::spawn(move || {
-            let _ = tx.send(super::activate::open(&row));
+            let result = if let Some(target) = target {
+                super::activate::open_associated(&row, &target)
+            } else {
+                super::activate::open(&row).map(|()| "기존 세션 탭으로 이동했습니다.".into())
+            };
+            let _ = tx.send(result);
         });
+    }
+    fn set_session_target(&self, row: &Row, target: Option<serde_json::Value>) -> Result<(), String> {
+        let mut settings = self.settings.borrow_mut();
+        if let Some(target) = target {
+            if settings.session_targets.len() >= 1024 && !settings.session_targets.contains_key(&row.id) {
+                return Err("창 연결은 최대 1024개까지 저장할 수 있습니다.".into());
+            }
+            settings.session_targets.insert(row.id.clone(), target);
+        } else {
+            settings.session_targets.remove(&row.id);
+        }
+        self.changed();
+        Ok(())
+    }
+    unsafe fn association_menu(&self, hwnd: HWND) {
+        let Some(row) = self.selected() else { return };
+        if self.demo || row.state == "done" {
+            *self.notice.borrow_mut() = "실제 세션을 선택한 뒤 창이나 링크를 연결하세요.".into();
+            InvalidateRect(hwnd, null(), 0);
+            return;
+        }
+        // ponytail: explicit menu scan can take three seconds; move to a worker if it becomes disruptive.
+        let windows = super::activate::windows();
+        let menu = CreatePopupMenu();
+        if menu.is_null() { return; }
+        AppendMenuW(menu, MF_STRING | MF_DISABLED, 0, wide("직접 연결 · 창 안의 대화는 직접 확인하세요").as_ptr());
+        AppendMenuW(menu, MF_STRING, 1, wide("복사한 ChatGPT 세션 링크 연결").as_ptr());
+        AppendMenuW(menu, MF_STRING, 2, wide("연결 해제 · Orca 자동 연결 사용").as_ptr());
+        AppendMenuW(menu, MF_SEPARATOR, 0, null());
+        for (index, target) in windows.iter().enumerate() {
+            AppendMenuW(menu, MF_STRING, index + 3, wide(&target["label"].as_str().unwrap_or("앱 창").replace('&', "&&")).as_ptr());
+        }
+        if windows.is_empty() {
+            AppendMenuW(menu, MF_STRING | MF_DISABLED, 0, wide("연결 가능한 앱·PowerShell 창이 없습니다").as_ptr());
+        }
+        let mut rect = RECT::default();
+        GetWindowRect(self.get(ASSOCIATE), &mut rect);
+        let command = TrackPopupMenu(menu, TPM_RETURNCMD, rect.left, rect.bottom, 0, hwnd, null()) as usize;
+        DestroyMenu(menu);
+        let result = match command {
+            0 => return,
+            1 => clipboard_text(hwnd).and_then(|url| {
+                super::activate::validate_chatgpt_link(&row, &url)?;
+                self.set_session_target(&row, Some(serde_json::json!({"kind":"chatgpt_link", "url":url})))?;
+                Ok("ChatGPT 세션 링크를 연결했습니다. 로고를 누르면 앱에 링크를 전달합니다.")
+            }),
+            2 => self.set_session_target(&row, None).map(|()| "직접 연결을 해제했습니다. Orca의 정확한 세션 연결을 자동으로 확인합니다."),
+            _ => {
+                let Some(target) = windows.get(command - 3) else { return };
+                self.set_session_target(&row, Some(target.clone())).map(|()| "앱 창을 직접 연결했습니다. 로고를 눌러 이동한 뒤 대화를 확인하세요.")
+            }
+        };
+        *self.notice.borrow_mut() = result.map(str::to_owned).unwrap_or_else(|error| error);
+        InvalidateRect(hwnd, null(), 0);
     }
     unsafe fn detail(&self) {
         if self.editing.get() {
@@ -570,7 +663,7 @@ impl Window {
                 "unknown" => "해석할 수 있는 상태 기록 없음",
                 _ => "트랜스크립트의 마지막 기록 · 현재 생존 여부 미확인",
             };
-            format!("{}\r\n\r\n{}\r\n\r\n상태  {}\r\n에이전트  {}\r\n모델  {}\r\n마지막 활동 (UTC)  {}\r\n\r\n{}\r\n\r\n작업 출처  {}\r\n대표 요청\r\n{}\r\n\r\n폴더\r\n{}",row.project(),row.task,row.status(),row.agent,row.model,row.since,evidence,if row.task_source=="transcript_first_prompt"{"첫 요청 (현재 요청은 읽기 범위 밖)"}else{"최근 요청 또는 사용자 라벨"},row.summary,row.cwd)
+            format!("{}\r\n\r\n{}\r\n\r\n상태  {}\r\n에이전트  {}\r\n모델  {}\r\n마지막 활동 (UTC)  {}\r\n\r\n{}\r\n\r\n작업 출처  {}\r\n대표 요청\r\n{}\r\n\r\n폴더\r\n{}",row.project(),row.task,row.status_context(),row.agent,row.model,row.since,evidence,if row.task_source=="transcript_first_prompt"{"첫 요청 (현재 요청은 읽기 범위 밖)"}else{"최근 요청 또는 사용자 라벨"},row.summary,row.cwd)
         } else {
             "세션을 선택하면 전체 작업 내용과 근거를 확인할 수 있습니다.\r\n\r\n이전 세션도 수집합니다. 종결한 세션은 전체 보기에서 확인하고, 새 요청이 감지되면 기본 목록으로 돌아옵니다.".into()
         };
@@ -725,7 +818,7 @@ impl Window {
         if let Some((id, result)) = activated {
             self.activation.borrow_mut().take();
             match result {
-                Ok(()) => *self.notice.borrow_mut() = "기존 세션 탭으로 이동했습니다.".into(),
+                Ok(message) => *self.notice.borrow_mut() = message,
                 Err(message) => {
                     *self.notice.borrow_mut() = message;
                     if self.selected().is_some_and(|r| r.id == id) && !self.editing.get() {
@@ -743,25 +836,31 @@ impl Window {
         if let Some(next) = next {
             self.loading.set(false);
             InvalidateRect(hwnd, null(), 1);
-            match next {
-                Ok(rows) => {
-                    self.core_error.borrow_mut().clear();
-                    let revived = self.settings.borrow_mut().reconcile(&rows);
-                    if revived > 0 {
-                        self.changed();
-                        *self.notice.borrow_mut() =
-                            format!("새 대화 {revived}개 · 목록에 복귀했습니다");
-                    }
-                    if *self.rows.borrow() != rows || revived > 0 {
-                        *self.rows.borrow_mut() = rows;
-                        self.agents();
-                        self.rebuild(hwnd);
-                    }
+            if let Some(Snapshot { rows, warnings }) = next.snapshot {
+                *self.collection_warnings.borrow_mut() = warnings;
+                self.core_error.borrow_mut().clear();
+                let (revived, marker_migrated) = self.settings.borrow_mut().reconcile(&rows);
+                if revived > 0 || marker_migrated {
+                    self.changed();
                 }
-                Err(e) => {
-                    *self.core_error.borrow_mut() = e;
-                    InvalidateRect(hwnd, null(), 1);
+                if revived > 0 {
+                    *self.notice.borrow_mut() =
+                        format!("새 대화 {revived}개 · 목록에 복귀했습니다");
                 }
+                if *self.rows.borrow() != rows || revived > 0 {
+                    *self.rows.borrow_mut() = rows;
+                    self.agents();
+                    self.rebuild(hwnd);
+                }
+            }
+            if let Some(error) = next.error {
+                *self.core_error.borrow_mut() = error;
+            }
+        }
+        if second.div_euclid(60) != previous.div_euclid(60) {
+            let next = self.settings.borrow().visible(&self.rows.borrow());
+            if next != *self.visible.borrow() {
+                self.rebuild(hwnd);
             }
         }
         if self
@@ -804,7 +903,7 @@ impl Window {
                 self.layout(hwnd);
             }
             MINIMIZE => {
-                ShowWindow(hwnd, SW_HIDE);
+                ShowWindow(hwnd, SW_MINIMIZE);
             }
             CLOSE_WINDOW => {
                 send(hwnd, WM_CLOSE, 0, 0);
@@ -832,6 +931,7 @@ impl Window {
                 self.expand(hwnd, true);
                 SetFocus(self.get(SEARCH));
             }
+            ASSOCIATE => self.association_menu(hwnd),
             CLOSE_SESSION => {
                 if let Some(row) = self.selected() {
                     let mut settings = self.settings.borrow_mut();
@@ -917,7 +1017,10 @@ impl Window {
         }
     }
     unsafe fn window_preferences(&self, hwnd: HWND) {
-        let settings = self.settings.borrow();
+        let (opacity, always_on_top) = {
+            let settings = self.settings.borrow();
+            (settings.opacity, settings.always_on_top)
+        };
         let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
         if style & WS_EX_LAYERED == 0 {
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, (style | WS_EX_LAYERED) as isize);
@@ -925,13 +1028,13 @@ impl Window {
         SetLayeredWindowAttributes(
             hwnd,
             0,
-            (settings.opacity as u32 * 255 / 100) as u8,
+            (opacity as u32 * 255 / 100) as u8,
             LWA_ALPHA,
         );
         // Apply Z-order after the layered style; do not overwrite the OS-owned TOPMOST bit.
         SetWindowPos(
             hwnd,
-            if settings.always_on_top {
+            if always_on_top {
                 HWND_TOPMOST
             } else {
                 HWND_NOTOPMOST
@@ -944,7 +1047,7 @@ impl Window {
         );
         set_text(
             self.get(TOPMOST),
-            if settings.always_on_top {
+            if always_on_top {
                 "항상 위 ✓"
             } else {
                 "항상 위"
@@ -952,13 +1055,13 @@ impl Window {
         );
         set_text(
             self.get(OPACITY),
-            &format!("투명도 {}%", 100 - settings.opacity),
+            &format!("투명도 {}%", 100 - opacity),
         );
         send(
             self.get(OPACITY_SLIDER),
             TBM_SETPOS,
             1,
-            (100 - settings.opacity) as isize,
+            (100 - opacity) as isize,
         );
         InvalidateRect(hwnd, null(), 0);
     }
@@ -1064,7 +1167,7 @@ impl Window {
         visual::rounded(item.hDC, tile, p(14), 0xffffff, None);
         if !self.visuals.logo(
             item.hDC,
-            &row.agent_id,
+            row.logo_id(),
             tile.left + p(2),
             tile.top + p(2),
             p(20),
@@ -1340,7 +1443,8 @@ impl Window {
         }
         let count = self.visible.borrow().len();
         let total = self.rows.borrow().len();
-        ShowWindow(self.get(accordion::FEED), if count > 0 && !self.expanded.get() && !self.settings.borrow().two_columns { SW_SHOWNA } else { SW_HIDE });
+        let two_columns = self.settings.borrow().two_columns;
+        ShowWindow(self.get(accordion::FEED), if count > 0 && !self.expanded.get() && !two_columns { SW_SHOWNA } else { SW_HIDE });
         if count == 0 {
             let list = self.get(LIST);
             let mut rect = RECT::default();
@@ -1371,15 +1475,13 @@ impl Window {
                 DT_WORDBREAK,
             );
         } else {
-            if ShowWindow(self.get(LIST), if self.expanded.get() || self.settings.borrow().two_columns { SW_SHOWNA } else { SW_HIDE }) == 0 {
+            if ShowWindow(self.get(LIST), if self.expanded.get() || two_columns { SW_SHOWNA } else { SW_HIDE }) == 0 {
                 self.fit_list();
             }
         }
-        let message = if !self.core_error.borrow().is_empty() {
-            format!(
-                "갱신 중단 · 마지막 기록 표시 · {}",
-                self.core_error.borrow()
-            )
+        let collection_message = self.collection_message();
+        let message = if !collection_message.is_empty() {
+            collection_message
         } else if !self.notice.borrow().is_empty() {
             self.notice.borrow().clone()
         } else {
@@ -1406,6 +1508,16 @@ impl Window {
         );
         EndPaint(hwnd, &ps);
     }
+    fn collection_message(&self) -> String {
+        let mut messages = Vec::new();
+        if !self.core_error.borrow().is_empty() {
+            messages.push(format!("갱신 오류 · 마지막 기록 표시 · {}", self.core_error.borrow()));
+        }
+        if !self.collection_warnings.borrow().is_empty() {
+            messages.push(format!("일부 수집 경고 · {}", self.collection_warnings.borrow().join(" · ")));
+        }
+        messages.join(" · ")
+    }
     unsafe fn editor(&self, hwnd: HWND, open: bool) {
         if open {
             self.expand(hwnd, true);
@@ -1430,7 +1542,8 @@ impl Window {
             ShowWindow(self.get(id), if open { SW_SHOWNA } else { SW_HIDE });
         }
         if open {
-            set_text(self.get(DETAIL), &self.settings.borrow().template);
+            let template = self.settings.borrow().template.clone();
+            set_text(self.get(DETAIL), &template);
         } else {
             self.detail();
         }
@@ -1572,7 +1685,7 @@ unsafe fn add_tray_icon(hwnd: HWND) -> io::Result<()> {
         ..Default::default()
     };
     data.szTip[..4].copy_from_slice(&wide("waid")[..4]);
-    if Shell_NotifyIconW(NIM_ADD, &data) == 0 {
+    if Shell_NotifyIconW(NIM_ADD, &data) == 0 && Shell_NotifyIconW(NIM_MODIFY, &data) == 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(())
@@ -1600,6 +1713,7 @@ unsafe fn tray_menu(s: &Window, hwnd: HWND) {
         return;
     }
     AppendMenuW(menu, MF_STRING, TRAY_OPEN, wide("열기").as_ptr());
+    AppendMenuW(menu, MF_STRING, TRAY_LICENSE, wide("폰트 라이선스").as_ptr());
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     AppendMenuW(menu, MF_STRING, TRAY_EXIT, wide("종료").as_ptr());
     let mut point = POINT::default();
@@ -1617,6 +1731,22 @@ unsafe fn tray_menu(s: &Window, hwnd: HWND) {
     DestroyMenu(menu);
     match command as usize {
         TRAY_OPEN => restore_window(s, hwnd),
+        TRAY_LICENSE => {
+            let result = (|| -> io::Result<()> {
+                let path = ui::data_file().with_file_name("FONT-LICENSE.txt");
+                std::fs::create_dir_all(path.parent().unwrap())?;
+                std::fs::write(&path, super::FONT_LICENSE)?;
+                let file: Vec<u16> = {
+                    use std::os::windows::ffi::OsStrExt;
+                    path.as_os_str().encode_wide().chain(Some(0)).collect()
+                };
+                if ShellExecuteW(hwnd, wide("open").as_ptr(), file.as_ptr(), null(), null(), SW_SHOWNORMAL) as isize <= 32 {
+                    return Err(io::Error::other("폰트 라이선스 파일을 열지 못했습니다."));
+                }
+                Ok(())
+            })();
+            if let Err(error) = result { show_error(&error.to_string()); }
+        }
         TRAY_EXIT => {
             s.save();
             DestroyWindow(hwnd);
@@ -1639,6 +1769,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
     }
     let s = &*ptr;
     match msg {
+        _ if s.taskbar_created != 0 && msg == s.taskbar_created => {
+            if let Err(error) = add_tray_icon(hwnd) {
+                *s.notice.borrow_mut() = format!("트레이 아이콘 복구 실패: {error}");
+                restore_window(s, hwnd);
+            }
+        }
         WM_NCCALCSIZE => return 0,
         WM_NCPAINT => return 0,
         WM_NCACTIVATE => return 1,
@@ -1672,9 +1808,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         WM_NCLBUTTONDBLCLK if wp == HTCAPTION as usize => return 0,
         WM_SYSCOMMAND if wp & 0xfff0 == SC_MAXIMIZE as usize => return 0,
         WM_SIZE => {
-            if wp == SIZE_MINIMIZED as usize {
-                ShowWindow(hwnd, SW_HIDE);
-            } else {
+            if wp != SIZE_MINIMIZED as usize {
                 s.layout(hwnd);
             }
         }
@@ -1880,11 +2014,12 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
     let dpi = GetDpiForSystem().max(96) as i32;
     let mut work = RECT::default();
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut work as *mut _ as *mut _, 0);
+    let always_on_top = s.settings.borrow().always_on_top;
     let hwnd = CreateWindowExW(
         WS_EX_APPWINDOW
             | WS_EX_CONTROLPARENT
             | WS_EX_LAYERED
-            | if s.settings.borrow().always_on_top {
+            | if always_on_top {
                 WS_EX_TOPMOST
             } else {
                 0
@@ -1973,6 +2108,7 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
             (PIN, "고정"),
             (HIDE, "숨기기"),
             (EDITOR, "템플릿"),
+            (ASSOCIATE, "연결"),
             (PREVIEW, "미리보기"),
             (APPLY, "적용"),
             (RESET, "기본값 복구"),
@@ -2145,12 +2281,12 @@ pub fn run() -> io::Result<()> {
         (None, Updates::default())
     } else {
         let (core, updates) =
-            super::start_core(&std::env::current_exe()?.with_file_name("waid.exe"))?;
+            super::start_core(&std::env::current_exe()?)?;
         (Some(core), updates)
     };
     let state = Box::new(Window::new(updates, ui::data_file(), demo));
     if demo {
-        *state.updates.lock().unwrap() = Some(Ok(demo_rows()));
+        publish_update(&state.updates, Ok(Snapshot { rows: demo_rows(), ..Snapshot::default() }));
     }
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -2277,7 +2413,7 @@ fn demo_rows() -> Vec<Row> {
         summary: "샘플 데이터 · 실제 AI 세션이 아닙니다.".into(),
         last_answer: "키보드만으로 모든 입력란을 이동하고 오류 안내를 확인할 수 있도록 개선했습니다. 다음 작업은 원래 세션에서 이어서 요청할 수 있습니다.".into(),
         cwd: "샘플 프로젝트".into(),
-        since: "2026-09-06T00:00:00Z".into(),
+        since: crate::time::to_iso8601(crate::time::now()),
         evidence: "demo".into(),
         ..Row::default()
     })
@@ -2290,6 +2426,37 @@ mod tests {
     // These tests manipulate process-wide window activation and desktop Z-order.
     static DESKTOP_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[test]
+    fn displayed_feed_populates_refreshes_and_removes_focused_cards() {
+        let _desktop = DESKTOP_TEST.lock().unwrap_or_else(|e| e.into_inner());
+        let path = std::env::temp_dir().join(format!("waid-displayed-feed-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = Window::new(Updates::default(), path.clone(), true);
+        unsafe {
+            let hwnd = create_window(&state).unwrap();
+            state.check_displayed_feed(hwnd);
+            state.menu(hwnd);
+            assert_ne!(IsWindowVisible(state.get(ASSOCIATE)), 0);
+            state.expand(hwnd, true);
+            assert_ne!(IsWindowVisible(state.get(ASSOCIATE)), 0);
+            let row = Row { id: "association-test".into(), agent_id: "codex".into(), session_id: "thread-test".into(), ..Row::default() };
+            let target = serde_json::json!({"kind":"chatgpt_link", "url":"codex://threads/thread-test"});
+            state.set_session_target(&row, Some(target.clone())).unwrap();
+            state.save();
+            assert_eq!(Settings::read(&path).unwrap().session_targets[&row.id], target);
+            // Preserve the adapter's honest notice instead of claiming exact conversation activation.
+            let (tx, rx) = std::sync::mpsc::channel();
+            *state.activation.borrow_mut() = Some((row.id.clone(), rx));
+            tx.send(Ok("manual window only".into())).unwrap();
+            state.tick(hwnd);
+            assert_eq!(&*state.notice.borrow(), "manual window only");
+            state.set_session_target(&row, None).unwrap();
+            state.save();
+            assert!(Settings::read(&path).unwrap().session_targets.is_empty());
+            DestroyWindow(hwnd);
+        }
+        let _ = std::fs::remove_file(path);
+    }
+    #[test]
     fn tray_icon_hides_and_restores_window() {
         let _desktop = DESKTOP_TEST.lock().unwrap_or_else(|e| e.into_inner());
         let path = std::env::temp_dir().join(format!("waid-tray-{}.json", std::process::id()));
@@ -2298,7 +2465,29 @@ mod tests {
             let hwnd = create_window(&state).unwrap();
             add_tray_icon(hwnd).unwrap();
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            // A shell/taskbar minimize must remain available for normal restoration.
+            ShowWindow(hwnd, SW_MINIMIZE);
+            assert_ne!(IsIconic(hwnd), 0);
+            assert_ne!(IsWindowVisible(hwnd), 0, "system minimize must not hide the window");
+            ShowWindow(hwnd, SW_RESTORE);
+            assert_eq!(IsIconic(hwnd), 0);
+            assert_ne!(IsWindowVisible(hwnd), 0);
             window_proc(hwnd, WM_CLOSE, 0, 0);
+            assert_eq!(IsWindowVisible(hwnd), 0);
+            // Simulate Explorer losing this icon, without restarting the user's shell.
+            remove_tray_icon(hwnd);
+            let data = NOTIFYICONDATAW {
+                cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+                hWnd: hwnd,
+                uID: TRAY_ID,
+                ..Default::default()
+            };
+            assert_eq!(Shell_NotifyIconW(NIM_MODIFY, &data), 0);
+            let taskbar_created = RegisterWindowMessageW(wide("TaskbarCreated").as_ptr());
+            assert_ne!(taskbar_created, 0);
+            SendMessageW(hwnd, taskbar_created, 0, 0);
+            assert_ne!(Shell_NotifyIconW(NIM_MODIFY, &data), 0);
+            SendMessageW(hwnd, taskbar_created, 0, 0);
             assert_eq!(IsWindowVisible(hwnd), 0);
             window_proc(hwnd, TRAY_MESSAGE, 0, WM_LBUTTONUP as isize);
             assert_ne!(IsWindowVisible(hwnd), 0);
@@ -2318,6 +2507,7 @@ mod tests {
             assert!(!state.visuals.mascot.is_null(), "header mascot must decode");
             assert!(!state.visuals.codex.is_null(), "OpenAI logo must decode");
             assert!(!state.visuals.claude.is_null(), "Claude logo must decode");
+            assert!(!state.visuals.orca.is_null(), "Orca logo must decode");
             let hwnd = create_window(&state).unwrap();
             assert!(
                 state.visuals.fonts.iter().all(|font| !font.is_null()),
@@ -2447,8 +2637,10 @@ mod tests {
                     restored.opacity_changed(hwnd);
                     assert_eq!(restored.settings.borrow().opacity, 100);
                     restored.command(hwnd, MINIMIZE, 0);
-                    assert_eq!(IsWindowVisible(hwnd), 0);
+                    assert_ne!(IsIconic(hwnd), 0);
+                    assert_ne!(IsWindowVisible(hwnd), 0);
                     ShowWindow(hwnd, SW_RESTORE);
+                    assert_eq!(IsIconic(hwnd), 0);
                     assert_ne!(IsWindowVisible(hwnd), 0);
                     DestroyWindow(hwnd);
                 })
@@ -2495,7 +2687,7 @@ mod tests {
                 );
             }
             state.fonts(hwnd);
-            *state.updates.lock().unwrap() = Some(Ok(demo_rows()));
+            publish_update(&state.updates, Ok(Snapshot { rows: demo_rows(), ..Snapshot::default() }));
             state.tick(hwnd);
             assert_eq!(send(state.get(LIST), LB_GETCOUNT, 0, 0), 3);
             let mut list_bounds = RECT::default();
@@ -2556,7 +2748,7 @@ mod tests {
                 row.title = format!("sample/{i:02}");
                 many.push(row);
             }
-            *state.updates.lock().unwrap() = Some(Ok(many.clone()));
+            publish_update(&state.updates, Ok(Snapshot { rows: many.clone(), ..Snapshot::default() }));
             state.tick(hwnd);
             GetClientRect(state.get(LIST), &mut list_bounds);
             assert!(
@@ -2598,24 +2790,46 @@ mod tests {
             let top = send(state.get(LIST), LB_GETTOPINDEX, 0, 0);
             let top_id = state.visible.borrow()[top as usize].id.clone();
             many[0].task = "changed sample".into();
-            *state.updates.lock().unwrap() = Some(Ok(many));
+            publish_update(&state.updates, Ok(Snapshot { rows: many, ..Snapshot::default() }));
             state.tick(hwnd);
             assert_eq!(state.selected().unwrap().id, selected);
             assert_eq!(
                 state.visible.borrow()[send(state.get(LIST), LB_GETTOPINDEX, 0, 0) as usize].id,
                 top_id
             );
-            *state.updates.lock().unwrap() = Some(Err("sample collection error".into()));
+            publish_update(&state.updates, Ok(Snapshot {
+                rows: state.rows.borrow().clone(), warnings: vec!["sample source unavailable".into()],
+            }));
+            state.tick(hwnd);
+            assert_eq!(state.visible.borrow().len(), 30);
+            assert!(state.core_error.borrow().is_empty());
+            assert!(state.collection_message().contains("sample source unavailable"));
+            publish_update(&state.updates, Err("sample collection error".into()));
             state.tick(hwnd);
             assert_eq!(state.visible.borrow().len(), 30);
             assert!(!state.core_error.borrow().is_empty());
-            *state.updates.lock().unwrap() = Some(Ok(demo_rows()));
+            assert!(state.collection_message().contains("sample collection error"));
+            assert!(state.collection_message().contains("sample source unavailable"));
+            publish_update(&state.updates, Ok(Snapshot { rows: demo_rows(), ..Snapshot::default() }));
             state.tick(hwnd);
             assert!(state.core_error.borrow().is_empty());
+            assert!(state.collection_warnings.borrow().is_empty());
+            assert!(state.collection_message().is_empty());
             let closing = state.selected().unwrap();
             state.command(hwnd, CLOSE_SESSION, 0);
             assert!(state.settings.borrow().closed.contains_key(&closing.id));
             assert_eq!(state.visible.borrow().len(), 2);
+            state.settings.borrow_mut().closed.get_mut(&closing.id).unwrap().request_marker = "r1:legacy".into();
+            let mut migrated = demo_rows();
+            migrated.iter_mut().find(|row| row.id == closing.id).unwrap().request_marker = "r2:current".into();
+            state.dirty.set(None);
+            state.notice.borrow_mut().clear();
+            publish_update(&state.updates, Ok(Snapshot { rows: migrated, ..Snapshot::default() }));
+            state.tick(hwnd);
+            assert!(state.dirty.get().is_some(), "marker migration must schedule a save");
+            assert!(state.notice.borrow().is_empty(), "migration is not a revival");
+            state.save();
+            assert_eq!(Settings::read(&path).unwrap().closed[&closing.id].request_marker, "r2:current");
             state.command(hwnd, ALL, 0);
             assert_eq!(state.visible.borrow().len(), 3);
             assert!(state
@@ -2628,7 +2842,7 @@ mod tests {
             let row = resumed.iter_mut().find(|r| r.id == closing.id).unwrap();
             row.request_marker = "request-after-close".into();
             row.state = "working".into();
-            *state.updates.lock().unwrap() = Some(Ok(resumed));
+            publish_update(&state.updates, Ok(Snapshot { rows: resumed, ..Snapshot::default() }));
             state.tick(hwnd);
             assert!(!state.settings.borrow().closed.contains_key(&closing.id));
             assert_eq!(state.visible.borrow().len(), 3);

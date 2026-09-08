@@ -18,15 +18,98 @@ pub(super) struct Feed {
     pub logos: RefCell<Vec<HWND>>,
     open: RefCell<Option<String>>,
     scroll: Cell<i32>,
+    history_line: Cell<bool>,
 }
 
 impl Window {
     fn feed_header(&self) -> i32 {
-        HEADER.max(self.skin.borrow().font_size * 2 + 48)
+        let size = self.skin.borrow().font_size;
+        HEADER.max(size * 2 + 48) + if self.feed.history_line.get() { size + 7 } else { 0 }
+    }
+    #[cfg(test)]
+    pub(super) unsafe fn check_displayed_feed(&self, hwnd: HWND) {
+        // Reproduce startup order: display the empty window before its first snapshot.
+        ShowWindow(hwnd, SW_SHOWNORMAL);
+        let mut rows: Vec<_> = demo_rows().into_iter().take(2).collect();
+        rows[1].state = "unknown".into();
+        rows[1].logged_state = "working".into();
+        rows[1].evidence = "before_launch".into();
+        publish_update(&self.updates, Ok(Snapshot { rows: rows.clone(), ..Snapshot::default() }));
+        self.tick(hwnd);
+        let buttons = self.feed.buttons.borrow().clone();
+        let logos = self.feed.logos.borrow().clone();
+        assert_eq!(buttons.len(), 2);
+        assert_eq!(logos.len(), 2);
+        assert!(self.feed.history_line.get());
+        let size = self.skin.borrow().font_size;
+        assert_eq!(self.feed_header(), HEADER.max(size * 2 + 48) + size + 7);
+        assert!(text(buttons[1]).contains("미확인 · 마지막 기록: 작업 중"));
+        assert!(text(logos[1]).contains("미확인 · 마지막 기록: 작업 중"));
+        RedrawWindow(hwnd, null(), null_mut(), RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+        assert_ne!(IsWindowVisible(logos[0]), 0);
+
+        SetFocus(buttons[1]);
+        assert_eq!(GetFocus(), buttons[1]);
+        self.toggle_card(hwnd, 1);
+        let selected = self.selected().unwrap().id;
+        // Programmatic focus notifications must not reset the enclosing rebuild guard.
+        self.busy.set(true);
+        SetFocus(logos[0]);
+        assert!(self.busy.get());
+        assert_eq!(self.selected().unwrap().id, selected);
+        self.busy.set(false);
+        SetFocus(logos[1]);
+        for row in &mut rows {
+            row.task.push_str(" · refreshed");
+            row.last_answer = "updated answer".into();
+        }
+        publish_update(&self.updates, Ok(Snapshot { rows, ..Snapshot::default() }));
+        self.tick(hwnd);
+        assert_eq!(*self.feed.buttons.borrow(), buttons);
+        assert_eq!(*self.feed.logos.borrow(), logos);
+        assert!(text(buttons[1]).contains("refreshed"));
+        assert!(text(logos[1]).contains("refreshed"));
+        assert_eq!(text(self.get(ANSWER)), "updated answer");
+        self.fonts(hwnd);
+        self.layout(hwnd);
+        self.window_preferences(hwnd);
+
+        // Remove the open, focused row, then the final row; destroy callbacks still run.
+        assert_eq!(GetFocus(), logos[1]);
+        let survivor = self.visible.borrow()[0].clone();
+        publish_update(&self.updates, Ok(Snapshot { rows: vec![survivor], ..Snapshot::default() }));
+        self.tick(hwnd);
+        assert_eq!(self.feed.buttons.borrow().len(), 1);
+        assert_eq!(self.feed.logos.borrow().len(), 1);
+        assert_eq!(IsWindow(buttons[1]), 0);
+        assert_eq!(IsWindow(logos[1]), 0);
+        assert!(self.feed.open.borrow().is_none());
+        assert_eq!(IsWindowVisible(self.get(ANSWER)), 0);
+        SetFocus(buttons[0]);
+        publish_update(&self.updates, Ok(Snapshot::default()));
+        self.tick(hwnd);
+        assert!(self.feed.buttons.borrow().is_empty());
+        assert!(self.feed.logos.borrow().is_empty());
+        assert_eq!(IsWindow(buttons[0]), 0);
+        assert_eq!(IsWindow(logos[0]), 0);
+        // A later populated snapshot must recover with fresh native controls.
+        publish_update(&self.updates, Ok(Snapshot { rows: demo_rows(), ..Snapshot::default() }));
+        self.tick(hwnd);
+        assert_eq!(self.feed.buttons.borrow().len(), 3);
+        assert_eq!(self.feed.logos.borrow().len(), 3);
+        assert_eq!(self.feed_header(), HEADER.max(size * 2 + 48));
+        RedrawWindow(hwnd, null(), null_mut(), RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+        // The recent cutoff advances even when the collector has no changed snapshot.
+        let old = crate::time::to_iso8601(crate::time::now() - 86_401);
+        for row in self.rows.borrow_mut().iter_mut() { row.since = old.clone(); }
+        self.date_tick.set(crate::time::now() - 60);
+        self.tick(hwnd);
+        assert!(self.visible.borrow().is_empty());
+        assert!(self.feed.buttons.borrow().is_empty());
     }
     #[cfg(test)]
     pub(super) unsafe fn check_feed(&self, hwnd: HWND) {
-        *self.updates.lock().unwrap() = Some(Ok(demo_rows()));
+        publish_update(&self.updates, Ok(Snapshot { rows: demo_rows(), ..Snapshot::default() }));
         self.tick(hwnd);
         assert_eq!(self.feed.buttons.borrow().len(), 3);
         self.toggle_card(hwnd, 0);
@@ -115,7 +198,7 @@ impl Window {
         }
         self.controls.borrow_mut().insert(FEED, feed);
         for (id, label) in [
-            (REQUEST, "내가 시킨 일"),
+            (REQUEST, "Prompt"),
             (ANSWER, "답변"),
             (PROMPT, "Prompt · 첫 요청"),
         ] {
@@ -139,7 +222,10 @@ impl Window {
     }
 
     pub(super) unsafe fn rebuild_feed(&self, hwnd: HWND) {
-        let rows = self.visible.borrow();
+        // Native control calls can synchronously reenter drawing and focus handlers.
+        // Publish handle changes with short borrows, then call Win32 without a borrow.
+        let rows = self.visible.borrow().clone();
+        self.feed.history_line.set(rows.iter().any(|row| row.status_context() != row.status()));
         if self
             .feed
             .open
@@ -149,15 +235,15 @@ impl Window {
         {
             self.feed.open.borrow_mut().take();
         }
-        let mut buttons = self.feed.buttons.borrow_mut();
-        let mut logos = self.feed.logos.borrow_mut();
-        while buttons.len() > rows.len() {
-            DestroyWindow(buttons.pop().unwrap());
-            DestroyWindow(logos.pop().unwrap());
+        while self.feed.buttons.borrow().len() > rows.len() {
+            let button = self.feed.buttons.borrow_mut().pop().unwrap();
+            let logo = self.feed.logos.borrow_mut().pop().unwrap();
+            DestroyWindow(button);
+            DestroyWindow(logo);
         }
         // ponytail: two native buttons per session; virtualize if thousands of cards exhaust USER handles.
         for (index, row) in rows.iter().enumerate() {
-            if index == buttons.len() {
+            if index == self.feed.buttons.borrow().len() {
                 let button = CreateWindowExW(
                     0,
                     wide("BUTTON").as_ptr(),
@@ -185,13 +271,15 @@ impl Window {
                     DestroyWindow(button);
                     break;
                 }
-                buttons.push(button);
-                logos.push(logo);
+                self.feed.buttons.borrow_mut().push(button);
+                self.feed.logos.borrow_mut().push(logo);
                 send(button, WM_SETFONT, self.body.get() as usize, 0);
             }
+            let button = self.feed.buttons.borrow()[index];
+            let logo = self.feed.logos.borrow()[index];
             let logo_label = format!("{} · 해당 세션으로 이동", row.accessible_text());
-            if text(logos[index]) != logo_label {
-                set_text(logos[index], &logo_label);
+            if text(logo) != logo_label {
+                set_text(logo, &logo_label);
             }
             let open = self.feed.open.borrow().as_ref() == Some(&row.id);
             let label = format!(
@@ -199,8 +287,8 @@ impl Window {
                 row.accessible_text(),
                 if open { "접기" } else { "펼치기" }
             );
-            if text(buttons[index]) != label {
-                set_text(buttons[index], &label);
+            if text(button) != label {
+                set_text(button, &label);
             }
             if open {
                 for (id, value) in [
@@ -219,9 +307,6 @@ impl Window {
                 }
             }
         }
-        drop(buttons);
-        drop(logos);
-        drop(rows);
         self.layout_feed(hwnd);
     }
 
@@ -233,11 +318,13 @@ impl Window {
         let p = |n| self.px(hwnd, n);
         let mut bounds = RECT::default();
         GetClientRect(feed, &mut bounds);
-        let rows = self.visible.borrow();
-        let open = self.feed.open.borrow();
-        let open_index = rows.iter().position(|r| Some(&r.id) == open.as_ref());
+        let (row_count, open_index) = {
+            let rows = self.visible.borrow();
+            let open = self.feed.open.borrow();
+            (rows.len(), rows.iter().position(|r| Some(&r.id) == open.as_ref()))
+        };
         let total = p(
-            rows.len() as i32 * self.feed_header() + if open_index.is_some() { BODY } else { 0 }
+            row_count as i32 * self.feed_header() + if open_index.is_some() { BODY } else { 0 }
         );
         let scroll = self
             .feed
@@ -256,7 +343,9 @@ impl Window {
         };
         SetScrollInfo(feed, SB_VERT, &info, 1);
         GetClientRect(feed, &mut bounds);
-        for (index, button) in self.feed.buttons.borrow().iter().enumerate() {
+        let buttons = self.feed.buttons.borrow().clone();
+        let logos = self.feed.logos.borrow().clone();
+        for (index, (button, logo)) in buttons.into_iter().zip(logos).enumerate() {
             let y = p(index as i32 * self.feed_header()
                 + if open_index.is_some_and(|i| index > i) {
                     BODY
@@ -264,8 +353,8 @@ impl Window {
                     0
                 })
                 - scroll;
-            MoveWindow(*button, 0, y, bounds.right, p(self.feed_header()), 1);
-            SetWindowPos(self.feed.logos.borrow()[index], HWND_TOP,
+            MoveWindow(button, 0, y, bounds.right, p(self.feed_header()), 1);
+            SetWindowPos(logo, HWND_TOP,
                 p(16), y + p(15), p(42), p(42), SWP_NOACTIVATE);
         }
         for id in [REQUEST, ANSWER, PROMPT, OPEN, COPY] {
@@ -464,6 +553,22 @@ impl Window {
             skin.muted,
             DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS,
         );
+        let context = row.status_context();
+        if context != row.status() {
+            draw(
+                dc,
+                &context,
+                RECT {
+                    left: p(72),
+                    right: card.right - p(12),
+                    top: badge.bottom + p(2) + line,
+                    bottom: badge.bottom + p(2) + line * 2,
+                },
+                self.body.get(),
+                skin.muted,
+                DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+            );
+        }
         let title = if self.settings.borrow().pinned.contains(&row.id) {
             format!("★ {}", row.project())
         } else {
@@ -522,7 +627,7 @@ impl Window {
             if item.itemState & ODS_SELECTED != 0 { skin.selection } else { 0xffffff },
             Some(if item.itemState & ODS_FOCUS != 0 { skin.accent }
                 else { visual::blend(0xffffff, skin.muted, 8) }));
-        if !self.visuals.logo(item.hDC, &row.agent_id, p(5), p(5), p(32)) {
+        if !self.visuals.logo(item.hDC, row.logo_id(), p(5), p(5), p(32)) {
             draw(item.hDC, "›_", item.rcItem, self.heading.get(), 0x343020,
                 DT_SINGLELINE | DT_CENTER | DT_VCENTER);
         }
@@ -565,7 +670,7 @@ impl Window {
             };
             visual::rounded(dc, inner, p(14), skin.background, None);
             for (label, icon, top, height) in [
-                ("내가 시킨 일", "♙", 0, 96),
+                ("Prompt", ">_", 0, 96),
                 ("답변", "✦", 100, 118),
                 ("Prompt · 첫 요청", ">_", 222, 78),
             ] {
@@ -613,7 +718,7 @@ impl Window {
             // The source supplies session activity time, not individual message timestamps.
             draw(
                 dc,
-                &format!("{} · 마지막 기록 {}", row.agent, row.short_date()),
+                &format!("{} · {} · 마지막 기록 {}", row.agent, row.status_context(), row.short_date()),
                 RECT {
                     left: p(58),
                     right: bounds.right - p(28),
@@ -656,6 +761,10 @@ unsafe extern "system" fn feed_proc(feed: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             return SendMessageW(hwnd, msg, wp, lp)
         }
         WM_COMMAND => {
+            // Create/destroy, text and focus changes notify synchronously during rebuild.
+            if s.busy.get() || !s.ready.get() {
+                return 0;
+            }
             let id = wp & 0xffff;
             let notification = (wp >> 16) & 0xffff;
             let logo_index = if id == LOGO {
@@ -675,7 +784,9 @@ unsafe extern "system" fn feed_proc(feed: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 send(s.get(LIST), LB_SETCURSEL, logo_index.unwrap_or_else(|| id - CARD), 0);
                 s.busy.set(false);
                 let mut rect = RECT::default();
-                GetWindowRect(s.feed.buttons.borrow()[logo_index.unwrap_or_else(|| id - CARD)], &mut rect);
+                let Some(button) = s.feed.buttons.borrow()
+                    .get(logo_index.unwrap_or_else(|| id - CARD)).copied() else { return 0 };
+                GetWindowRect(button, &mut rect);
                 let mut point = POINT { x: 0, y: rect.top };
                 ScreenToClient(feed, &mut point);
                 let mut bounds = RECT::default();

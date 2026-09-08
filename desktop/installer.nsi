@@ -36,8 +36,6 @@ Section "waid"
     SetShellVarContext current
     SetOutPath "$INSTDIR"
     File "${WAID_RELEASE_DIR}\waid-desktop.exe"
-    File "${WAID_RELEASE_DIR}\waid.exe"
-    File "${WAID_RELEASE_DIR}\FONT-LICENSE.txt"
     WriteUninstaller "$INSTDIR\uninstall.exe"
     CreateShortcut "$SMPROGRAMS\waid.lnk" "$INSTDIR\waid-desktop.exe"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\waid" "DisplayName" "waid"
