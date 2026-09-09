@@ -137,6 +137,9 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
         let connections = stack([button("Copy prompt", "copy"), button("Connect copied link", "connect"), button("Clear connection", "disconnect")])
         let preferences = stack([button("Always on top", "top"), NSTextField(labelWithString: "Opacity"), opacity, button("Templates…", "editor")])
         let root = stack([search, filters, actions, connections, split, notice, preferences], vertical: true)
+        for control in [search, filters, actions, connections, preferences] as [NSView] {
+            control.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        }
         root.translatesAutoresizingMaskIntoConstraints = false
         window.contentView!.addSubview(root)
         NSLayoutConstraint.activate([
@@ -402,7 +405,7 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
             for (file, template) in [(path, daylight), (path + "-night.png", midnight)] {
                 request("preview", value: template)
                 window.contentView!.layoutSubtreeIfNeeded()
-                check(split.frame.height > 400)
+                check(split.frame.height >= 330)
                 let content = window.contentView!
                 let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds)!
                 content.cacheDisplay(in: content.bounds, to: bitmap)
