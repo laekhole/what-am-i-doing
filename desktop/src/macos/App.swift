@@ -1,9 +1,16 @@
 import AppKit
+import UniformTypeIdentifiers
 
 typealias Bridge = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
 
+final class SessionRow: NSTableRowView {
+    var selectionColor = NSColor.selectedControlColor
+    override func drawSelection(in dirtyRect: NSRect) { selectionColor.setFill(); bounds.fill() }
+    override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
+}
+
 // AppKit controls keep keyboard navigation, text selection and VoiceOver native.
-final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     let context: UnsafeMutableRawPointer?
     let bridge: Bridge
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 660, height: 800),
@@ -26,6 +33,7 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
     var lastRows = ""
     var lastSkin = ""
     var skin: [String: Any] = [:]
+    var smokeAttempts = 0
 
     init(_ context: UnsafeMutableRawPointer?, _ bridge: @escaping Bridge) {
         self.context = context; self.bridge = bridge
@@ -223,18 +231,35 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        let count = (rows[row]["lines"] as? [String] ?? []).count + 2
-        return CGFloat(count * ((skin["font_size"] as? Int ?? 14) + (skin["line_gap"] as? Int ?? 2) + 4) + 2 * (skin["padding"] as? Int ?? 10))
+        let count = (rows[row]["lines"] as? [String] ?? []).count
+        let font = skin["font_size"] as? Int ?? 14
+        let gap = skin["line_gap"] as? Int ?? 2
+        let padding = skin["padding"] as? Int ?? 10
+        return CGFloat(count * (font + gap + 4) + 2 * padding)
+    }
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let view = SessionRow()
+        view.selectionColor = color((skin["colors"] as? [String: String])?["selection"] ?? "#EDF3FF")
+        return view
     }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let item = rows[row]
-        let text = NSTextField(wrappingLabelWithString: ((item["lines"] as? [String] ?? []) +
-            [item["status"] as? String ?? "", item["model"] as? String ?? ""]).joined(separator: "\n"))
-        text.maximumNumberOfLines = (item["lines"] as? [String] ?? []).count + 2
+        let text = NSTextField(wrappingLabelWithString: (item["lines"] as? [String] ?? []).joined(separator: "\n"))
+        text.maximumNumberOfLines = (item["lines"] as? [String] ?? []).count
         text.lineBreakMode = .byTruncatingTail
         text.font = .systemFont(ofSize: CGFloat(skin["font_size"] as? Int ?? 14))
         let colors = skin["colors"] as? [String: String] ?? [:]
         text.textColor = color(colors["text"] ?? "#101B38")
+        let styled = NSMutableAttributedString(string: text.stringValue)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = CGFloat(skin["line_gap"] as? Int ?? 2)
+        styled.addAttributes([.font: text.font!, .foregroundColor: text.textColor!, .paragraphStyle: paragraph], range: NSRange(location: 0, length: styled.length))
+        let stateColors = skin["state_colors"] as? [String: String] ?? [:]
+        let statusRange = (text.stringValue as NSString).range(of: item["status"] as? String ?? "")
+        if statusRange.location != NSNotFound {
+            styled.addAttribute(.foregroundColor, value: color(stateColors[item["state"] as? String ?? "unknown"] ?? "#44536A"), range: statusRange)
+        }
+        text.attributedStringValue = styled
         let cell = NSTableCellView()
         text.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(text); cell.textField = text
         let padding = CGFloat(skin["padding"] as? Int ?? 10)
@@ -269,7 +294,9 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
             NSPasteboard.general.setString(selected?["prompt"] as? String ?? "", forType: .string)
         case "connect": request(action, value: (NSPasteboard.general.string(forType: .string) ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
         case "editor": showEditor()
-        case "preview", "template": request(action, value: editor.string)
+        case "preview", "template":
+            request(action, value: editor.string)
+            if let error = view["notice"] as? String, !error.isEmpty { showError(error) }
         case "day": editor.string = daylight
         case "night": editor.string = midnight
         case "import": importTemplate()
@@ -281,7 +308,12 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
     @objc func find() { showWindow(); window.makeFirstResponder(search) }
     @objc func hideApp() { NSApp.hide(nil) }
     @objc func showWindow() { window.deminiaturize(nil); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
-    @objc func quit() { request("save"); NSApp.stop(nil); NSApp.postEvent(NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0)!, atStart: false) }
+    @objc func quit() {
+        request("save")
+        if let error = view["notice"] as? String, !error.isEmpty { showError(error); return }
+        NSApp.stop(nil)
+        NSApp.postEvent(NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0)!, atStart: false)
+    }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if sender === editorWindow { request("cancel_preview") }
         sender.orderOut(nil); return false
@@ -309,7 +341,7 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
         editorWindow!.makeKeyAndOrderFront(nil)
     }
     func importTemplate() {
-        let panel = NSOpenPanel(); panel.allowedFileTypes = ["json"]; panel.allowsMultipleSelection = false
+        let panel = NSOpenPanel(); panel.allowedContentTypes = [.json]; panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
             do {
                 let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
@@ -327,7 +359,32 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
         }
     }
     func smoke() {
+        request("poll")
+        if rows.isEmpty {
+            smokeAttempts += 1
+            precondition(smokeAttempts < 30, "Smoke collector did not deliver the fixture")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.smoke() }
+            return
+        }
         precondition(window.isVisible && table.numberOfColumns == 1 && statusItem.menu!.items.count == 2)
+        let rowID = rows[0]["id"] as! String
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        precondition(detail.string.contains("Mac fixture"))
+        clicked(buttons["copy"]!)
+        precondition(NSPasteboard.general.string(forType: .string)?.contains("Mac fixture") == true)
+        request("pin", id: rowID); precondition(selected?["pinned"] as? Bool == true)
+        request("dismiss", id: rowID); precondition(rows.isEmpty)
+        request("all"); precondition(rows.count == 1 && rows[0]["dismissed"] as? Bool == true)
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        request("dismiss", id: rowID); precondition(rows[0]["dismissed"] as? Bool == false)
+        request("all"); request("pin", id: rowID)
+        if let path = ProcessInfo.processInfo.environment["WAID_SMOKE_SCREENSHOT"] {
+            window.contentView!.layoutSubtreeIfNeeded()
+            let content = window.contentView!
+            let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds)!
+            content.cacheDisplay(in: content.bounds, to: bitmap)
+            try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: path))
+        }
         request("search", value: "mac smoke")
         precondition(search.stringValue == "mac smoke")
         request("search", value: "")
@@ -339,7 +396,7 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
         showWindow(); precondition(window.isVisible)
         showEditor(); precondition(editorWindow!.isVisible && !editor.string.isEmpty)
         editorWindow!.performClose(nil); precondition(!editorWindow!.isVisible)
-        print("AppKit smoke passed: window, menu bar, controls, settings, template editor, hide/reopen")
+        print("AppKit smoke passed: fixture collection, selection, clipboard, pin/dismiss/restore, window, menu bar, settings, template editor, hide/reopen")
         quit()
     }
 }

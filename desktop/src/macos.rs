@@ -135,8 +135,12 @@ impl App {
         let skin = Skin::parse(template).expect("validated template");
         let rows: Vec<_> = self.settings.visible(&self.rows).iter().map(|row| {
             let pinned = self.settings.pinned.contains(&row.id);
-            let lines: Vec<String> = skin.lines().iter().map(|line| line.iter()
+            let mut lines: Vec<String> = skin.lines().iter().map(|line| line.iter()
                 .map(|field| skin.text(row, field, pinned)).collect::<Vec<_>>().join(" · ")).collect();
+            if skin.compact {
+                lines.push(skin.text(row, "status", pinned));
+                if skin.fields.iter().any(|f| f == "model") { lines.push(row.model.clone()); }
+            }
             json!({"id":row.id,"lines":lines,"status":skin.text(row,"status",pinned),
                 "state":row.state,"model":row.model,"prompt":row.task,
                 "detail":format!("{}\n\nPrompt\n{}\n\nLast answer\n{}\n\nFirst prompt\n{}\n\nFolder\n{}\n\nLast record (UTC)\n{}\n\n{}",row.accessible_text(),row.task,row.last_answer,row.summary,row.cwd,row.since,row.status_context()),

@@ -44,6 +44,10 @@ jobs:
         timeout-minutes: 2
         run: |
           export WAID_DATA_DIR="$RUNNER_TEMP/waid-smoke"
+          export CODEX_HOME="$RUNNER_TEMP/waid-fixture"
+          export WAID_SMOKE_SCREENSHOT="$RUNNER_TEMP/waid-smoke.png"
+          mkdir -p "$CODEX_HOME/sessions"
+          printf '%s\n' '{"type":"session_meta","payload":{"id":"mac-smoke","cwd":"/tmp/Mac project"}}' '{"type":"event_msg","payload":{"type":"user_message","message":"Mac fixture — 한글 prompt\nSecond line"}}' > "$CODEX_HOME/sessions/smoke.jsonl"
           desktop/target/macos-bundle/waid.app/Contents/MacOS/waid --macos-smoke
           desktop/target/macos-bundle/waid.app/Contents/MacOS/waid --macos-smoke
       - name: Upload development app (not a release)
@@ -53,5 +57,6 @@ jobs:
           path: |
             desktop/target/macos-bundle/*.zip
             desktop/target/macos-bundle/SHA256SUMS.txt
+            ${{ runner.temp }}/waid-smoke.png
           if-no-files-found: error
           retention-days: 7
