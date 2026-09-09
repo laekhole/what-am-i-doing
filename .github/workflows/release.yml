@@ -65,7 +65,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           $exe = "waid-$env:RELEASE_TAG-windows-x64.exe"
-          $releaseArgs = @('--draft', '--verify-tag', '--title', "waid $env:RELEASE_TAG", '--generate-notes')
+          $releaseArgs = @('--draft', '--verify-tag', '--title', "waid $env:RELEASE_TAG", '--notes-file', (Join-Path $env:GITHUB_WORKSPACE "releases/$env:RELEASE_TAG.md"))
           if ($env:RELEASE_TAG.Contains('-')) { $releaseArgs += '--prerelease' }
           gh release create $env:RELEASE_TAG $exe "$exe.sigstore.json" SHA256SUMS.txt @releaseArgs
           if ($LASTEXITCODE -ne 0) { throw 'Draft creation or asset upload failed. Inspect the draft before retrying.' }

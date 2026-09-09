@@ -9,7 +9,37 @@
 
 Korean version: [README.ko.md](README.ko.md).
 
-A native desktop app that shows the **current task, project, agent/model, and last observed status** of multiple coding AI sessions in one place. It only reads coding-agent logs (see [Agent support](#agent-support) for which sources are validated); it does not send commands to agents. This is a development build. See the [validation record](VALIDATION.md) for verified behavior and outstanding checks.
+A native desktop app that shows the **current task, project, agent/model, and last observed status** of multiple coding AI sessions in one place. It reads existing coding-agent logs and does not send commands to agents.
+
+**v0.2.0 is the Windows milestone, with stabilization ongoing.** Both Rust packages are version `0.2.0`. The native macOS app is development work toward v0.3.0; Android, iOS/iPadOS and waidaway LAN access are planned. See the [v0.2.0 release notes](releases/v0.2.0.md) for changes from v0.1.0 and upgrade instructions.
+
+[Download and verify](#download-and-verify-a-release) · [Controls](#using-the-app) · [Agent support](#agent-support) · [Troubleshooting](#troubleshooting-missing-sessions) · [Mac development](MACOS.md)
+
+## Features at a glance
+
+| Feature | What you can do |
+|---|---|
+| Session overview | See project, latest request, agent, model and observed status together, refreshed every two seconds. Claude Code and Codex are the priority sources. |
+| Conversation previews | Expand a card for the latest prompt, last logged answer and first prompt; copy the prompt without switching apps. |
+| Context visibility | See the latest logged usage and compaction evidence. When 25% or less remains, the Windows card/list emphasizes the remaining percentage; observed compaction is also emphasized. |
+| Session organization | Search and filter, pin, hide, exclude and restore sessions. A distinguishable new user request automatically restores an excluded conversation. |
+| Return to work | Open an exact existing local Orca session, an associated ChatGPT link, or a manually connected supported Windows window. [Target-specific limits](#session-return) apply. |
+| Desktop convenience | Expandable one-column cards or a two-column list, always on top, 0–60% transparency, taskbar minimize, tray hide/restore and keyboard shortcuts on Windows. |
+| Custom appearance | Daylight/Midnight JSON templates with edit, preview, apply, import and export; settings persist across restarts. |
+| Local tools | CLI tables, streaming JSON, a localhost HTML dashboard, custom log adapters and `waid doctor` diagnostics. |
+
+Windows controls and status labels are currently primarily Korean; English names in this guide explain their function. Mac uses native AppKit controls with some shared Korean status/detail text. A language selector is not implemented.
+
+## Before you start
+
+- **This is a log viewer, not proof that a session is currently open.** Old working/waiting history starts **Unknown** each launch. Status changes depend on readable request/response events; delayed logs delay the display.
+- **Collection and session return have different support levels.** Some registered agents have only synthetic tests or process detection. JSON/SQLite sources have no reliable turn-end events and remain Unknown.
+- **Context is the last logged measurement, not a live token count or account quota.** Claude transcripts do not establish a context limit, so their percentage is unknown. Missing compaction evidence does not mean compaction never happened.
+- **Excluding a session only organizes waid.** It neither deletes the conversation nor stops its agent. Reopening the original app alone does not restore an excluded entry. Search and filters still apply in Show all; auxiliary sessions require Include auxiliary.
+- **Local settings can contain saved prompts and answers.** Use one waid window per settings file, back up settings before upgrading, and check exported JSON/HTML or screenshots before sharing them.
+- **Release signing verifies origin and integrity.** Sigstore is not Windows Authenticode; Smart App Control or SmartScreen may still block the EXE. macOS installation/signing acceptance, accessibility, mixed-DPI and long-duration real use remain validation work.
+
+Latest code validation (`47f4317`, 2026-09-09): [Windows CI](https://github.com/laekhole/what-am-i-doing/actions/runs/34308905362) passed **130 checks**; [Mac CI](https://github.com/laekhole/what-am-i-doing/actions/runs/34308905356) passed **121 Rust checks per architecture** plus AppKit smoke/restart checks on Apple Silicon and Intel. Environment-dependent tests remain ignored: three on Windows and one on each Mac architecture. These results do not complete the real-device walkthroughs in [VALIDATION.md](VALIDATION.md) and [MACOS.md](MACOS.md).
 
 ## Privacy and local operation
 
@@ -42,7 +72,11 @@ For macOS development and installation, see [the Mac guide](MACOS.md). The nativ
 
 ## Download and verify a release
 
-Download `waid-<tag>-windows-x64.exe` from [GitHub Releases](https://github.com/laekhole/what-am-i-doing/releases), verify it as described below, and double-click it. **One EXE is enough: no extraction, installer, Rust, Cargo, Node, or WebView2 is required.** The collector, fonts, and font license are built in. The other two release files are for verification; the app does not need them at runtime. Older ZIP releases still use the two-executable layout.
+Download `waid-v0.2.0-windows-x64.exe` from the [v0.2.0 release](https://github.com/laekhole/what-am-i-doing/releases/tag/v0.2.0), verify it as described below, and double-click it. **One EXE is enough: no extraction, installer, Rust, Cargo, Node, or WebView2 is required.** The collector, fonts, and font license are built in. The other two release files are for verification; the app does not need them at runtime. v0.1.0 ZIP releases use the older two-executable layout.
+
+On first launch, waid discovers supported local logs automatically. If a session is missing, open **Show all**, clear search/filters and follow [diagnostics](#troubleshooting-missing-sessions). Existing history may initially show Unknown until a new request is observed.
+
+**Upgrading from v0.1.0:** quit the old app through its tray menu, back up `%LOCALAPPDATA%\waid\settings.json` (or your `WAID_DATA_DIR`), then run the verified v0.2.0 EXE. The settings location is unchanged; old session keys migrate only when their match is unambiguous. An old companion `waid.exe` is not required by the new desktop app. There is no automatic updater.
 
 ```text
 waid-v0.2.0-windows-x64.exe
@@ -66,15 +100,13 @@ SHA-256 checks file integrity. Cosign checks that the file was **signed by this 
 
 Maintainers can push a tag such as `v0.2.0` or `v0.2.0-rc.1` on a reviewed commit. The [release workflow](.github/workflows/release.yml) tests and builds the core and app on Windows x64, verifies the standalone EXE, generates checksums, and performs keyless signing and verification using GitHub OIDC. It attaches all three files to a draft release before publishing it. Tags with suffixes such as `-rc.1` are published as prereleases. No signing private keys or certificate secrets are stored in the repository. Sigstore's public transparency log records the signing identity and artifact digest.
 
-The tagged commit must include the workflow file. Releases are not published if CI fails; check for a remaining draft if uploading or publishing fails. Existing releases and assets are not automatically overwritten. The download filename follows the tag; the core and app Cargo versions are managed independently.
+The tagged commit must include the workflow and a matching `releases/<tag>.md` file, which becomes the release body. Releases are not published if the release workflow's Windows checks fail; macOS checks run separately and do not publish a Mac release. Check for a remaining draft if uploading or publishing fails. Existing releases and assets are not automatically overwritten. Match the tag, release notes and both Cargo package versions when preparing a release; filenames alone do not enforce version consistency.
 
 To create an unsigned standalone EXE and checksum locally, run `./desktop/build.ps1 -Portable -Tag v0.2.0`. Output goes to `desktop/target/release/bundle`; existing output is not overwritten. To prepare an already-built desktop EXE for release, use `./desktop/package.ps1 -Tag v0.2.0 -OutputDirectory <new-output-folder>`. Local packaging does not include GitHub OIDC signing.
 
 If local Windows application control blocks Rust tests or build scripts, use the [Windows checks workflow](.github/workflows/check.yml). It runs on GitHub-hosted Windows runners for pushes to `main`, pull requests, and manual **Actions → Windows checks → Run workflow** runs. After the checks pass, download the `waid-windows-x64` artifact containing the EXE and checksum; these test packages are unsigned and retained for seven days. The workflow does not publish a release.
 
-Building on GitHub avoids the local build restriction, but downloaded EXEs still face the PC's application control policy. For Windows execution trust, the next signing step is **RSA Authenticode signing and timestamping of the standalone desktop EXE**, followed by signature verification, checksums, and the existing Sigstore signing. This requires a trusted signing provider; the current workflow does not perform Authenticode signing. See [Microsoft's Smart App Control signing guidance](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control).
-
-[SignPath Foundation](https://signpath.org/terms.html) offers an application-based option for eligible open-source projects. [Azure Artifact Signing](https://learn.microsoft.com/en-us/azure/artifact-signing/quickstart) supports public trust for South Korean organizations; individual developers are currently limited to the US and Canada. Signing does not override an organization's [explicit deny policy](https://learn.microsoft.com/en-us/windows/security/application-security/application-control/app-control-for-business/design/create-appcontrol-deny-policy) or guarantee [SmartScreen reputation](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation).
+Building on GitHub avoids a local build restriction, but downloaded EXEs still face the PC's application control policy. Authenticode signing and timestamping remain future release work; see [Microsoft's Smart App Control signing guidance](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control).
 
 ## Build from source on Windows
 
@@ -105,7 +137,7 @@ The default window is **600×780 logical pixels**, with expandable session cards
 - **Minimize** keeps the window on the taskbar for normal restoration. **Close** hides it in the system tray. Click the tray icon to restore it, or choose **Exit** from its menu to quit.
 - **···** expands the details, search, pin, dismiss, and template controls. Double-click a two-column list item or press Enter to open its session.
 - **Search** (`Ctrl+F`) opens the expanded view. Search tasks, projects, models, agents, and folders, combined with status and agent filters. Use **Compact** or Esc to return to the small window.
-- **Do not show in waid (waid에서 보지 않기)** in an expanded card removes that session from waid's default list only. The toolbar calls this **보지 않기** (`Ctrl+D`). It never deletes the original conversation or stops its agent. Find excluded sessions in **Show all (전체 보기)** and use **Restore** to bring them back. A session returns automatically when you send a **new user request in that conversation**, including from JSON-file and SQLite sources. Merely opening the conversation does not restore it. Revival needs distinguishable request evidence; a repeated identical request cannot be detected when the source exposes no changed request ID, request timestamp, or user-message history. Idle status, waiting for a response, or a missing process alone never removes it automatically.
+- **Do not show in waid (waid에서 보지 않기)** in an expanded card removes that session from waid's default list only. The toolbar calls this **보지 않기** (`Ctrl+D`). It never deletes the original conversation or stops its agent. Find excluded sessions in **Show all (전체 보기)** and use **Restore** to bring them back. A session returns automatically when you send a **new user request in that conversation**, including from JSON-file and SQLite sources. Merely opening the conversation does not restore it. Revival needs distinguishable request evidence; a repeated identical request cannot be detected when the source exposes no changed request ID, request timestamp, or user-message history. Idle status, waiting for a response, or a missing process alone never removes it automatically. Up to 1,024 excluded sessions can be saved; restore entries to free space.
 - The default list shows activity from the **last 24 hours**, plus pinned sessions, sessions observed since this launch, and entries whose date is unknown. Older history remains available through **Show all**; aging out of this view does not dismiss a session.
 - **Pin** (`Ctrl+P`) keeps a session at the top; **Hide** (`Ctrl+H`) hides it from the list. **Show all** includes older, dismissed, and hidden entries. Search and status/agent filters still apply.
 - Auxiliary sessions are hidden by default, including in **Show all**. Only **Include auxiliary** reveals subagents, automated reviews, and Orca dispatched workers. Classification uses session metadata and Orca's injected worker preamble within the bounded log read range.
@@ -144,7 +176,9 @@ Orca, PowerShell, ChatGPT App, and Claude Code desktop are the first stabilizati
 | PowerShell | Select an existing classic PowerShell console window in Connect; return to that exact window. | Windows Terminal/Orca/VS Code pseudoconsole tabs and ambiguous nested shells are excluded. A window connection does not identify the conversation inside it. |
 | ChatGPT / Claude Code desktop window | Select an existing app window in Connect; return to it and choose the conversation in the app. | Window return only; no automatic Claude conversation route is claimed. |
 
-Window connections verify the window handle, process identity, executable, and process start time again before returning. Reconnect after the app or console restarts. An expired saved connection reports an error. ChatGPT link behavior follows the [official deep-link documentation](https://learn.chatgpt.com/docs/reference/commands#deep-links); Claude's documented desktop workflow is [sidebar session selection](https://code.claude.com/docs/en/desktop). Actual link dispatch and all four targets' live return flows remain release validation items.
+Window connections verify the window handle, process identity, executable, and process start time again before returning. Reconnect after the app or console restarts. An expired saved connection reports an error. ChatGPT link behavior follows the [official deep-link documentation](https://learn.chatgpt.com/docs/reference/commands#deep-links); Claude's documented desktop workflow is [sidebar session selection](https://code.claude.com/docs/en/desktop). A saved ChatGPT link was verified against actual app navigation; the full physical-click connection flow, foreground focus and all four targets' complete walkthroughs remain validation items. See [VALIDATION.md](VALIDATION.md) for the precise evidence.
+
+Orca return requires its installed CLI on the app's PATH, or an executable path in `ORCA_CLI_COMMAND`, as well as a current hook mapping. Collecting a log by itself does not establish a window connection.
 
 ## Troubleshooting missing sessions
 
@@ -156,7 +190,7 @@ Default sources are `~/.claude/projects`, `~/.codex/sessions`, and `~/.copilot/s
 
 Orca SSH conversations are also collected from its local `%APPDATA%/orca/agent-hooks/last-status.json` mirror (`ORCA_USER_DATA_PATH` overrides the Orca folder). Version 2 records must match the current pane's launch authority. Available prompts, models, answers, and hook events appear alongside local sessions; remote paths are never opened as local files. `waid doctor` reports this source separately. The mirror contains the latest session per pane, not full remote history: sessions observed during a running waid process are retained until it exits, but overwritten records cannot be recovered after restart. Identical repeated requests are distinguishable only when their submit event is observed. SSH session return is still unsupported.
 
-On Windows, the app enumerates process names and PIDs and reads command-line arguments only for known executables and interpreters. It does not query working directories, so it cannot reliably associate processes with individual logs. Read permissions, unsupported formats, or very large logs may cause missing entries. Source-specific warnings appear in `waid doctor`, in a bounded optional `warnings` array in JSON output, and in the app.
+On Windows, the app enumerates process names and PIDs and reads command-line arguments only for known executables and interpreters. It does not query working directories, so it cannot reliably associate processes with individual logs. Read permissions, unsupported formats, or very large logs may cause missing entries. JSONL reads are bounded to a 128 KiB head and 256 KiB tail, with cached incremental observations; individual JSON files are limited to 4 MiB. A date-unlimited collection is not a complete transcript archive. Source-specific warnings appear in `waid doctor`, in a bounded optional `warnings` array in JSON output, and in the app.
 
 ## Agent support
 
@@ -198,7 +232,11 @@ waid --html --watch   Local HTML dashboard
 waid doctor           Diagnose paths, adapters, and processes
 ```
 
-[CLI extensions](CLI.md) · [User templates](TEMPLATES.md) · [Validation record](VALIDATION.md) · [Product scope](PRODUCT.md) · [Design decisions](DECISIONS.md)
+The HTML watch dashboard defaults to `http://127.0.0.1:7423`; `--port 0` chooses a free port. `--interval SEC` changes CLI polling (minimum one second). Use `--help` for all flags, `--eject` for the bundled HTML template and `--keys` for template fields. CLI themes and adapters live under `~/.config/waid/` (or `XDG_CONFIG_HOME/waid`); they are separate from native desktop JSON templates and settings. Task labels from process environment variables depend on `/proc` access and are not available from Windows process enumeration.
+
+[CLI extensions](CLI.md) · [User templates](TEMPLATES.md) · [Validation record](VALIDATION.md) · [Product scope](PRODUCT.md) · [Design decisions](DECISIONS.md) · [Development history](HISTORY.md)
+
+[Development history](HISTORY.md) records each project request, resulting changes, checks, and remaining work in Korean. The repository's [agent instructions](AGENTS.md) require an update for each project-related request; this is an agent-maintained work log, not an automatic capture of conversations.
 
 ## Contributors and AI assistance
 
