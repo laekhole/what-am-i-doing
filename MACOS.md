@@ -41,7 +41,7 @@ Finder launches do not inherit your interactive shell profile. Default log direc
 | Windows saved window / standalone Terminal / iTerm / Claude desktop | No Mac window identity or conversation-return implementation. Windows window associations report a platform error; unconnected rows try only exact Orca mapping. | These targets are not claimed as supported Mac return paths. |
 | SSH session | Collected from the local Orca mirror when available; no SSH return or prompt delivery. | Remote control is outside v0.3.0. |
 
-`ORCA_CLI_COMMAND` can select an absolute Orca executable path. Without it, the app uses `orca` on its inherited PATH. No shell is used to interpret session identifiers or links. See the [documented ChatGPT route](https://learn.chatgpt.com/docs/reference/commands#deep-links). Missing, ended, stale and ambiguous Orca mappings show an explanation and preserve the session details.
+`ORCA_CLI_COMMAND` can select an absolute Orca executable path, including a development CLI. Without it, the app uses `orca` on its inherited PATH, extended for that subprocess with `/usr/local/bin`, `/opt/homebrew/bin` and `~/.local/bin` for Finder launches. It does not retry a failed call against a different Orca build. No shell is used to interpret session identifiers or links. See the [documented ChatGPT route](https://learn.chatgpt.com/docs/reference/commands#deep-links). Missing, ended, stale and ambiguous Orca mappings show an explanation and preserve the session details.
 
 ## Required release walkthrough
 

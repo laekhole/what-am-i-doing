@@ -47,7 +47,7 @@ jobs:
           export CODEX_HOME="$RUNNER_TEMP/waid-fixture"
           export WAID_SMOKE_SCREENSHOT="$RUNNER_TEMP/waid-smoke.png"
           mkdir -p "$CODEX_HOME/sessions"
-          printf '%s\n' '{"type":"session_meta","payload":{"id":"mac-smoke","cwd":"/tmp/Mac project"}}' '{"type":"event_msg","payload":{"type":"user_message","message":"Mac fixture — 한글 prompt\nSecond line"}}' > "$CODEX_HOME/sessions/smoke.jsonl"
+          printf '%s\n' '{"type":"session_meta","payload":{"id":"mac-smoke","cwd":"/tmp/Mac project"}}' '{"type":"response_item","payload":{"type":"message","role":"user","content":"Mac fixture — 한글 prompt\nSecond line"}}' > "$CODEX_HOME/sessions/smoke.jsonl"
           desktop/target/macos-bundle/waid.app/Contents/MacOS/waid --macos-smoke
           desktop/target/macos-bundle/waid.app/Contents/MacOS/waid --macos-smoke
       - name: Upload development app (not a release)

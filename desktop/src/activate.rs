@@ -32,6 +32,19 @@ fn cli(args: &[&str]) -> Option<Value> {
     let exe = std::env::var_os("ORCA_CLI_COMMAND").unwrap_or_else(|| "orca".into());
     let mut command = Command::new(exe);
     command.args(args);
+    #[cfg(target_os = "macos")]
+    {
+        // Finder's PATH omits common CLI installs. Extend only this subprocess;
+        // preserve explicit/inherited command precedence and never try another
+        // Orca build after a command fails.
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths: Vec<_> = std::env::split_paths(&inherited).collect();
+        paths.extend(["/usr/local/bin", "/opt/homebrew/bin"].map(std::path::PathBuf::from));
+        if let Some(home) = std::env::var_os("HOME") {
+            paths.push(std::path::PathBuf::from(home).join(".local/bin"));
+        }
+        command.env("PATH", std::env::join_paths(paths).ok()?);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
