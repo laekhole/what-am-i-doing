@@ -380,6 +380,14 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
         }
         check(window.isVisible && table.numberOfColumns == 1 && statusItem.menu!.items.count == 2)
         let rowID = rows[0]["id"] as! String
+        if CommandLine.arguments.contains("--macos-smoke-restart") {
+            check(rows[0]["pinned"] as? Bool == true)
+            check(abs(window.alphaValue - 0.75) < 0.01)
+            check(view["template"] as? String == midnight)
+            request("pin", id: rowID)
+            request("opacity", value: "100")
+            request("template", value: daylight)
+        }
         table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         check(detail.string.contains("Mac fixture"))
         clicked(buttons["copy"]!)
@@ -416,6 +424,9 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
         showWindow(); check(window.isVisible)
         showEditor(); check(editorWindow!.isVisible && !editor.string.isEmpty)
         editorWindow!.performClose(nil); check(!editorWindow!.isVisible)
+        request("pin", id: rowID)
+        request("opacity", value: "75")
+        request("template", value: midnight)
         print("AppKit smoke passed: fixture collection, selection, clipboard, pin/dismiss/restore, window, menu bar, settings, template editor, hide/reopen")
         quit()
     }
