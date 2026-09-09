@@ -30,11 +30,11 @@
 ### 2026-09-09 13:14 +09:00 — 기능 검토와 v0.2.0 문서·릴리스 정리
 
 - 요청: 현재 프로젝트 기능을 전체 검토하고 핵심 기능·편의사항·주의사항을 두 README와 버전에 맞는 릴리스에 반영한 뒤 커밋·푸시하기.
-- 상태: 부분 완료 — 문서 작성·로컬 문서 검증 완료, 커밋·푸시·태그 릴리스 진행 예정.
+- 상태: 완료 — 문서 작성·커밋·main/태그 푸시·v0.2.0 게시·다운로드 검증 완료.
 - 변경·이유: 수집·상태·정리·컨텍스트·세션 복귀·템플릿·CLI·배포 흐름을 코드와 대조했다. 두 README 앞부분에 기능표와 주의사항을 추가하고 업그레이드·지원 범위·실제 검증 근거를 정리했다. 현재 두 패키지 버전 0.2.0에 맞춘 한·영 릴리스 노트를 추가하고 태그 워크플로가 해당 파일을 본문으로 사용하게 했다. 과거 ZIP·최소화 설명을 바로잡고 Mac 컨텍스트 목록·상세 연결의 남은 한계를 기록했다. 함께 도입된 기존 개발 이력과 작업 규칙은 보존했다.
-- 관련 파일: [README.md](README.md), [README.ko.md](README.ko.md), [releases/v0.2.0.md](releases/v0.2.0.md), [릴리스 워크플로](.github/workflows/release.yml), [PRODUCT.md](PRODUCT.md), [MACOS.md](MACOS.md), [VALIDATION.md](VALIDATION.md), [HISTORY.md](HISTORY.md).
-- 검증: Markdown 7개·로컬/태그 링크 82개·이미지 경로·UTF-8·코드 블록·패키지/lock 버전 일치 검사, PowerShell 9개 블록 구문·릴리스 노트 경로 확인, actionlint와 `git diff --check` 통과. 코드 47f4317의 기존 Windows 130개·Mac 아키텍처별 121개 및 AppKit 스모크·재시작 CI 성공을 로그에서 확인했다. 앱 소스는 변경하지 않았으며 상세 근거는 [검증 기록](VALIDATION.md)에 있다.
-- 남은 일: 커밋·main/태그 푸시, 태그 릴리스 빌드·서명·게시 확인. Mac 실기기·접근성·혼합 DPI·장시간 실사용과 일부 연결 UI 검증은 기존 미검증 범위로 남긴다.
+- 관련 파일: [README.md](README.md), [README.ko.md](README.ko.md), [releases/v0.2.0.md](releases/v0.2.0.md), [릴리스 워크플로](.github/workflows/release.yml), [PRODUCT.md](PRODUCT.md), [MACOS.md](MACOS.md), [VALIDATION.md](VALIDATION.md), [HISTORY.md](HISTORY.md). 릴리스 커밋: `94bf72f`, 태그: `v0.2.0`.
+- 검증: Markdown 7개·로컬/태그 링크·이미지 경로·UTF-8·코드 블록·패키지/lock 버전 일치 검사, PowerShell 9개 블록 구문·릴리스 노트 경로 확인, actionlint와 `git diff --check` 통과. 릴리스 커밋의 Windows·Mac CI 및 Windows 태그 배포가 모두 성공했다. 태그 배포는 Windows 130개 검사 후 EXE·체크섬·Sigstore 번들을 게시했다. 게시 본문과 커밋한 한·영 노트가 줄바꿈 정규화 후 일치하고, 내려받은 EXE의 SHA-256·GitHub 자산 다이제스트·태그 워크플로 Sigstore 신원·내장 코어 버전 0.2.0을 직접 확인했다. 앱 소스는 변경하지 않았으며 실행 링크와 상세 근거는 [검증 기록](VALIDATION.md)에 있다.
+- 남은 일: 이번 문서·릴리스 요청은 없음. Mac 실기기·컨텍스트 표시 연결·접근성·혼합 DPI·장시간 실사용과 일부 연결 UI 검증은 후속 제품 작업으로 남긴다.
 
 ### 2026-09-09 13:04 +09:00 — 요청별 개선 히스토리 도입
 

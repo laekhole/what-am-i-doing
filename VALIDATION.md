@@ -7,7 +7,10 @@
 - 같은 코드의 [macOS CI](https://github.com/laekhole/what-am-i-doing/actions/runs/34308905356)는 Apple Silicon·Intel 각각 **121개**(코어 90, CLI 6, 데스크톱 24, 단일 실행 파일 1) 통과, 실제 Orca 환경 검사 각 1개 ignored입니다. 양쪽 AppKit 스모크·재시작 검사와 개발 패키징도 통과했습니다.
 - 이번 검토에서는 새 실세션 조작·수 시간 사용·스크린리더·혼합 DPI·깨끗한 Mac 설치 검사를 수행하지 않았습니다. 기존 ChatGPT 저장 링크 이동 확인은 전체 연결 UI·포커스 검증 완료로 확대하지 않습니다. 아래 날짜별 기록과 [Mac 출시 확인 목록](MACOS.md)의 남은 항목은 유지합니다.
 - Mac 컨텍스트 표시를 코드로 추적한 결과 상세 요약은 포함되지만 목록 `lines`에 컨텍스트 문자열이 없어 Swift의 강조 처리가 표시할 범위를 찾지 못합니다. Windows의 토큰·한도·측정 시각 상세 블록도 Mac에는 연결되지 않았습니다. 이 한계는 [MACOS.md](MACOS.md)에 기록했으며 이번 Windows 릴리스 문서 작업에서 앱 코드는 수정하지 않았습니다.
-- 로컬 문서 검증: Markdown 7개·로컬/태그 링크 82개·이미지 경로·UTF-8·코드 블록·두 패키지와 lock 버전 일치, README/릴리스 PowerShell 9개 블록 구문과 실제 노트 경로 계산, actionlint 및 `git diff --check` 통과. 릴리스 워크플로는 자동 커밋 목록 대신 버전별 한·영 노트 파일을 사용합니다.
+- 로컬 문서 검증: Markdown 7개·로컬/태그 링크·이미지 경로·UTF-8·코드 블록·두 패키지와 lock 버전 일치, README/릴리스 PowerShell 9개 블록 구문과 실제 노트 경로 계산, actionlint 및 `git diff --check` 통과. 릴리스 워크플로는 자동 커밋 목록 대신 버전별 한·영 노트 파일을 사용합니다.
+- 릴리스 커밋 `94bf72f`와 `v0.2.0` 태그를 함께 푸시했습니다. 해당 커밋의 [Windows 검사](https://github.com/laekhole/what-am-i-doing/actions/runs/34310231306), [Mac 양쪽 아키텍처 검사](https://github.com/laekhole/what-am-i-doing/actions/runs/34310231349), [Windows 릴리스](https://github.com/laekhole/what-am-i-doing/actions/runs/34310231143)가 모두 성공했습니다. 태그 릴리스 로그에서 Windows 130개 통과·환경 의존 3개 ignored와 Sigstore 서명 검증 성공을 재확인했습니다.
+- [게시된 v0.2.0](https://github.com/laekhole/what-am-i-doing/releases/tag/v0.2.0)은 EXE·체크섬·Sigstore 번들 세 파일을 포함합니다. 본문은 `releases/v0.2.0.md`와 줄바꿈 정규화 후 일치합니다. 세 파일을 다시 내려받아 체크섬과 GitHub 자산 다이제스트를 비교하고 Cosign 3.1.3으로 이 저장소의 `release.yml@refs/tags/v0.2.0` 서명 신원을 검증했습니다(`Verified OK`). 내장 수집기의 `--waid-core --version`도 `waid 0.2.0`을 반환했습니다.
+- 게시 EXE SHA-256: `8f03aa4d20862dc903325dc1915362a6abd4b4a27c0259048c9d51c1e9d9b4af`. 이는 배포 파일의 무결성·출처 확인이며 Authenticode 또는 남은 수동 사용성 검증을 대신하지 않습니다.
 
 이번 변경의 기록입니다. DECISIONS.md에 남아 있는 이전 설치본·UI 측정과 구분합니다. **전체 완료 기준은 아직 미충족**이며 아래 직접 화면 검증이 남았습니다.
 
