@@ -143,7 +143,6 @@ impl App {
                 if skin.fields.iter().any(|f| f == "model") { lines.push(row.model.clone()); }
             }
             json!({"id":row.id,"lines":lines,"status":skin.text(row,"status",pinned),
-                "context_summary":row.context_summary(),"context_highlighted":row.context_highlighted(),
                 "state":row.state,"model":row.model,"prompt":row.task,
                 "detail":format!("{}\n\nPrompt\n{}\n\nLast answer\n{}\n\nFirst prompt\n{}\n\nFolder\n{}\n\nLast record (UTC)\n{}\n\n{}",row.accessible_text(),row.task,row.last_answer,row.summary,row.cwd,row.since,row.status_context()),
                 "pinned":pinned,"hidden":self.settings.hidden.contains(&row.id),

@@ -267,14 +267,6 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
         if statusRange.location != NSNotFound {
             styled.addAttribute(.foregroundColor, value: color(stateColors[item["state"] as? String ?? "unknown"] ?? "#44536A"), range: statusRange)
         }
-        if item["context_highlighted"] as? Bool == true, let summary = item["context_summary"] as? String {
-            let range = (text.stringValue as NSString).range(of: summary, options: .backwards)
-            if range.location != NSNotFound {
-                styled.addAttributes([.foregroundColor: color(colors["accent"] ?? "#3155C6"),
-                    .backgroundColor: color(colors["selection"] ?? "#EDF3FF"),
-                    .font: NSFont.boldSystemFont(ofSize: text.font!.pointSize)], range: range)
-            }
-        }
         text.attributedStringValue = styled
         let cell = NSTableCellView()
         text.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(text); cell.textField = text
