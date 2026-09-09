@@ -2,9 +2,44 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").unwrap() == "macos" {
+        build_macos();
+    }
     if std::env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {
         embed_icon();
     }
+}
+
+fn build_macos() {
+    println!("cargo:rerun-if-changed=src/macos/App.swift");
+    let out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    let resources = out.join("Resources.swift");
+    let mut source = String::new();
+    for (name, path) in [("daylight", "templates/daylight.json"), ("midnight", "templates/midnight.json"), ("fontLicense", "assets/fonts/LICENSE.txt")] {
+        println!("cargo:rerun-if-changed={path}");
+        let text = std::fs::read_to_string(path).unwrap();
+        source.push_str(&format!("let {name} = ###\"\"\"\n{text}\n\"\"\"###\n"));
+    }
+    std::fs::write(&resources, source).unwrap();
+    let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap().as_str() {
+        "aarch64" => "arm64", "x86_64" => "x86_64", other => panic!("unsupported Mac architecture: {other}"),
+    };
+    let status = Command::new("xcrun").args([
+        "swiftc", "-swift-version", "5", "-O", "-parse-as-library", "-emit-library", "-static",
+        "-module-name", "WaidApp", "-target", &format!("{arch}-apple-macosx13.0"),
+        "src/macos/App.swift", resources.to_str().unwrap(), "-o",
+    ]).arg(out.join("libWaidApp.a")).status().expect("Xcode command line tools (xcrun swiftc)");
+    assert!(status.success(), "AppKit shell compilation failed");
+    let swift = Command::new("xcrun").args(["--find", "swiftc"]).output().unwrap();
+    assert!(swift.status.success());
+    let compiler = PathBuf::from(String::from_utf8(swift.stdout).unwrap().trim());
+    let libraries = compiler.parent().unwrap().parent().unwrap().join("lib/swift/macosx");
+    println!("cargo:rustc-link-search=native={}", out.display());
+    println!("cargo:rustc-link-search=native={}", libraries.display());
+    println!("cargo:rustc-link-lib=static=WaidApp");
+    println!("cargo:rustc-link-lib=framework=AppKit");
+    println!("cargo:rustc-link-lib=framework=Foundation");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
 }
 
 fn embed_icon() {

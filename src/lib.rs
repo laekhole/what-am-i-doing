@@ -9,6 +9,7 @@ mod html;
 mod json;
 mod matchers;
 mod orca;
+pub use orca::path as orca_hook_path;
 mod proc;
 mod render;
 mod serve;

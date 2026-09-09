@@ -9,25 +9,25 @@
 
 Korean version: [README.ko.md](README.ko.md).
 
-A Windows app that shows the **current task, project, agent/model, and last observed status** of multiple coding AI sessions in one place. It only reads coding-agent logs (see [Agent support](#agent-support) for which sources are validated); it does not send commands to agents. This is a development build. See the [validation record](VALIDATION.md) for verified behavior and outstanding checks.
+A native desktop app that shows the **current task, project, agent/model, and last observed status** of multiple coding AI sessions in one place. It only reads coding-agent logs (see [Agent support](#agent-support) for which sources are validated); it does not send commands to agents. This is a development build. See the [validation record](VALIDATION.md) for verified behavior and outstanding checks.
 
 ## Version roadmap
 
 | Version | Milestone | Status |
 |---|---|---|
 | v0.2.0 | Windows support | Usable on Windows; stabilization continues. |
-| v0.3.0 | Add macOS support, including MacBook and desktop Macs | In development; native Mac UI not yet implemented |
+| v0.3.0 | Add macOS support, including MacBook and desktop Macs | Native AppKit app in development; real-Mac release validation pending |
 | v0.4.0 | Add Android support and waidaway LAN access | Planned |
 | v0.5.0 | Add iOS and iPadOS support for iPhone and iPad | Planned |
 | v1.0.0 | Complete stabilization of the supported platforms and core workflows | Future stable release |
 
 These are project milestones. macOS support does not include iPhone or iPad. Mobile support is intended to show coding-agent session activity collected on a PC or Mac; the connection design remains to be implemented. Platform additions do not by themselves mean stabilization is complete: v1.0.0 follows compatibility, reliability, and real-use validation across the supported platforms.
 
-The v0.3.0 release goal is the core Windows session-management experience on Mac: collect real sessions, organize them, preserve settings across restarts, and return to supported sessions from a native app. Collector and shared desktop tests run on Apple Silicon and Intel in the [macOS checks workflow](.github/workflows/macos.yml); passing them alone does not validate the Mac UI, installation, signing, or real-agent workflows. The minimum supported macOS version remains to be established through release validation.
+The v0.3.0 release goal is the core Windows session-management experience on Mac: collect real sessions, organize them, preserve settings across restarts, and return to supported sessions from a native app. Collector and shared desktop tests run on Apple Silicon and Intel in the [macOS checks workflow](.github/workflows/macos.yml); passing them alone does not validate the Mac UI, installation, signing, or real-agent workflows. The build deployment target is macOS 13.0; the oldest supported version still requires real-device validation.
 
 The proposed v0.4.0 waidaway scope is session viewing and user-requested prompt delivery to supported sessions over the same LAN (wired or Wi-Fi), starting with a mobile browser client. The waid collector stays read-only; a separate delivery path must verify the destination session. Pairing, authentication, encryption, device revocation, and duplicate-send protection are required before shipping remote input. Remote access will default to off; internet relay service is a later scope. These capabilities are not implemented yet.
 
-For macOS development, run `cargo test --release --locked` for the collector and `cargo build --manifest-path desktop/Cargo.toml --release --locked` followed by `cargo test --manifest-path desktop/Cargo.toml --release --locked` for shared desktop logic. The CLI can be run with `cargo run --release --locked -- --json --history`; the desktop executable currently has no Mac UI. Mac settings use `~/Library/Application Support/waid/settings.json`, and Orca hook discovery uses `~/Library/Application Support/orca/agent-hooks/last-status.json`. `WAID_DATA_DIR` and `ORCA_USER_DATA_PATH` override their respective folders.
+For macOS development and installation, see [the Mac guide](MACOS.md). The native AppKit app calls the same Rust collector, state tracking, search/filter, pin, exclusion/restore and template logic as Windows. Mac settings use `~/Library/Application Support/waid/settings.json`, and Orca hook discovery uses `~/Library/Application Support/orca/agent-hooks/last-status.json`. `WAID_DATA_DIR` and `ORCA_USER_DATA_PATH` override their respective folders. Native builds and automated smoke checks do not establish that installation or real-session return works on a user's Mac.
 
 ## Download and verify a release
 
@@ -82,6 +82,8 @@ For the GNU target, add `--target x86_64-pc-windows-gnu` to the core and desktop
 `waid-desktop.exe` runs on its own. It starts a second instance of itself in internal collector mode and only terminates that child when exiting. No companion executable is extracted or required. The independent `waid.exe` CLI remains available for terminal use; building the desktop also compiles the shared core directly. View the embedded font license through **Font license (폰트 라이선스)** in the tray menu, which opens a text copy in the app data folder.
 
 ## Using the app
+
+The controls below describe Windows. See [Mac controls and current limits](MACOS.md) for the AppKit interface.
 
 The default window is **600×780 logical pixels**, with expandable session cards in one column and an optional two-column view. Each card shows the project, latest request, status badge, and model beneath the status. Bundled Pretendard SemiBold body text and Bold headings keep text clear. The waid logo appears at the top, and harness logos appear on cards. Drag the title area to move the window and its edges to resize it.
 

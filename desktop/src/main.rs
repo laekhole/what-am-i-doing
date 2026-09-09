@@ -15,8 +15,10 @@ mod ui;
 #[allow(dead_code)]
 #[path = "../../src/time.rs"]
 mod time;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod activate;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod visual;
 
@@ -242,7 +244,7 @@ fn start_core(exe: &Path) -> io::Result<(Core, Updates)> {
         loop {
             let (message, ended) = match read_snapshot(&mut reader) {
                 Ok(SnapshotRead::Data(mut snapshot)) => {
-                    #[cfg(windows)]
+                    #[cfg(any(windows, target_os = "macos"))]
                     activate::identify_hosts(&mut snapshot.rows);
                     activity.apply(&mut snapshot.rows);
                     (Ok(snapshot), false)
@@ -371,7 +373,9 @@ fn main() {
     }
     #[cfg(windows)]
     run_desktop();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    macos::run();
+    #[cfg(not(any(windows, target_os = "macos")))]
     eprintln!("이 네이티브 껍데기는 현재 Windows용입니다. 다른 OS에서는 waid 코어를 사용하세요.");
 }
 

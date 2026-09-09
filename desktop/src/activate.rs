@@ -1,13 +1,13 @@
 //! Exact Orca / user-associated ChatGPT links; explicitly manual window returns.
+#[cfg(windows)]
 mod windows;
+#[cfg(windows)]
 pub use windows::{open_window, probe_requested, windows};
 use crate::Row;
 use serde_json::Value;
 use std::{
     fs::File,
     io::Read,
-    os::windows::process::CommandExt,
-    path::PathBuf,
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
@@ -23,19 +23,20 @@ fn read_json(reader: impl Read) -> Option<Value> {
 }
 
 fn hooks() -> Option<Value> {
-    let root = std::env::var_os("ORCA_USER_DATA_PATH")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("APPDATA").map(|p| PathBuf::from(p).join("orca")))?;
-    // ponytail: Orca 1.4 hook snapshot is read-only and version-gated; replace with
-    // public session metadata when terminal list exposes provider session IDs.
-    let value = read_json(File::open(root.join("agent-hooks/last-status.json")).ok()?)?;
+    // Read the same platform-specific hook source as the collector.
+    let value = read_json(File::open(waid::orca_hook_path()?).ok()?)?;
     (value["version"] == 2).then_some(value)
 }
 
 fn cli(args: &[&str]) -> Option<Value> {
     let exe = std::env::var_os("ORCA_CLI_COMMAND").unwrap_or_else(|| "orca".into());
     let mut command = Command::new(exe);
-    command.args(args).creation_flags(0x08000000); // CREATE_NO_WINDOW
+    command.args(args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
     command_json(command)
 }
 
@@ -166,6 +167,7 @@ pub fn validate_chatgpt_link(row: &Row, link: &str) -> Result<(), String> {
 /// The user must associate a copied link first: Codex CLI logs alone do not prove
 /// that this session belongs to ChatGPT. Shell success means dispatched, not that
 /// the app confirmed the conversation is present.
+#[cfg(windows)]
 pub fn open_chatgpt_link(row: &Row, link: &str) -> Result<(), String> {
     validate_chatgpt_link(row, link)?;
     let wide: Vec<u16> = link.encode_utf16().chain(Some(0)).collect();
@@ -181,6 +183,7 @@ pub fn open_chatgpt_link(row: &Row, link: &str) -> Result<(), String> {
     } else { Ok(()) }
 }
 
+#[cfg(windows)]
 pub fn open_associated(row: &Row, target: &Value) -> Result<String, String> {
     if row.state == "done" {
         return Err("현재 세션에 연결된 창이나 링크가 필요합니다.".into());
@@ -233,6 +236,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn manual_window_return_does_not_require_a_provider_session_id() {
         let row = Row { id: "process-only-row".into(), ..Row::default() };
         let stale = json!({"kind":"chatgpt","hwnd":0});
@@ -289,4 +293,16 @@ mod tests {
         assert_eq!(target(&row, &hooks, &ambiguous), None);
         assert_eq!(target(&Row { state: "done".into(), ..row }, &hooks, &live), None);
     }
+}
+
+#[cfg(target_os = "macos")]
+pub fn open_associated(row: &Row, target: &Value) -> Result<String, String> {
+    if target["kind"] != "chatgpt_link" {
+        return Err("This saved window connection belongs to Windows. Connect a copied ChatGPT link or use a current local Orca session.".into());
+    }
+    let link = target["url"].as_str().ok_or("Missing ChatGPT link")?;
+    validate_chatgpt_link(row, link)?;
+    let status = Command::new("/usr/bin/open").arg(link).status().map_err(|e| e.to_string())?;
+    if !status.success() { return Err("macOS could not dispatch the ChatGPT link. Check that the app is installed.".into()); }
+    Ok("Link dispatched. Verify the conversation in ChatGPT.".into())
 }
