@@ -12,6 +12,14 @@ app="$output/waid.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp desktop/target/release/waid-desktop "$app/Contents/MacOS/waid"
 cp desktop/assets/fonts/LICENSE.txt "$app/Contents/Resources/FONT-LICENSE.txt"
+iconset="$output/waid.iconset"
+mkdir "$iconset"
+for size in 16 32 128 256 512; do
+    sips -z "$size" "$size" assets/waid-app-icon.png --out "$iconset/icon_${size}x${size}.png" >/dev/null
+    doubled=$((size * 2))
+    sips -z "$doubled" "$doubled" assets/waid-app-icon.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "$iconset" -o "$app/Contents/Resources/waid.icns"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -21,6 +29,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>waid</string>
 <key>CFBundleDisplayName</key><string>waid</string>
 <key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleIconFile</key><string>waid</string>
 <key>CFBundleShortVersionString</key><string>0.3.0</string>
 <key>CFBundleVersion</key><string>0.3.0</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>

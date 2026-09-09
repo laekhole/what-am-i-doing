@@ -359,24 +359,28 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
         }
     }
     func smoke() {
+        func check(_ value: Bool, _ message: String = "", line: UInt = #line) {
+            if !value { FileHandle.standardError.write(Data("AppKit smoke failed at App.swift:\(line)\n".utf8)) }
+            precondition(value)
+        }
         request("poll")
         if rows.isEmpty {
             smokeAttempts += 1
-            precondition(smokeAttempts < 30, "Smoke collector did not deliver the fixture")
+            check(smokeAttempts < 30, "Smoke collector did not deliver the fixture")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.smoke() }
             return
         }
-        precondition(window.isVisible && table.numberOfColumns == 1 && statusItem.menu!.items.count == 2)
+        check(window.isVisible && table.numberOfColumns == 1 && statusItem.menu!.items.count == 2)
         let rowID = rows[0]["id"] as! String
         table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        precondition(detail.string.contains("Mac fixture"))
+        check(detail.string.contains("Mac fixture"))
         clicked(buttons["copy"]!)
-        precondition(NSPasteboard.general.string(forType: .string)?.contains("Mac fixture") == true)
-        request("pin", id: rowID); precondition(selected?["pinned"] as? Bool == true)
-        request("dismiss", id: rowID); precondition(rows.isEmpty)
-        request("all"); precondition(rows.count == 1 && rows[0]["dismissed"] as? Bool == true)
+        check(NSPasteboard.general.string(forType: .string)?.contains("Mac fixture") == true)
+        request("pin", id: rowID); check(selected?["pinned"] as? Bool == true)
+        request("dismiss", id: rowID); check(rows.isEmpty)
+        request("all"); check(rows.count == 1 && rows[0]["dismissed"] as? Bool == true)
         table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        request("dismiss", id: rowID); precondition(rows[0]["dismissed"] as? Bool == false)
+        request("dismiss", id: rowID); check(rows[0]["dismissed"] as? Bool == false)
         request("all"); request("pin", id: rowID)
         if let path = ProcessInfo.processInfo.environment["WAID_SMOKE_SCREENSHOT"] {
             window.contentView!.layoutSubtreeIfNeeded()
@@ -385,17 +389,20 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
             content.cacheDisplay(in: content.bounds, to: bitmap)
             try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: path))
         }
-        request("search", value: "mac smoke")
-        precondition(search.stringValue == "mac smoke")
-        request("search", value: "")
-        request("top"); precondition(window.level == .floating)
+        search.stringValue = "mac smoke"
+        controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: search))
+        check(search.stringValue == "mac smoke")
+        check(rows.isEmpty)
+        search.stringValue = ""
+        controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: search))
+        request("top"); check(window.level == .floating)
         request("top"); request("opacity", value: "75")
-        precondition(abs(window.alphaValue - 0.75) < 0.01)
+        check(abs(window.alphaValue - 0.75) < 0.01)
         request("opacity", value: "100")
-        window.performClose(nil); precondition(!window.isVisible)
-        showWindow(); precondition(window.isVisible)
-        showEditor(); precondition(editorWindow!.isVisible && !editor.string.isEmpty)
-        editorWindow!.performClose(nil); precondition(!editorWindow!.isVisible)
+        window.performClose(nil); check(!window.isVisible)
+        showWindow(); check(window.isVisible)
+        showEditor(); check(editorWindow!.isVisible && !editor.string.isEmpty)
+        editorWindow!.performClose(nil); check(!editorWindow!.isVisible)
         print("AppKit smoke passed: fixture collection, selection, clipboard, pin/dismiss/restore, window, menu bar, settings, template editor, hide/reopen")
         quit()
     }

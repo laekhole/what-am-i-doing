@@ -51,6 +51,7 @@ jobs:
           desktop/target/macos-bundle/waid.app/Contents/MacOS/waid --macos-smoke
           desktop/target/macos-bundle/waid.app/Contents/MacOS/waid --macos-smoke
       - name: Upload development app (not a release)
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: waid-${{ matrix.runner }}
