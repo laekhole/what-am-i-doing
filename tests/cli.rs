@@ -440,7 +440,12 @@ fn partial_json_collection_warns_preserves_rows_and_recovers() {
         "[adapter]\nname = \"fixture\"\ndisplay = \"Warning Fixture\"\nexec = [\"never-run-waid-fixture\"]\n[transcript]\njson_dir = \"{}\"\n",
         logs.to_string_lossy().replace('\\', "/")
     )).unwrap();
-    fs::write(logs.join("healthy.json"), r#"[{"role":"user","content":"healthy request","cwd":"file:///C:/%ED%95%9C%EA%B8%80/repo"}]"#).unwrap();
+    let (uri, cwd) = if cfg!(windows) {
+        ("file:///C:/%ED%95%9C%EA%B8%80/repo", "C:/한글/repo")
+    } else {
+        ("file:///Users/test/%ED%95%9C%EA%B8%80%20repo", "/Users/test/한글 repo")
+    };
+    fs::write(logs.join("healthy.json"), r#"[{"role":"user","content":"healthy request","cwd":"$URI"}]"#.replace("$URI", uri)).unwrap();
     let broken = logs.join("broken.json");
     fs::write(&broken, "{invalid-json\n").unwrap();
     fixture.child = Some(
@@ -488,7 +493,7 @@ fn partial_json_collection_warns_preserves_rows_and_recovers() {
     );
     assert_eq!(
         rows[0].get("cwd").and_then(json::Json::as_str),
-        Some("C:/한글/repo")
+        Some(cwd)
     );
     let warnings = first
         .get("warnings")

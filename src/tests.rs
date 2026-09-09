@@ -1409,7 +1409,7 @@ fn json_file_becomes_one_session() {
     std::fs::write(
         &path,
         r#"[
-          {"role":"user","content":"첫 요청","timestamp":1700000000000,"cwd":"D:/work"},
+          {"role":"user","content":"첫 요청","timestamp":1700000000000,"cwd":"/work"},
           {"role":"assistant","content":"작업 중","model":"claude-sonnet-5"},
           {"role":"user","content":"두 번째 요청","timestamp":1700000060000}
         ]"#,
@@ -1420,7 +1420,7 @@ fn json_file_becomes_one_session() {
     assert_eq!(t.first_prompt.as_deref(), Some("첫 요청"));
     assert_eq!(t.current_prompt.as_deref(), Some("두 번째 요청"));
     assert_eq!(t.model.as_deref(), Some("sonnet-5"));
-    assert_eq!(t.cwd, Some(std::path::PathBuf::from("D:/work")));
+    assert_eq!(t.cwd, Some(std::path::PathBuf::from("/work")));
     // 파일 이름이 고정된 형식은 상위 폴더가 세션 식별자다.
     assert_eq!(
         t.session_id.as_deref(),
@@ -1627,35 +1627,30 @@ fn json_without_a_user_request_is_not_a_session() {
 #[test]
 fn file_uri_becomes_a_local_path() {
     // 편집기 계열은 경로를 URI 로 저장한다.
-    assert_eq!(
-        crate::transcript::local_path("file:///d%3A/work/repo"),
-        Some(std::path::PathBuf::from("d:/work/repo"))
-    );
-    assert_eq!(
-        crate::transcript::local_path("D:\\work"),
-        Some(std::path::PathBuf::from("D:\\work"))
-    );
-    assert_eq!(
-        crate::transcript::local_path("file:///D:/작업/프로젝트"),
-        Some(std::path::PathBuf::from("D:/작업/프로젝트"))
-    );
+    // URI paths are decoded using the host OS, not assumed to be Windows drives.
+    for (uri, windows, unix) in [
+        ("file:///d%3A/work/repo", Some("d:/work/repo"), Some("/d:/work/repo")),
+        ("D:\\work", Some("D:\\work"), None),
+        ("file:///D:/작업/프로젝트", Some("D:/작업/프로젝트"), Some("/D:/작업/프로젝트")),
+        ("file:///D:/%EC%9E%91%EC%97%85/%ED%94%84%EB%A1%9C%EC%A0%9D%ED%8A%B8",
+            Some("D:/작업/프로젝트"), Some("/D:/작업/프로젝트")),
+        ("file://server/share/%EC%9E%91%EC%97%85", Some(r"\\server\share\작업"), Some("//server/share/작업")),
+        ("file://localhost/D:/work", Some("D:/work"), Some("/D:/work")),
+    ] {
+        assert_eq!(crate::transcript::local_path(uri),
+            (if cfg!(windows) { windows } else { unix }).map(std::path::PathBuf::from), "{uri}");
+    }
     assert_eq!(
         crate::transcript::local_path("file:///home/작업"),
         Some(std::path::PathBuf::from("/home/작업"))
     );
     assert_eq!(
-        crate::transcript::local_path(
-            "file:///D:/%EC%9E%91%EC%97%85/%ED%94%84%EB%A1%9C%EC%A0%9D%ED%8A%B8"
-        ),
-        Some(std::path::PathBuf::from("D:/작업/프로젝트"))
+        crate::transcript::local_path("file:///Users/test/%ED%95%9C%EA%B8%80%20project"),
+        Some(std::path::PathBuf::from("/Users/test/한글 project"))
     );
     assert_eq!(
-        crate::transcript::local_path("file://server/share/%EC%9E%91%EC%97%85"),
-        Some(std::path::PathBuf::from(r"\\server\share\작업"))
-    );
-    assert_eq!(
-        crate::transcript::local_path("file://localhost/D:/work"),
-        Some(std::path::PathBuf::from("D:/work"))
+        crate::transcript::local_path("file://localhost/Users/test/My%20Project"),
+        Some(std::path::PathBuf::from("/Users/test/My Project"))
     );
     assert_eq!(crate::transcript::local_path("file:///D:/bad%ZZ"), None);
     assert_eq!(crate::transcript::local_path("file:///D:/bad%E9"), None);
