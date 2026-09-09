@@ -58,6 +58,6 @@ jobs:
           path: |
             desktop/target/macos-bundle/*.zip
             desktop/target/macos-bundle/SHA256SUMS.txt
-            ${{ runner.temp }}/waid-smoke.png
+            ${{ runner.temp }}/waid-smoke*.png
           if-no-files-found: error
           retention-days: 7

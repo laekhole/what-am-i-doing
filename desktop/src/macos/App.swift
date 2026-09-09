@@ -19,6 +19,7 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
     let status = NSPopUpButton()
     let agent = NSPopUpButton()
     let table = NSTableView()
+    let split = NSSplitView()
     let detail = NSTextView()
     let notice = NSTextField(wrappingLabelWithString: "Collecting sessions…")
     let opacity = NSSlider(value: 100, minValue: 40, maxValue: 100, target: nil, action: nil)
@@ -66,6 +67,7 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
     func stack(_ views: [NSView], vertical: Bool = false) -> NSStackView {
         let result = NSStackView(views: views)
         result.orientation = vertical ? .vertical : .horizontal
+        result.distribution = .fill
         result.alignment = vertical ? .leading : .centerY
         result.spacing = 8
         return result
@@ -124,8 +126,8 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
         let detailScroll = scroll(detail)
         listScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
         detailScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
-        let split = NSSplitView()
         split.isVertical = false; split.dividerStyle = .thin
+        split.setContentHuggingPriority(.defaultLow, for: .vertical)
         split.addArrangedSubview(listScroll); split.addArrangedSubview(detailScroll)
         split.setHoldingPriority(.defaultLow, forSubviewAt: 0)
         split.setHoldingPriority(.defaultLow, forSubviewAt: 1)
@@ -207,6 +209,11 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
         skin = view["skin"] as? [String: Any] ?? [:]
         let colors = skin["colors"] as? [String: String] ?? [:]
         window.backgroundColor = color(colors["background"] ?? "#FFFFFF")
+        window.contentView!.wantsLayer = true
+        window.contentView!.layer!.backgroundColor = window.backgroundColor.cgColor
+        let background = window.backgroundColor.usingColorSpace(.sRGB)!
+        let brightness = (background.redComponent + background.greenComponent + background.blueComponent) / 3
+        window.appearance = NSAppearance(named: brightness < 0.5 ? .darkAqua : .aqua)
         table.backgroundColor = color(colors["surface"] ?? "#FFFFFF")
         detail.backgroundColor = table.backgroundColor
         detail.textColor = color(colors["text"] ?? "#101B38")
@@ -253,11 +260,20 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
         let styled = NSMutableAttributedString(string: text.stringValue)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = CGFloat(skin["line_gap"] as? Int ?? 2)
+        paragraph.lineBreakMode = .byTruncatingTail
         styled.addAttributes([.font: text.font!, .foregroundColor: text.textColor!, .paragraphStyle: paragraph], range: NSRange(location: 0, length: styled.length))
         let stateColors = skin["state_colors"] as? [String: String] ?? [:]
         let statusRange = (text.stringValue as NSString).range(of: item["status"] as? String ?? "")
         if statusRange.location != NSNotFound {
             styled.addAttribute(.foregroundColor, value: color(stateColors[item["state"] as? String ?? "unknown"] ?? "#44536A"), range: statusRange)
+        }
+        if item["context_highlighted"] as? Bool == true, let summary = item["context_summary"] as? String {
+            let range = (text.stringValue as NSString).range(of: summary, options: .backwards)
+            if range.location != NSNotFound {
+                styled.addAttributes([.foregroundColor: color(colors["accent"] ?? "#3155C6"),
+                    .backgroundColor: color(colors["selection"] ?? "#EDF3FF"),
+                    .font: NSFont.boldSystemFont(ofSize: text.font!.pointSize)], range: range)
+            }
         }
         text.attributedStringValue = styled
         let cell = NSTableCellView()
@@ -383,11 +399,16 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
         request("dismiss", id: rowID); check(rows[0]["dismissed"] as? Bool == false)
         request("all"); request("pin", id: rowID)
         if let path = ProcessInfo.processInfo.environment["WAID_SMOKE_SCREENSHOT"] {
-            window.contentView!.layoutSubtreeIfNeeded()
-            let content = window.contentView!
-            let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds)!
-            content.cacheDisplay(in: content.bounds, to: bitmap)
-            try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: path))
+            for (file, template) in [(path, daylight), (path + "-night.png", midnight)] {
+                request("preview", value: template)
+                window.contentView!.layoutSubtreeIfNeeded()
+                check(split.frame.height > 400)
+                let content = window.contentView!
+                let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds)!
+                content.cacheDisplay(in: content.bounds, to: bitmap)
+                try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: file))
+            }
+            request("cancel_preview")
         }
         search.stringValue = "mac smoke"
         controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: search))
