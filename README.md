@@ -11,6 +11,18 @@ Korean version: [README.ko.md](README.ko.md).
 
 A Windows app that shows the **current task, project, agent/model, and last observed status** of multiple coding AI sessions in one place. It only reads coding-agent logs (see [Agent support](#agent-support) for which sources are validated); it does not send commands to agents. This is a development build. See the [validation record](VALIDATION.md) for verified behavior and outstanding checks.
 
+## Version roadmap
+
+| Version | Milestone | Status |
+|---|---|---|
+| v0.2.0 | Windows support | Released and usable on Windows; stabilization continues. |
+| v0.3.0 | Add macOS support, including MacBook and desktop Macs | Planned |
+| v0.4.0 | Add Android support | Planned |
+| v0.5.0 | Add iOS and iPadOS support for iPhone and iPad | Planned |
+| v1.0.0 | Complete stabilization of the supported platforms and core workflows | Future stable release |
+
+These are project milestones. macOS support does not include iPhone or iPad. Mobile support is intended to show coding-agent session activity collected on a PC or Mac; the connection design remains to be implemented. Platform additions do not by themselves mean stabilization is complete: v1.0.0 follows compatibility, reliability, and real-use validation across the supported platforms.
+
 ## Download and verify a release
 
 Download `waid-<tag>-windows-x64.exe` from [GitHub Releases](https://github.com/laekhole/what-am-i-doing/releases), verify it as described below, and double-click it. **One EXE is enough: no extraction, installer, Rust, Cargo, Node, or WebView2 is required.** The collector, fonts, and font license are built in. The other two release files are for verification; the app does not need them at runtime. Older ZIP releases still use the two-executable layout.
