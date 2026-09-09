@@ -167,11 +167,13 @@ impl Skin {
             if self.fields.iter().any(|f| f == "activity") {
                 lines.push(vec!["activity"]);
             }
+            lines.push(vec!["context"]);
             return lines;
         }
         self.fields
             .iter()
             .map(|field| vec![field.as_str()])
+            .chain(std::iter::once(vec!["context"]))
             .collect()
     }
     pub fn text(&self, row: &Row, field: &str, pinned: bool) -> String {
@@ -181,6 +183,7 @@ impl Skin {
             "agent" if self.compact && row.agent == "Claude Code" => "Claude".into(),
             "agent" => row.agent.clone(),
             "model" => row.model.clone(),
+            "context" => row.context_summary(),
             "status" => format!(
                 "{} {}{}",
                 self.icons.get(&row.state).unwrap_or(&self.icons["unknown"]),
@@ -486,6 +489,56 @@ pub fn atomic_write(path: &Path, text: &str) -> io::Result<()> {
 mod tests {
     use super::*;
     #[test]
+    fn context_survives_snapshot_and_saved_rows_without_assessments() {
+        let source = json!({"schema":2,"sessions":[{"id":"context-test","context":{
+            "used_tokens":124000,"window_tokens":200000,"observed_at":1788915600,
+            "compaction_observed":true,"compacted_at":1788915540
+        }}]});
+        let row = crate::snapshot_rows(source.to_string().as_bytes()).unwrap().rows.remove(0);
+        assert_eq!(row.context_summary(), "컨텍스트 62.0% · 압축됨");
+        assert!(row.context_detail().contains("124,000 / 한도 200,000"));
+        assert!(row.context_detail().contains(&crate::time::to_iso8601(1788915600)));
+        assert!(row.accessible_text().contains("컨텍스트 62.0%"));
+        let restored = saved_row(&row_value(&row)).unwrap();
+        assert_eq!(restored.context, row.context);
+        let unknown = Row::default();
+        assert_eq!(unknown.context_summary(), "컨텍스트 미확인");
+        assert!(unknown.context_detail().contains("압축 (UTC)  기록 미확인"));
+        assert_eq!(saved_row(&json!({"id":"old"})).unwrap().context, unknown.context);
+        let invalid = crate::context_value(&json!({"used_tokens":-1,"window_tokens":0,"observed_at":i64::MAX}));
+        assert_eq!(invalid, waid::ContextUsage::default());
+        let mut zero = unknown.clone();
+        zero.context.used_tokens = Some(0);
+        zero.context.window_tokens = Some(200000);
+        assert_eq!(zero.context_summary(), "컨텍스트 0.0%");
+    }
+    #[test]
+    fn context_badges_include_the_quarter_boundary_and_compaction_without_a_limit() {
+        for (used, limit, compacted, highlighted, label) in [
+            (Some(149999), Some(200000), false, false, "컨텍스트 75.0%"),
+            (Some(150000), Some(200000), false, true, "컨텍스트 25.0% 남음"),
+            (Some(160000), Some(200000), true, true, "컨텍스트 20.0% 남음 · 압축됨"),
+            (Some(200001), Some(200000), false, true, "컨텍스트 0.0% 남음"),
+            (None, Some(200000), true, true, "컨텍스트 미확인 · 압축됨"),
+            (Some(150000), None, false, false, "컨텍스트 미확인"),
+            (Some(150000), Some(0), false, false, "컨텍스트 미확인"),
+            (Some(32000), Some(200000), true, true, "컨텍스트 16.0% · 압축됨"),
+        ] {
+            let row = Row { context: waid::ContextUsage {
+                used_tokens: used, window_tokens: limit, compaction_observed: compacted,
+                ..Default::default()
+            }, ..Row::default() };
+            assert_eq!(row.context_highlighted(), highlighted);
+            assert_eq!(row.context_summary(), label);
+            assert!(row.accessible_text().contains(label));
+            for template in [DEFAULT, NIGHT] {
+                let skin = Skin::parse(template).unwrap();
+                assert!(skin.lines().iter().any(|line| line.contains(&"context")));
+                assert_eq!(skin.text(&row, "context", false), label);
+            }
+        }
+    }
+    #[test]
     #[cfg(target_os = "macos")]
     fn macos_settings_default_to_application_support() {
         if std::env::var_os("WAID_DATA_DIR").is_none() {
@@ -583,16 +636,16 @@ mod tests {
         assert_ne!(a.fields, b.fields);
         assert_eq!(
             a.lines(),
-            vec![vec!["project", "agent"], vec!["task"]]
+            vec![vec!["project", "agent"], vec!["task"], vec!["context"]]
         );
-        assert_eq!(a.row_height(), 92);
+        assert_eq!(a.row_height(), 112);
         let mut expanded = a.clone();
         expanded.compact = false;
-        assert_eq!(expanded.lines().len(), expanded.fields.len());
+        assert_eq!(expanded.lines().len(), expanded.fields.len() + 1);
         let mut activity = a.clone();
         activity.fields.push("activity".into());
-        assert_eq!(activity.lines().last().unwrap(), &["activity"]);
-        assert_eq!(activity.row_height(), 112);
+        assert_eq!(activity.lines()[2], &["activity"]);
+        assert_eq!(activity.row_height(), 132);
         let mut v: Value = serde_json::from_str(DEFAULT).unwrap();
         v["fields"] = json!(["task", "project"]);
         assert!(Skin::parse(&v.to_string()).is_err());
@@ -725,7 +778,7 @@ mod tests {
 
 fn row_value(row: &Row) -> Value {
     let cut = |s: &str, n: usize| s.chars().take(n).collect::<String>();
-    json!({"last_answer":cut(&row.last_answer,1000),"session_id":row.session_id,"agent_id":row.agent_id,"host":row.host,"id":row.id,"legacy_id":row.legacy_id,"logged_state":row.logged_state,"request_marker":row.request_marker,"request_at":row.request_at,"title":row.title,"agent":row.agent,"model":row.model,"state":row.state,"since":row.since,"evidence":row.evidence,"task_source":row.task_source,"auxiliary":row.auxiliary,"task":cut(&row.task,4000),"summary":cut(&row.summary,200),"cwd":cut(&row.cwd,512)})
+    json!({"context":{"used_tokens":row.context.used_tokens,"window_tokens":row.context.window_tokens,"observed_at":row.context.observed_at,"compaction_observed":row.context.compaction_observed,"compacted_at":row.context.compacted_at},"last_answer":cut(&row.last_answer,1000),"session_id":row.session_id,"agent_id":row.agent_id,"host":row.host,"id":row.id,"legacy_id":row.legacy_id,"logged_state":row.logged_state,"request_marker":row.request_marker,"request_at":row.request_at,"title":row.title,"agent":row.agent,"model":row.model,"state":row.state,"since":row.since,"evidence":row.evidence,"task_source":row.task_source,"auxiliary":row.auxiliary,"task":cut(&row.task,4000),"summary":cut(&row.summary,200),"cwd":cut(&row.cwd,512)})
 }
 fn saved_row(v: &Value) -> Option<Row> {
     let id = v["id"]
@@ -733,6 +786,7 @@ fn saved_row(v: &Value) -> Option<Row> {
         .filter(|s| !s.is_empty())?
         .to_string();
     Some(Row {
+        context: crate::context_value(&v["context"]),
         legacy_id: v["legacy_id"].as_str().unwrap_or("").to_string(),
         logged_state: v["logged_state"].as_str().unwrap_or("").to_string(),
         observed_since_launch: false,

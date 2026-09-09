@@ -77,6 +77,7 @@ pub struct Task {
 
 #[derive(Debug, Clone)]
 pub struct Session {
+    pub context: transcript::ContextUsage,
     pub prompt: Option<String>,
     pub last_answer: Option<String>,
     pub session_id: Option<String>,
@@ -206,6 +207,7 @@ pub(crate) fn from_pair(p: Option<&Process>, agent: Agent, t: &Transcript, now: 
     };
     let legacy_id = short_id(&[agent.name, &identity]);
     Session {
+        context: t.context.clone(),
         prompt: t.current_prompt.clone().or_else(|| t.first_prompt.clone()),
         last_answer: t.last_answer.clone(),
         session_id: t.session_id.clone(),
@@ -244,6 +246,7 @@ fn from_process_only(p: &Process, agent: Agent, _now: i64) -> Session {
     let branch = p.cwd.as_deref().and_then(git_branch);
     let pid = p.pid.to_string();
     Session {
+        context: transcript::ContextUsage::default(),
         prompt: None,
         last_answer: None,
         session_id: None,
@@ -534,6 +537,20 @@ pub fn to_json(sessions: &[Session], now: i64, pretty: bool) -> String {
         w.field_opt_str("summary", s.summary.as_deref());
         w.field_opt_str("prompt", s.prompt.as_deref());
         w.field_opt_str("last_answer", s.last_answer.as_deref());
+        w.field_obj("context");
+        for (key, value) in [
+            ("used_tokens", s.context.used_tokens),
+            ("window_tokens", s.context.window_tokens),
+            ("observed_at", s.context.observed_at),
+            ("compacted_at", s.context.compacted_at),
+        ] {
+            match value {
+                Some(n) => w.field_num(key, n),
+                None => w.field_opt_str(key, None),
+            }
+        }
+        w.field_bool("compaction_observed", s.context.compaction_observed);
+        w.end_obj();
         w.field_opt_str("request_marker", s.request_marker.as_deref());
         match s.request_at {
             Some(at) => w.field_num("request_at", at),

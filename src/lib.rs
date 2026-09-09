@@ -20,6 +20,8 @@ mod tmpl;
 mod time;
 mod transcript;
 
+pub use transcript::ContextUsage;
+
 use render::Style;
 
 const USAGE: &str = concat!("waid ", env!("CARGO_PKG_VERSION"), " — what am I doing?

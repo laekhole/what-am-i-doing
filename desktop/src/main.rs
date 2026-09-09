@@ -60,6 +60,7 @@ enum SnapshotRead {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Row {
+    context: waid::ContextUsage,
     last_answer: String,
     session_id: String,
     agent_id: String,
@@ -84,6 +85,36 @@ struct Row {
 }
 
 impl Row {
+    fn context_highlighted(&self) -> bool {
+        self.context.compaction_observed || self.context.used_percent().is_some_and(|n| n >= 75.0)
+    }
+
+    fn context_summary(&self) -> String {
+        let usage = self.context.used_percent().map(|n| {
+            if n >= 75.0 { format!("{:.1}% 남음", (100.0 - n).max(0.0)) }
+            else { format!("{n:.1}%") }
+        })
+            .unwrap_or_else(|| "미확인".into());
+        format!("컨텍스트 {usage}{}", if self.context.compaction_observed { " · 압축됨" } else { "" })
+    }
+
+    fn context_detail(&self) -> String {
+        let number = |n: Option<i64>| n.map(|n| {
+            let text = n.to_string();
+            text.chars().enumerate().fold(String::new(), |mut out, (i, c)| {
+                if i > 0 && (text.len() - i) % 3 == 0 { out.push(','); }
+                out.push(c);
+                out
+            })
+        }).unwrap_or_else(|| "미확인".into());
+        let stamp = |at: Option<i64>| at.map(time::to_iso8601).unwrap_or_else(|| "미확인".into());
+        let compacted = if self.context.compaction_observed {
+            format!("기록 있음 · {}", stamp(self.context.compacted_at))
+        } else { "기록 미확인".into() };
+        format!("컨텍스트 토큰  {} / 한도 {}\n마지막 관측 (UTC)  {}\n압축 (UTC)  {compacted}",
+            number(self.context.used_tokens), number(self.context.window_tokens), stamp(self.context.observed_at))
+    }
+
     fn logo_id(&self) -> &str {
         if self.host == "orca" { "orca" } else { &self.agent_id }
     }
@@ -146,12 +177,13 @@ impl Row {
 
     fn accessible_text(&self) -> String {
         format!(
-            "프로젝트  {}\n태스크  {}\n상태  {}\n{} · {}",
+            "프로젝트  {}\n태스크  {}\n상태  {}\n{} · {}\n{}",
             self.project(),
             self.task,
             self.status_context(),
             self.agent,
-            self.model
+            self.model,
+            self.context_summary()
         )
     }
 }
@@ -317,6 +349,7 @@ fn snapshot_rows(bytes: &[u8]) -> io::Result<Snapshot> {
                 ""
             };
             Row {
+                context: context_value(&s["context"]),
                 legacy_id: s["legacy_id"].as_str().unwrap_or("").to_string(),
                 logged_state: String::new(),
                 observed_since_launch: false,
@@ -344,6 +377,17 @@ fn snapshot_rows(bytes: &[u8]) -> io::Result<Snapshot> {
         })
         .collect();
     Ok(Snapshot { rows, warnings })
+}
+
+fn context_value(value: &serde_json::Value) -> waid::ContextUsage {
+    let number = |key: &str| value[key].as_i64().filter(|n| (0..=9_007_199_254_740_991).contains(n));
+    waid::ContextUsage {
+        used_tokens: number("used_tokens"),
+        window_tokens: number("window_tokens").filter(|n| *n > 0),
+        observed_at: value["observed_at"].as_i64().filter(|n| (0..=253_402_300_799).contains(n)),
+        compaction_observed: value["compaction_observed"].as_bool().unwrap_or(false),
+        compacted_at: value["compacted_at"].as_i64().filter(|n| (0..=253_402_300_799).contains(n)),
+    }
 }
 
 fn field(value: &serde_json::Value, limit: usize) -> String {
@@ -548,9 +592,9 @@ mod tests {
         let rows = snapshot_rows(value.to_string().as_bytes()).unwrap().rows;
         assert_eq!(
             rows[0].accessible_text(),
-            "프로젝트  repo main\n태스크  ≈ 한글 작업\n상태  내 차례\nCodex · —"
+            "프로젝트  repo main\n태스크  ≈ 한글 작업\n상태  내 차례\nCodex · —\n컨텍스트 미확인"
         );
-        assert_eq!(rows[1].accessible_text(), "프로젝트  —\n태스크  —\n상태  미확인\n— · —");
+        assert_eq!(rows[1].accessible_text(), "프로젝트  —\n태스크  —\n상태  미확인\n— · —\n컨텍스트 미확인");
         assert_eq!(field(&serde_json::json!("가나다"), 2), "가나…");
         assert_eq!(field(&serde_json::json!(" \n "), 2), "—");
         assert_eq!(field(&serde_json::json!("\0"), 2), "—");

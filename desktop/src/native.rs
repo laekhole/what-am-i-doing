@@ -663,7 +663,7 @@ impl Window {
                 "unknown" => "해석할 수 있는 상태 기록 없음",
                 _ => "트랜스크립트의 마지막 기록 · 현재 생존 여부 미확인",
             };
-            format!("{}\r\n\r\n{}\r\n\r\n상태  {}\r\n에이전트  {}\r\n모델  {}\r\n마지막 활동 (UTC)  {}\r\n\r\n{}\r\n\r\n작업 출처  {}\r\n대표 요청\r\n{}\r\n\r\n폴더\r\n{}",row.project(),row.task,row.status_context(),row.agent,row.model,row.since,evidence,if row.task_source=="transcript_first_prompt"{"첫 요청 (현재 요청은 읽기 범위 밖)"}else{"최근 요청 또는 사용자 라벨"},row.summary,row.cwd)
+            format!("{}\r\n\r\n{}\r\n\r\n상태  {}\r\n에이전트  {}\r\n모델  {}\r\n{}\r\n{}\r\n마지막 활동 (UTC)  {}\r\n\r\n{}\r\n\r\n작업 출처  {}\r\n대표 요청\r\n{}\r\n\r\n폴더\r\n{}",row.project(),row.task,row.status_context(),row.agent,row.model,row.context_summary(),row.context_detail().replace('\n', "\r\n"),row.since,evidence,if row.task_source=="transcript_first_prompt"{"첫 요청 (현재 요청은 읽기 범위 밖)"}else{"최근 요청 또는 사용자 라벨"},row.summary,row.cwd)
         } else {
             "세션을 선택하면 전체 작업 내용과 근거를 확인할 수 있습니다.\r\n\r\n'waid에서 보지 않기'는 waid 목록에서만 제외합니다. 전체 보기에서 확인하고, 해당 세션에 새 요청을 작성하면 기본 목록으로 돌아옵니다.".into()
         };
@@ -1116,6 +1116,20 @@ impl Window {
             DT_SINGLELINE | DT_CENTER | DT_VCENTER,
         );
     }
+    unsafe fn draw_context(&self, hwnd: HWND, dc: HDC, row: &Row, mut rect: RECT) {
+        let skin = self.skin.borrow();
+        let highlighted = row.context_highlighted();
+        if highlighted {
+            rect.bottom -= self.px(hwnd, 1);
+            visual::rounded(dc, rect, self.px(hwnd, 7), skin.selection, Some(skin.accent));
+            rect.left += self.px(hwnd, 6);
+            rect.right -= self.px(hwnd, 6);
+        }
+        draw(dc, &row.context_summary(), rect, self.body.get(),
+            if highlighted { skin.accent } else { skin.muted },
+            DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    }
+
     unsafe fn draw_row(&self, hwnd: HWND, item: &DRAWITEMSTRUCT) {
         let row = self.visible.borrow().get(item.itemID as usize).cloned();
         let Some(row) = row else {
@@ -1284,6 +1298,11 @@ impl Window {
                     );
                     rect.left = part.right + gap;
                 }
+                continue;
+            }
+            if fields.contains(&"context") {
+                rect.left = card.left + pad;
+                self.draw_context(hwnd, item.hDC, &row, rect);
                 continue;
             }
             if skin.compact {
@@ -2403,6 +2422,15 @@ fn demo_rows() -> Vec<Row> {
     ]
     .into_iter()
     .map(|(id, task, state, agent, model)| Row {
+        context: if id == "docs" { waid::ContextUsage::default() } else {
+            waid::ContextUsage {
+                used_tokens: Some(if agent == "Codex" { 150000 } else { 124000 }),
+                window_tokens: (agent == "Codex").then_some(200000),
+                observed_at: Some(crate::time::now()),
+                compaction_observed: true,
+                compacted_at: Some(crate::time::now() - 60),
+            }
+        },
         id: format!("demo-{id}"),
         request_marker: format!("demo-{id}-request-1"),
         title: format!("sample/{id}"),
@@ -2674,7 +2702,7 @@ mod tests {
                 GetWindowLongPtrW(state.get(DETAIL), GWL_STYLE) as u32 & WS_VISIBLE,
                 0
             );
-            assert!(state.skin.borrow().row_height() <= 108);
+            assert!(state.skin.borrow().row_height() <= 128);
             for height in [153, 306, 600] {
                 state.row_height(height as i32);
                 state.force_rebuild.set(true);

@@ -11,6 +11,17 @@ Korean version: [README.ko.md](README.ko.md).
 
 A native desktop app that shows the **current task, project, agent/model, and last observed status** of multiple coding AI sessions in one place. It only reads coding-agent logs (see [Agent support](#agent-support) for which sources are validated); it does not send commands to agents. This is a development build. See the [validation record](VALIDATION.md) for verified behavior and outstanding checks.
 
+## Privacy and local operation
+
+**waid is a locally installed, locally running app. It processes coding-agent logs on your computer and does not upload your prompts, answers, source logs, or session data to the developer or any external server.** The current app has no telemetry, analytics, cloud sync, or remote AI API calls. The Windows release runs directly from a single EXE without an installer.
+
+- The collector reads existing local logs and opens supported SQLite sources read-only; it does not modify source conversations or send prompts to agents. Orca SSH support reads Orca's existing local hook mirror, without connecting to the remote machine.
+- Settings and saved session details stay in `%LOCALAPPDATA%\waid\settings.json` on Windows or `~/Library/Application Support/waid/settings.json` on macOS. `WAID_DATA_DIR` can change this location; choose a local folder if you do not want your own sync software to copy it elsewhere.
+- The native desktop uses a local collector process. The optional CLI `--html --watch` dashboard serves data only on `127.0.0.1` (localhost), not on a LAN or public interface. Its bundled page uses only local resources. Custom HTML templates can contain scripts or external resources, so this statement applies to the bundled template.
+- User-requested session return passes a session identifier to the installed app or switches an existing local window/tab. Those apps' own network activity, opening documentation/download links, and manually sharing exported files are separate from waid's local collection. Planned waidaway LAN features are not implemented in this version.
+
+These concrete safeguards describe the current implementation; they are not a claim that software can be guaranteed free of vulnerabilities. See [release verification](#download-and-verify-a-release) and the [validation record](VALIDATION.md) for integrity checks and tested limits.
+
 ## Version roadmap
 
 | Version | Milestone | Status |
@@ -99,6 +110,7 @@ The default window is **600×780 logical pixels**, with expandable session cards
 - **Pin** (`Ctrl+P`) keeps a session at the top; **Hide** (`Ctrl+H`) hides it from the list. **Show all** includes older, dismissed, and hidden entries. Search and status/agent filters still apply.
 - Auxiliary sessions are hidden by default, including in **Show all**. Only **Include auxiliary** reveals subagents, automated reviews, and Orca dispatched workers. Classification uses session metadata and Orca's injected worker preamble within the bounded log read range.
 - Session cards display the latest logged **Prompt**, preserving line breaks in the expanded card (up to 4,000 characters). User task labels remain in CLI output. Orca sessions identified by the current hook mapping show the Orca logo; provider and model identity stay separate.
+- Cards also show the latest logged **context usage percentage** when both token count and context limit are available. When **25% or less remains**, the context line shows the remaining percentage with emphasis; observed compaction also keeps this line emphasized, including when usage is unknown. Both facts appear together when applicable, directly in collapsed cards and the two-column list without opening details. Expand a card for tokens / limit, the measurement's timestamp (UTC), and observed compaction with its timestamp when available. These are measurements, with no quality score, cumulative token total, or account-plan quota. Unknown values are shown as unknown, including a missing context limit; model names are never used to guess one.
 - The list refreshes every two seconds while preserving selection, search, and filters. If the core fails, the app keeps the last successful list and shows the error text until a later refresh succeeds. A snapshot larger than the 16 MiB limit is skipped and the list recovers at the next valid snapshot.
 - Use `Tab / Shift+Tab` to navigate, arrow keys and Page Up/Down in the list, and `Ctrl+C` to copy selected detail text.
 
@@ -166,11 +178,15 @@ Path-registration sources may show nothing if the product's file format differs 
 
 Non-JSONL records do not provide turn-end events, so their **status stays unknown**. If no timestamp is recorded, the file timestamp is shown as an estimate. Missing evidence is not invented. SQLite uses the operating system's existing engine (`winsqlite3.dll` on Windows) and opens databases **read-only**. If the engine is unavailable or a schema changes, only that source is left empty; `waid doctor` explains why.
 
+Context collection currently reads Codex JSONL `token_count.info.last_token_usage.total_tokens` and `model_context_window`, and Claude Code JSONL assistant input tokens plus cache creation/read input tokens. Claude's input-only calculation follows its [documented context usage calculation](https://code.claude.com/docs/en/statusline#context-window-fields); its transcript does not establish the active context limit, so percentage remains unknown. Other sources, including the Orca SSH hook mirror, currently have unknown context usage. These values describe the last logged measurement, not a live recount of unsent text or tool results. Explicit Codex `compacted` / `context_compacted` and Claude `compact_boundary` records mark compaction and clear the old usage until the next measurement. The existing bounded reads and in-memory cache apply: missing compaction evidence means unknown, not “never compacted,” and an unread gap clears the old measurement. A restart can lose compaction evidence outside the read range.
+
 When only a process is found, its status is **unknown**. Models are shown only when explicitly specified in command-line arguments. Cursor editor windows and VS Code extensions are read from saved records, not detected as processes. Process detection inside WSL is not supported.
 
 ## CLI and documentation
 
 JSON output now uses **schema 2**: `id` is a full, opaque source identity; `legacy_id` carries the previous eight-character display hash for migration only. Consumers must not truncate `id` or use `legacy_id` as a unique key. The desktop accepts schemas 1 and 2 and migrates saved organization when an old key maps unambiguously; colliding old keys are preserved without guessing a target. See [CLI extensions](CLI.md) for marker compatibility.
+
+Each JSON session also contains `context`: nullable `used_tokens`, `window_tokens`, `observed_at`, and `compacted_at`, plus boolean `compaction_observed`. Timestamps are Unix seconds from source events; missing timestamps are not replaced with file modification time. `compaction_observed: false` means no compaction evidence was read. Percentage is derived from available tokens / limit. Older snapshots and saved rows without this additive field remain readable.
 
 ```text
 waid                  Print a table once

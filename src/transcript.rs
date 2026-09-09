@@ -28,6 +28,7 @@ const MAX_AGE_SECS: i64 = 24 * 3600;
 
 #[derive(Debug, Clone)]
 pub struct Transcript {
+    pub context: ContextUsage,
     pub last_answer: Option<String>,
     pub session_id: Option<String>,
     pub current_prompt: Option<String>,
@@ -41,6 +42,65 @@ pub struct Transcript {
     pub model: Option<String>,
     pub first_prompt: Option<String>,
     pub event_state: Option<State>,
+}
+
+/// Latest logged context measurement, never session totals or account quotas.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ContextUsage {
+    pub used_tokens: Option<i64>,
+    pub window_tokens: Option<i64>,
+    pub observed_at: Option<i64>,
+    pub compaction_observed: bool,
+    pub compacted_at: Option<i64>,
+}
+
+impl ContextUsage {
+    pub fn used_percent(&self) -> Option<f64> {
+        let used = self.used_tokens.filter(|n| *n >= 0)?;
+        let limit = self.window_tokens.filter(|n| *n > 0)?;
+        Some(used as f64 / limit as f64 * 100.0)
+    }
+
+    fn observe(&mut self, event: &Json) {
+        let kind = event.get("type").and_then(Json::as_str);
+        let payload = event.get("payload");
+        let payload_kind = payload.and_then(|v| v.get("type")).and_then(Json::as_str);
+        let compacted = kind == Some("compacted")
+            || (kind == Some("event_msg") && payload_kind == Some("context_compacted"))
+            || (kind == Some("system")
+                && event.get("subtype").and_then(Json::as_str) == Some("compact_boundary"));
+        if compacted {
+            self.compaction_observed = true;
+            self.compacted_at = time_value(event);
+            // The next measurement must describe the replacement context.
+            self.used_tokens = None;
+            self.observed_at = None;
+            return;
+        }
+        if kind == Some("event_msg") && payload_kind == Some("token_count") {
+            let Some(info) = payload.and_then(|v| v.get("info")) else { return };
+            if matches!(info, Json::Null) { return; }
+            self.used_tokens = info.get("last_token_usage")
+                .and_then(|v| context_number(v, "total_tokens"));
+            self.window_tokens = context_number(info, "model_context_window").filter(|n| *n > 0);
+            self.observed_at = self.used_tokens.and(time_value(event));
+        } else if kind == Some("assistant") {
+            let Some(usage) = event.get("message").and_then(|v| v.get("usage")) else { return };
+            // Claude input_tokens excludes cached input; Codex's total already includes it.
+            self.used_tokens = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
+                .iter().try_fold(0i64, |sum, key| sum.checked_add(context_number(usage, key)?));
+            self.window_tokens = None; // Claude transcripts do not establish a model's active limit.
+            self.observed_at = self.used_tokens.and(time_value(event));
+        }
+    }
+}
+
+fn context_number(value: &Json, key: &str) -> Option<i64> {
+    match value.get(key)? {
+        Json::Num(n) if n.is_finite() && *n >= 0.0 && *n <= 9_007_199_254_740_991.0
+            && n.fract() == 0.0 => Some(*n as i64),
+        _ => None,
+    }
 }
 
 struct Cached {
@@ -454,7 +514,19 @@ pub fn read(path: &Path, mtime: i64) -> Option<Transcript> {
         .filter(|c| c.event_signature == event_signature)
         .map(|c| c.transcript.last_event_at)
         .unwrap_or(mtime);
+    let mut context = previous.map(|t| t.context.clone()).unwrap_or_default();
+    if previous.is_none() {
+        for event in &head_json { context.observe(event); }
+    }
+    // An unread gap may contain compaction; retain only independently observed history.
+    if tail_at > previous_cached.map_or(head_counted_until, |c| c.size) {
+        context.used_tokens = None;
+        context.window_tokens = None;
+        context.observed_at = None;
+    }
+    for event in tail_json.iter().rev() { context.observe(event); }
     let transcript = Transcript {
+        context,
         last_answer,
         session_id,
         current_prompt,
@@ -1160,6 +1232,7 @@ pub fn read_json(path: &Path, mtime: i64) -> Option<Transcript> {
     let last_event_at = observed.unwrap_or(mtime);
 
     Some(Transcript {
+        context: ContextUsage::default(),
         request_at,
         last_answer: events
             .iter()
@@ -1326,6 +1399,7 @@ pub(crate) fn row_transcript(
     let request_count = requests.len().to_string();
 
     Some(Transcript {
+        context: ContextUsage::default(),
         request_at,
         last_answer: None,
         request_marker: request_text

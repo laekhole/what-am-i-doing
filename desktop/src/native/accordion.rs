@@ -9,9 +9,10 @@ const OPEN: usize = 56;
 const COPY: usize = 57;
 const LOGO: usize = 58;
 const DISMISS: usize = 59;
+const CONTEXT: usize = 61;
 const CARD: usize = 1000;
-const HEADER: i32 = 78;
-const BODY: i32 = 422;
+const HEADER: i32 = 104;
+const BODY: i32 = 526;
 
 #[derive(Default)]
 pub(super) struct Feed {
@@ -25,7 +26,7 @@ pub(super) struct Feed {
 impl Window {
     fn feed_header(&self) -> i32 {
         let size = self.skin.borrow().font_size;
-        HEADER.max(size * 2 + 48) + if self.feed.history_line.get() { size + 7 } else { 0 }
+        HEADER.max(size * 3 + 55) + if self.feed.history_line.get() { size + 7 } else { 0 }
     }
     #[cfg(test)]
     pub(super) unsafe fn check_displayed_feed(&self, hwnd: HWND) {
@@ -43,7 +44,7 @@ impl Window {
         assert_eq!(logos.len(), 2);
         assert!(self.feed.history_line.get());
         let size = self.skin.borrow().font_size;
-        assert_eq!(self.feed_header(), HEADER.max(size * 2 + 48) + size + 7);
+        assert_eq!(self.feed_header(), HEADER.max(size * 3 + 55) + size + 7);
         assert!(text(buttons[1]).contains("미확인 · 마지막 기록: 작업 중"));
         assert!(text(logos[1]).contains("미확인 · 마지막 기록: 작업 중"));
         RedrawWindow(hwnd, null(), null_mut(), RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
@@ -63,6 +64,9 @@ impl Window {
         for row in &mut rows {
             row.task.push_str(" · refreshed");
             row.last_answer = "updated answer".into();
+            row.context.used_tokens = Some(124000);
+            row.context.window_tokens = Some(200000);
+            row.context.compaction_observed = true;
         }
         publish_update(&self.updates, Ok(Snapshot { rows, ..Snapshot::default() }));
         self.tick(hwnd);
@@ -71,6 +75,19 @@ impl Window {
         assert!(text(buttons[1]).contains("refreshed"));
         assert!(text(logos[1]).contains("refreshed"));
         assert_eq!(text(self.get(ANSWER)), "updated answer");
+        assert!(text(buttons[1]).contains("컨텍스트 62.0%"));
+        assert!(text(self.get(CONTEXT)).contains("124,000 / 한도 200,000"));
+        assert!(text(self.get(CONTEXT)).contains("압축 (UTC)  기록 있음"));
+        let mut changed = self.rows.borrow().clone();
+        changed[1].context.used_tokens = Some(150000);
+        publish_update(&self.updates, Ok(Snapshot { rows: changed, ..Snapshot::default() }));
+        self.tick(hwnd);
+        assert!(text(buttons[1]).contains("컨텍스트 25.0% 남음 · 압축됨"));
+        self.toggle_card(hwnd, 1);
+        assert!(text(buttons[1]).contains("컨텍스트 25.0% 남음 · 압축됨"));
+        assert_eq!(IsWindowVisible(self.get(CONTEXT)), 0);
+        self.toggle_card(hwnd, 1);
+        SetFocus(logos[1]);
         self.fonts(hwnd);
         self.layout(hwnd);
         self.window_preferences(hwnd);
@@ -98,7 +115,7 @@ impl Window {
         self.tick(hwnd);
         assert_eq!(self.feed.buttons.borrow().len(), 3);
         assert_eq!(self.feed.logos.borrow().len(), 3);
-        assert_eq!(self.feed_header(), HEADER.max(size * 2 + 48));
+        assert_eq!(self.feed_header(), HEADER.max(size * 3 + 55));
         RedrawWindow(hwnd, null(), null_mut(), RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
         // The recent cutoff advances even when the collector has no changed snapshot.
         let old = crate::time::to_iso8601(crate::time::now() - 86_401);
@@ -236,6 +253,7 @@ impl Window {
             (REQUEST, "Prompt"),
             (ANSWER, "답변"),
             (PROMPT, "Prompt · 첫 요청"),
+            (CONTEXT, "컨텍스트"),
         ] {
             self.add(
                 feed,
@@ -327,10 +345,12 @@ impl Window {
                 set_text(button, &label);
             }
             if open {
+                let context_detail = row.context_detail();
                 for (id, value) in [
                     (REQUEST, row.task.as_str()),
                     (ANSWER, row.last_answer.as_str()),
                     (PROMPT, row.summary.as_str()),
+                    (CONTEXT, context_detail.as_str()),
                 ] {
                     let value = if value.is_empty() || value == "—" {
                         "아직 읽은 기록이 없습니다."
@@ -393,7 +413,7 @@ impl Window {
             SetWindowPos(logo, HWND_TOP,
                 p(16), y + p(15), p(42), p(42), SWP_NOACTIVATE);
         }
-        for id in [REQUEST, ANSWER, PROMPT, OPEN, COPY, DISMISS] {
+        for id in [REQUEST, ANSWER, PROMPT, CONTEXT, OPEN, COPY, DISMISS] {
             ShowWindow(
                 self.get(id),
                 if open_index.is_some() {
@@ -407,7 +427,7 @@ impl Window {
             let dismissed = self.settings.borrow().closed.contains_key(&self.visible.borrow()[index].id);
             set_text(self.get(DISMISS), if dismissed { "waid 목록으로 되살리기" } else { "waid에서 보지 않기" });
             let y = p(index as i32 * self.feed_header() + self.feed_header()) - scroll;
-            for (id, top, height) in [(REQUEST, 30, 66), (ANSWER, 130, 88), (PROMPT, 252, 48)] {
+            for (id, top, height) in [(REQUEST, 30, 66), (ANSWER, 130, 88), (PROMPT, 252, 48), (CONTEXT, 326, 96)] {
                 MoveWindow(
                     self.get(id),
                     p(56),
@@ -438,7 +458,7 @@ impl Window {
             MoveWindow(
                 self.get(OPEN),
                 p(18),
-                y + p(326),
+                y + p(430),
                 (bounds.right - p(36)).max(1),
                 p(36),
                 1,
@@ -451,7 +471,7 @@ impl Window {
                 p(24),
                 1,
             );
-            MoveWindow(self.get(DISMISS), p(18), y + p(370),
+            MoveWindow(self.get(DISMISS), p(18), y + p(474),
                 (bounds.right - p(36)).max(1), p(32), 1);
         }
         InvalidateRect(feed, null(), 1);
@@ -593,6 +613,17 @@ impl Window {
             skin.muted,
             DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS,
         );
+        self.draw_context(
+            hwnd,
+            dc,
+            &row,
+            RECT {
+                left: p(72),
+                right: card.right - p(12),
+                top: badge.bottom + p(2) + line,
+                bottom: badge.bottom + p(2) + line * 2,
+            },
+        );
         let context = row.status_context();
         if context != row.status() {
             draw(
@@ -601,8 +632,8 @@ impl Window {
                 RECT {
                     left: p(72),
                     right: card.right - p(12),
-                    top: badge.bottom + p(2) + line,
-                    bottom: badge.bottom + p(2) + line * 2,
+                    top: badge.bottom + p(2) + line * 2,
+                    bottom: badge.bottom + p(2) + line * 3,
                 },
                 self.body.get(),
                 skin.muted,

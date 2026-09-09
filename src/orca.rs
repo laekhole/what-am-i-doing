@@ -107,6 +107,7 @@ fn entry(v: &Json, hooks: &Json, previous: Option<&Session>) -> Option<Session> 
         same_request.and_then(|p| p.request_at)
     };
     Some(Session {
+        context: crate::ContextUsage::default(),
         legacy_id: crate::session::short_id(&[&id]),
         id,
         session_id: Some(session_id.into()),

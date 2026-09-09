@@ -400,6 +400,7 @@ fn tmpl_else_belongs_to_its_own_block_kind() {
 fn populated_default_template_keeps_all_five_fields() {
     use crate::session::{Confidence, Session, State, Task};
     let mut session = Session {
+        context: crate::ContextUsage::default(),
         prompt: None,
         request_at: None,
         last_answer: None,
@@ -581,6 +582,7 @@ fn short_id_avalanches_on_trailing_bytes() {
 fn full_source_ids_survive_legacy_short_id_collisions() {
     let agent = crate::adapters::by_name("codex").unwrap();
     let make = |session_id: &str| crate::transcript::Transcript {
+        context: crate::ContextUsage::default(),
         last_answer: None,
         session_id: Some(session_id.into()),
         current_prompt: Some("same request".into()),
@@ -627,6 +629,7 @@ fn dedupe_extends_suffix_until_titles_are_unique() {
         has_reader: true,
     };
     let mk = |id: &str| crate::session::Session {
+        context: crate::ContextUsage::default(),
         prompt: None,
         request_at: None,
         last_answer: None,
@@ -798,9 +801,73 @@ fn transcript_events_distinguish_turn_end_from_session_end() {
 }
 
 #[test]
+fn context_tracks_latest_measurements_compaction_and_unread_gaps() {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("waid-context-{}.jsonl", std::process::id()));
+    let cold = path.with_extension("cold.jsonl");
+    let count = r#"{"type":"event_msg","timestamp":"2026-09-09T01:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":9999999},"last_token_usage":{"total_tokens":124000,"input_tokens":120000,"cached_input_tokens":110000},"model_context_window":200000}}}"#;
+    let compact = r#"{"type":"compacted","timestamp":"2026-09-09T01:01:00Z","payload":{"message":"summary"}}"#;
+    let append = |text: &str| {
+        let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(file, "{text}").unwrap();
+    };
+    std::fs::write(&path, format!("{{\"type\":\"user\",\"message\":{{\"content\":\"request\"}}}}\n{count}\n")).unwrap();
+    let read = || transcript::read(&path, 999).unwrap();
+    let first = read();
+    assert_eq!(first.context.used_tokens, Some(124000));
+    assert_eq!(first.context.used_percent(), Some(62.0));
+    assert_eq!(first.context.observed_at, crate::time::from_iso8601("2026-09-09T01:00:00Z"));
+    assert_eq!(first.context, read().context);
+    let agent = crate::adapters::by_name("codex").unwrap();
+    let session = crate::session::from_pair(None, agent, &first, 999);
+    let snapshot = crate::session::to_json(&[session], 999, false);
+    let parsed = json::parse(&snapshot).unwrap();
+    let context = parsed.get("sessions").unwrap().as_array().unwrap()[0].get("context").unwrap();
+    assert_eq!(context.get("used_tokens"), Some(&json::Json::Num(124000.0)));
+    assert!(!snapshot.contains("9999999"));
+    append(r#"{"type":"response_item","payload":{"type":"function_call_output","output":{"type":"compacted","usage":{"input_tokens":999999}}}}"#);
+    assert_eq!(read().context, first.context, "tool output is not measurement evidence");
+    append(compact);
+    let after = read().context;
+    assert_eq!(after.used_tokens, None);
+    assert_eq!(after.observed_at, None);
+    assert!(after.compaction_observed);
+    assert_eq!(after.compacted_at, crate::time::from_iso8601("2026-09-09T01:01:00Z"));
+    append(&count.replace("124000", "32000").replace("01:00:00", "01:02:00"));
+    assert_eq!(read().context.used_percent(), Some(16.0));
+    assert!(read().context.compaction_observed);
+    // Large append leaves a gap: the cached count can no longer describe current context.
+    append(&"{}\n".repeat(150000));
+    assert_eq!(read().context.used_tokens, None);
+    assert!(read().context.compaction_observed);
+    std::fs::copy(&path, &cold).unwrap();
+    assert_eq!(transcript::read(&cold, 999).unwrap().context.used_tokens, None);
+    std::fs::write(&path, "{\"type\":\"user\",\"message\":{\"content\":\"replacement\"}}\n").unwrap();
+    assert_eq!(read().context, crate::ContextUsage::default(), "replacement resets the cache");
+    append(r#"{"type":"assistant","timestamp":"2026-09-09T02:00:00Z","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":20000,"cache_read_input_tokens":80000,"output_tokens":900}}}"#);
+    let claude = read().context;
+    assert_eq!(claude.used_tokens, Some(100010));
+    assert_eq!(claude.used_percent(), None, "do not guess the Claude limit");
+    append(r#"{"type":"system","subtype":"compact_boundary","compactMetadata":{"preTokens":100010}}"#);
+    assert!(read().context.compaction_observed);
+    assert_eq!(read().context.used_tokens, None);
+    assert_eq!(read().context.compacted_at, None, "mtime is not an observed timestamp");
+    for invalid in ["-1", "1.5", "null", "\"124000\"", "1e100"] {
+        append(&count.replace("124000", invalid).replace("200000", "0"));
+        assert_eq!(read().context.used_tokens, None);
+        assert_eq!(read().context.used_percent(), None);
+    }
+    append(&count.replace("124000", "0"));
+    assert_eq!(read().context.used_percent(), Some(0.0));
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_file(cold).unwrap();
+}
+
+#[test]
 fn transcript_without_process_keeps_cwd_task_and_waiting() {
     use crate::session::{self, Confidence, State};
     let mut transcript = crate::transcript::Transcript {
+        context: crate::ContextUsage::default(),
         request_at: None,
         last_answer: None,
         inferred_time: false,
