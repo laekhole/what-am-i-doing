@@ -123,7 +123,7 @@ impl Row {
             "waiting" => "내 차례",
             "working" => "작업 중",
             "idle" => "유휴",
-            "done" => "종결",
+            "done" => "목록 제외",
             "error" => "오류",
             _ => "미확인",
         }

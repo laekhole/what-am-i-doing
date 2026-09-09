@@ -224,6 +224,7 @@ const BUILTIN: &[Builtin] = &[
             "AppData/Roaming/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
             "AppData/Roaming/Cursor/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
             ".config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
+            "Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
         ],
         json_name: Some("api_conversation_history.json"),
         sqlite: NO_SQL,

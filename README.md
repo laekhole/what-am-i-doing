@@ -15,13 +15,19 @@ A Windows app that shows the **current task, project, agent/model, and last obse
 
 | Version | Milestone | Status |
 |---|---|---|
-| v0.2.0 | Windows support | Released and usable on Windows; stabilization continues. |
-| v0.3.0 | Add macOS support, including MacBook and desktop Macs | Planned |
-| v0.4.0 | Add Android support | Planned |
+| v0.2.0 | Windows support | Usable on Windows; stabilization continues. |
+| v0.3.0 | Add macOS support, including MacBook and desktop Macs | In development; native Mac UI not yet implemented |
+| v0.4.0 | Add Android support and waidaway LAN access | Planned |
 | v0.5.0 | Add iOS and iPadOS support for iPhone and iPad | Planned |
 | v1.0.0 | Complete stabilization of the supported platforms and core workflows | Future stable release |
 
 These are project milestones. macOS support does not include iPhone or iPad. Mobile support is intended to show coding-agent session activity collected on a PC or Mac; the connection design remains to be implemented. Platform additions do not by themselves mean stabilization is complete: v1.0.0 follows compatibility, reliability, and real-use validation across the supported platforms.
+
+The v0.3.0 release goal is the core Windows session-management experience on Mac: collect real sessions, organize them, preserve settings across restarts, and return to supported sessions from a native app. Collector and shared desktop tests run on Apple Silicon and Intel in the [macOS checks workflow](.github/workflows/macos.yml); passing them alone does not validate the Mac UI, installation, signing, or real-agent workflows. The minimum supported macOS version remains to be established through release validation.
+
+The proposed v0.4.0 waidaway scope is session viewing and user-requested prompt delivery to supported sessions over the same LAN (wired or Wi-Fi), starting with a mobile browser client. The waid collector stays read-only; a separate delivery path must verify the destination session. Pairing, authentication, encryption, device revocation, and duplicate-send protection are required before shipping remote input. Remote access will default to off; internet relay service is a later scope. These capabilities are not implemented yet.
+
+For macOS development, run `cargo test --release --locked` for the collector and `cargo build --manifest-path desktop/Cargo.toml --release --locked` followed by `cargo test --manifest-path desktop/Cargo.toml --release --locked` for shared desktop logic. The CLI can be run with `cargo run --release --locked -- --json --history`; the desktop executable currently has no Mac UI. Mac settings use `~/Library/Application Support/waid/settings.json`, and Orca hook discovery uses `~/Library/Application Support/orca/agent-hooks/last-status.json`. `WAID_DATA_DIR` and `ORCA_USER_DATA_PATH` override their respective folders.
 
 ## Download and verify a release
 
@@ -86,7 +92,7 @@ The default window is **600×780 logical pixels**, with expandable session cards
 - **Minimize** keeps the window on the taskbar for normal restoration. **Close** hides it in the system tray. Click the tray icon to restore it, or choose **Exit** from its menu to quit.
 - **···** expands the details, search, pin, dismiss, and template controls. Double-click a two-column list item or press Enter to open its session.
 - **Search** (`Ctrl+F`) opens the expanded view. Search tasks, projects, models, agents, and folders, combined with status and agent filters. Use **Compact** or Esc to return to the small window.
-- **Dismiss** (`Ctrl+D`) removes the selected session from the default list. Find it in **Show all** and use **Restore** to bring it back. A dismissed session returns automatically when a **new user request** is identified, including from JSON-file and SQLite sources. Revival needs distinguishable request evidence; a repeated identical request cannot be detected when the source exposes no changed request ID, request timestamp, or user-message history. Idle status, waiting for a response, or a missing process alone never dismisses it automatically.
+- **Do not show in waid (waid에서 보지 않기)** in an expanded card removes that session from waid's default list only. The toolbar calls this **보지 않기** (`Ctrl+D`). It never deletes the original conversation or stops its agent. Find excluded sessions in **Show all (전체 보기)** and use **Restore** to bring them back. A session returns automatically when you send a **new user request in that conversation**, including from JSON-file and SQLite sources. Merely opening the conversation does not restore it. Revival needs distinguishable request evidence; a repeated identical request cannot be detected when the source exposes no changed request ID, request timestamp, or user-message history. Idle status, waiting for a response, or a missing process alone never removes it automatically.
 - The default list shows activity from the **last 24 hours**, plus pinned sessions, sessions observed since this launch, and entries whose date is unknown. Older history remains available through **Show all**; aging out of this view does not dismiss a session.
 - **Pin** (`Ctrl+P`) keeps a session at the top; **Hide** (`Ctrl+H`) hides it from the list. **Show all** includes older, dismissed, and hidden entries. Search and status/agent filters still apply.
 - Auxiliary sessions are hidden by default, including in **Show all**. Only **Include auxiliary** reveals subagents, automated reviews, and Orca dispatched workers. Classification uses session metadata and Orca's injected worker preamble within the bounded log read range.

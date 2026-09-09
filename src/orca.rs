@@ -15,7 +15,13 @@ pub fn path() -> Option<PathBuf> {
     std::env::var_os("ORCA_USER_DATA_PATH")
         .filter(|p| !p.is_empty())
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("APPDATA").map(|p| PathBuf::from(p).join("orca")))
+        .or_else(|| {
+            if cfg!(target_os = "macos") {
+                crate::adapters::home().map(|p| p.join("Library/Application Support/orca"))
+            } else {
+                std::env::var_os("APPDATA").map(|p| PathBuf::from(p).join("orca"))
+            }
+        })
         .map(|p| p.join("agent-hooks/last-status.json"))
 }
 

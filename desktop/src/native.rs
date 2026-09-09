@@ -665,7 +665,7 @@ impl Window {
             };
             format!("{}\r\n\r\n{}\r\n\r\n상태  {}\r\n에이전트  {}\r\n모델  {}\r\n마지막 활동 (UTC)  {}\r\n\r\n{}\r\n\r\n작업 출처  {}\r\n대표 요청\r\n{}\r\n\r\n폴더\r\n{}",row.project(),row.task,row.status_context(),row.agent,row.model,row.since,evidence,if row.task_source=="transcript_first_prompt"{"첫 요청 (현재 요청은 읽기 범위 밖)"}else{"최근 요청 또는 사용자 라벨"},row.summary,row.cwd)
         } else {
-            "세션을 선택하면 전체 작업 내용과 근거를 확인할 수 있습니다.\r\n\r\n이전 세션도 수집합니다. 종결한 세션은 전체 보기에서 확인하고, 새 요청이 감지되면 기본 목록으로 돌아옵니다.".into()
+            "세션을 선택하면 전체 작업 내용과 근거를 확인할 수 있습니다.\r\n\r\n'waid에서 보지 않기'는 waid 목록에서만 제외합니다. 전체 보기에서 확인하고, 해당 세션에 새 요청을 작성하면 기본 목록으로 돌아옵니다.".into()
         };
         if text(self.get(DETAIL)) != content {
             set_text(self.get(DETAIL), &content);
@@ -719,7 +719,7 @@ impl Window {
             {
                 "되살리기"
             } else {
-                "종결"
+                "보지 않기"
             },
         );
         set_text(
@@ -936,12 +936,13 @@ impl Window {
                 if let Some(row) = self.selected() {
                     let mut settings = self.settings.borrow_mut();
                     if settings.closed.remove(&row.id).is_some() {
+                        settings.hidden.remove(&row.id);
                         *self.notice.borrow_mut() = "목록으로 되살렸습니다".into();
                     } else if let Err(e) = settings.close(&row) {
                         *self.notice.borrow_mut() = e;
                     } else {
                         *self.notice.borrow_mut() =
-                            "종결 · 전체 보기에서 확인할 수 있습니다".into();
+                            "waid에서만 제외했습니다 · 새 요청 시 복귀 · 전체 보기에서 확인".into();
                     }
                     drop(settings);
                     self.changed();
@@ -1488,7 +1489,7 @@ impl Window {
             if self.demo {
                 "샘플 미리보기 · 실제 AI 세션이 아니에요".into()
             } else if self.expanded.get() {
-                "Ctrl+F 검색 · Ctrl+D 종결 · Esc 간단히".into()
+                "Ctrl+F 검색 · Ctrl+D 보지 않기 · Esc 간단히".into()
             } else {
                 "2초마다 새 소식 · 카드를 눌러 대화 펼치기".into()
             }
@@ -2077,7 +2078,7 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
             "작업 중",
             "오류",
             "유휴",
-            "종결",
+            "목록 제외",
             "미확인",
         ] {
             send(
@@ -2103,7 +2104,7 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
             (FILTER, "검색"),
             (ALL, "전체 보기"),
             (MORE, "···"),
-            (CLOSE_SESSION, "종결"),
+            (CLOSE_SESSION, "보지 않기"),
             (BACK, "간단히"),
             (PIN, "고정"),
             (HIDE, "숨기기"),

@@ -374,6 +374,53 @@ fn copilot_default_and_configured_roots_discover_only_session_logs() {
 }
 
 #[test]
+fn orca_hooks_use_platform_directory_and_honor_override() {
+    let suffix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let fixture = Fixture {
+        dir: std::env::temp_dir().join(format!("waid-orca-path-{}-{suffix}", std::process::id())),
+        child: None,
+    };
+    let default = fixture.dir.join(if cfg!(target_os = "macos") {
+        "Library/Application Support/orca"
+    } else {
+        "orca"
+    });
+    let explicit = fixture.dir.join("한글 Orca override");
+    for (root, id) in [(&default, "default-path-session"), (&explicit, "override-path-session")] {
+        fs::create_dir_all(root.join("agent-hooks")).unwrap();
+        fs::write(root.join("agent-hooks/last-status.json"), r#"{
+            "version":2,"entries":{"pane":{
+                "source":"codex","connectionId":"ssh-server","paneKey":"tab:leaf","tabId":"tab",
+                "worktreeId":"repo::/app/project","launchTokenHash":"current","hookEventName":"UserPromptSubmit",
+                "evidenceObservedAt":100000,"providerSession":{"key":"session_id","id":"$ID"},
+                "payload":{"prompt":"$ID","model":"test-model"}
+            }},"authorityCommitments":{"tab:leaf":{
+                "connectionId":"ssh-server","paneKey":"tab:leaf","tabId":"tab",
+                "worktreeId":"repo::/app/project","launchTokenHash":"current"
+            }}
+        }"#.replace("$ID", id)).unwrap();
+    }
+    for setting in [None, Some(std::ffi::OsStr::new("")), Some(explicit.as_os_str())] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_waid"));
+        command.current_dir(&fixture.dir).args(["--agent", "codex", "--json", "--history"])
+            .env("HOME", &fixture.dir).env("USERPROFILE", &fixture.dir)
+            .env("APPDATA", &fixture.dir).env("CODEX_HOME", &fixture.dir)
+            .env("WAID_ADAPTERS", fixture.dir.join("no-adapters"))
+            .env_remove("ORCA_USER_DATA_PATH");
+        if let Some(value) = setting { command.env("ORCA_USER_DATA_PATH", value); }
+        let output = command.output().unwrap();
+        assert!(output.status.success());
+        let snapshot = json::parse(std::str::from_utf8(&output.stdout).unwrap()).unwrap();
+        let rows = snapshot.get("sessions").and_then(json::Json::as_array).unwrap();
+        let expected = if setting.is_some_and(|v| !v.is_empty()) { "override-path-session" } else { "default-path-session" };
+        let remote: Vec<_> = rows.iter().filter(|row| row.get("id")
+            .and_then(json::Json::as_str).is_some_and(|id| id.starts_with("orca:"))).collect();
+        assert_eq!(remote.len(), 1, "exactly one hook source must be read");
+        assert_eq!(remote[0].get("session_id").and_then(json::Json::as_str), Some(expected));
+    }
+}
+
+#[test]
 fn partial_json_collection_warns_preserves_rows_and_recovers() {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)

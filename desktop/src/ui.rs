@@ -296,12 +296,13 @@ impl Settings {
     }
     pub fn close(&mut self, row: &Row) -> Result<(), String> {
         if !self.closed.contains_key(&row.id) && self.closed.len() >= 1024 {
-            return Err("종결 기록은 최대 1,024개입니다.".into());
+            return Err("목록 제외 기록은 최대 1,024개입니다.".into());
         }
         let mut row = row.clone();
         if row.request_marker.is_empty() {
             row.request_marker = "none".into();
         }
+        self.hidden.remove(&row.id);
         self.closed.insert(row.id.clone(), row);
         Ok(())
     }
@@ -335,6 +336,7 @@ impl Settings {
             };
             if revive {
                 self.closed.remove(&row.id);
+                self.hidden.remove(&row.id);
             }
         }
         (before - self.closed.len(), migrated)
@@ -443,10 +445,12 @@ pub fn data_file() -> PathBuf {
     let root = std::env::var_os("WAID_DATA_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            std::env::var_os("LOCALAPPDATA")
-                .map(PathBuf::from)
-                .unwrap_or_else(std::env::temp_dir)
-                .join("waid")
+            let base = if cfg!(target_os = "macos") {
+                std::env::var_os("HOME").map(|p| PathBuf::from(p).join("Library/Application Support"))
+            } else {
+                std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+            };
+            base.unwrap_or_else(std::env::temp_dir).join("waid")
         });
     root.join("settings.json")
 }
@@ -481,6 +485,14 @@ pub fn atomic_write(path: &Path, text: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_settings_default_to_application_support() {
+        if std::env::var_os("WAID_DATA_DIR").is_none() {
+            let home = PathBuf::from(std::env::var_os("HOME").expect("macOS user home"));
+            assert_eq!(data_file(), home.join("Library/Application Support/waid/settings.json"));
+        }
+    }
     #[test]
     fn remote_hook_restart_does_not_revive_a_dismissed_request() {
         let mut row = Row { id: "orca:remote".into(), task: "same request".into(),
@@ -534,9 +546,9 @@ mod tests {
         let current = Row { id:"full-identity:".repeat(40), legacy_id:old.id.clone(), ..old.clone() };
         let mut settings = Settings::default();
         settings.pinned.insert(old.id.clone());
-        settings.hidden.insert(old.id.clone());
         settings.session_targets.insert(old.id.clone(), json!({"kind":"chatgpt_link","url":"codex://threads/source-one"}));
         settings.close(&old).unwrap();
+        settings.hidden.insert(old.id.clone()); // Legacy files may contain both flags.
         assert_eq!(settings.reconcile(&[current.clone()]), (0, true));
         assert!(settings.pinned.contains(&current.id));
         assert!(settings.hidden.contains(&current.id));
@@ -601,7 +613,9 @@ mod tests {
         };
         let mut settings = Settings::default();
         assert_eq!(settings.visible(&[row.clone()]).len(), 1);
+        settings.hidden.insert(row.id.clone());
         settings.close(&row).unwrap();
+        assert!(!settings.hidden.contains(&row.id));
         assert!(settings.visible(&[row.clone()]).is_empty());
         settings.show_all = true;
         assert_eq!(settings.visible(&[])[0].state, "done");
@@ -618,6 +632,7 @@ mod tests {
         }
         row.request_marker = "request-b".into();
         row.state = "working".into();
+        settings.hidden.insert(row.id.clone()); // Older settings can contain both flags.
         assert_eq!(settings.reconcile(&[row.clone()]), (1, false));
         assert_eq!(settings.visible(&[row.clone()]).len(), 1);
         settings.close(&row).unwrap();

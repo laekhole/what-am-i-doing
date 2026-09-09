@@ -8,9 +8,10 @@ const PROMPT: usize = 55;
 const OPEN: usize = 56;
 const COPY: usize = 57;
 const LOGO: usize = 58;
+const DISMISS: usize = 59;
 const CARD: usize = 1000;
 const HEADER: i32 = 78;
-const BODY: i32 = 378;
+const BODY: i32 = 422;
 
 #[derive(Default)]
 pub(super) struct Feed {
@@ -165,6 +166,40 @@ impl Window {
         assert!(self.expanded.get(), "unlinked demo sessions show details");
         assert!(self.notice.borrow().contains("연결을 확인할 수 없어"));
         self.command(hwnd, BACK, 0);
+
+        // The card action must target its open conversation, even if focus selected another row.
+        self.toggle_card(hwnd, 1);
+        let dismissed = self.visible.borrow()[1].id.clone();
+        assert_eq!(text(self.get(DISMISS)), "waid에서 보지 않기");
+        assert_ne!(GetWindowLongPtrW(self.get(DISMISS), GWL_STYLE) as u32 & WS_VISIBLE, 0);
+        self.busy.set(true);
+        send(self.get(LIST), LB_SETCURSEL, 0, 0);
+        self.busy.set(false);
+        SendMessageW(self.get(DISMISS), BM_CLICK, 0, 0);
+        assert!(self.settings.borrow().closed.contains_key(&dismissed));
+        assert_eq!(self.visible.borrow().len(), 2);
+        assert_eq!(self.rows.borrow().len(), 3, "source conversations remain intact");
+        self.save();
+        assert!(Settings::read(&self.path).unwrap().closed.contains_key(&dismissed));
+        self.command(hwnd, ALL, 0);
+        let index = self.visible.borrow().iter().position(|row| row.id == dismissed).unwrap();
+        self.toggle_card(hwnd, index);
+        assert_eq!(text(self.get(DISMISS)), "waid 목록으로 되살리기");
+        SendMessageW(self.get(DISMISS), BM_CLICK, 0, 0);
+        assert!(!self.settings.borrow().closed.contains_key(&dismissed));
+        SendMessageW(self.get(DISMISS), BM_CLICK, 0, 0);
+        self.command(hwnd, ALL, 0);
+        publish_update(&self.updates, Ok(Snapshot { rows: demo_rows(), ..Snapshot::default() }));
+        self.tick(hwnd);
+        assert_eq!(self.visible.borrow().len(), 2, "a refresh alone must not revive a session");
+        let mut resumed = demo_rows();
+        resumed.iter_mut().find(|row| row.id == dismissed).unwrap().request_marker = "new-card-request".into();
+        publish_update(&self.updates, Ok(Snapshot { rows: resumed, ..Snapshot::default() }));
+        self.tick(hwnd);
+        assert_eq!(self.visible.borrow().len(), 3);
+        assert!(!self.settings.borrow().closed.contains_key(&dismissed));
+        publish_update(&self.updates, Ok(Snapshot { rows: demo_rows(), ..Snapshot::default() }));
+        self.tick(hwnd);
     }
 
     pub(super) unsafe fn create_feed(&self, hwnd: HWND) -> io::Result<()> {
@@ -218,6 +253,7 @@ impl Window {
             BS_OWNERDRAW as u32,
         )?;
         self.add(feed, COPY, "BUTTON", "복사", BS_OWNERDRAW as u32)?;
+        self.add(feed, DISMISS, "BUTTON", "waid에서 보지 않기", BS_OWNERDRAW as u32)?;
         Ok(())
     }
 
@@ -357,7 +393,7 @@ impl Window {
             SetWindowPos(logo, HWND_TOP,
                 p(16), y + p(15), p(42), p(42), SWP_NOACTIVATE);
         }
-        for id in [REQUEST, ANSWER, PROMPT, OPEN, COPY] {
+        for id in [REQUEST, ANSWER, PROMPT, OPEN, COPY, DISMISS] {
             ShowWindow(
                 self.get(id),
                 if open_index.is_some() {
@@ -368,6 +404,8 @@ impl Window {
             );
         }
         if let Some(index) = open_index {
+            let dismissed = self.settings.borrow().closed.contains_key(&self.visible.borrow()[index].id);
+            set_text(self.get(DISMISS), if dismissed { "waid 목록으로 되살리기" } else { "waid에서 보지 않기" });
             let y = p(index as i32 * self.feed_header() + self.feed_header()) - scroll;
             for (id, top, height) in [(REQUEST, 30, 66), (ANSWER, 130, 88), (PROMPT, 252, 48)] {
                 MoveWindow(
@@ -413,6 +451,8 @@ impl Window {
                 p(24),
                 1,
             );
+            MoveWindow(self.get(DISMISS), p(18), y + p(370),
+                (bounds.right - p(36)).max(1), p(32), 1);
         }
         InvalidateRect(feed, null(), 1);
     }
@@ -801,7 +841,7 @@ unsafe extern "system" fn feed_proc(feed: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     s.layout_feed(hwnd);
                 }
             }
-            if id == OPEN {
+            if (id == OPEN || id == DISMISS) && notification == BN_CLICKED as usize {
                 let index = s
                     .visible
                     .borrow()
@@ -811,7 +851,12 @@ unsafe extern "system" fn feed_proc(feed: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     s.busy.set(true);
                     send(s.get(LIST), LB_SETCURSEL, index, 0);
                     s.busy.set(false);
-                    s.activate_selected(hwnd);
+                    if id == DISMISS {
+                        s.command(hwnd, CLOSE_SESSION, 0);
+                        SetFocus(s.get(ALL));
+                    } else {
+                        s.activate_selected(hwnd);
+                    }
                 }
             }
             if id == COPY {
