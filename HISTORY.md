@@ -33,7 +33,7 @@
 - 상태: 완료.
 - 변경·이유: 기존 작업 트리의 코드·문서·자산 변경과 이 기록을 함께 커밋하고 원격 `main`에 푸시한다.
 - 관련 파일: [변경 목록](DECISIONS.md), [작업 기록](HISTORY.md), [검증 기록](VALIDATION.md), [코드·자산 변경](src/session.rs).
-- 검증: 원격 동기화 상태 확인, `git diff --check` 실행 예정, 커밋 및 푸시 결과 확인 예정.
+- 검증: 원격 동기화 상태 확인, 스테이징된 `git diff --check` 통과, `0ae3ef6` 커밋 생성 및 `origin/main` 푸시 완료. 최종 `git status`는 깨끗하고 로컬·원격 HEAD가 일치한다.
 - 남은 일: 없음.
 
 ### 2026-09-10 14:06 +09:00 — PowerShell SSH 에이전트 화면 감지 구현
