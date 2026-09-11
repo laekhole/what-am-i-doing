@@ -11,8 +11,7 @@ const LOGO: usize = 58;
 const DISMISS: usize = 59;
 const CONTEXT: usize = 61;
 const CARD: usize = 1000;
-const HEADER: i32 = 104;
-const BODY: i32 = 526;
+const BODY: i32 = 426;
 
 #[derive(Default)]
 pub(super) struct Feed {
@@ -20,13 +19,11 @@ pub(super) struct Feed {
     pub logos: RefCell<Vec<HWND>>,
     open: RefCell<Option<String>>,
     scroll: Cell<i32>,
-    history_line: Cell<bool>,
 }
 
 impl Window {
     fn feed_header(&self) -> i32 {
-        let size = self.skin.borrow().font_size;
-        HEADER.max(size * 3 + 55) + if self.feed.history_line.get() { size + 7 } else { 0 }
+        31 + (self.skin.borrow().font_size + 7) * 3
     }
     #[cfg(test)]
     pub(super) unsafe fn check_displayed_feed(&self, hwnd: HWND) {
@@ -42,9 +39,8 @@ impl Window {
         let logos = self.feed.logos.borrow().clone();
         assert_eq!(buttons.len(), 2);
         assert_eq!(logos.len(), 2);
-        assert!(self.feed.history_line.get());
         let size = self.skin.borrow().font_size;
-        assert_eq!(self.feed_header(), HEADER.max(size * 3 + 55) + size + 7);
+        assert_eq!(self.feed_header(), 31 + (size + 7) * 3);
         assert!(text(buttons[1]).contains("미확인 · 마지막 기록: 작업 중"));
         assert!(text(logos[1]).contains("미확인 · 마지막 기록: 작업 중"));
         RedrawWindow(hwnd, null(), null_mut(), RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
@@ -75,16 +71,16 @@ impl Window {
         assert!(text(buttons[1]).contains("refreshed"));
         assert!(text(logos[1]).contains("refreshed"));
         assert_eq!(text(self.get(ANSWER)), "updated answer");
-        assert!(text(buttons[1]).contains("컨텍스트 62.0%"));
+        assert!(text(buttons[1]).contains("남은 컨텍스트 38.0%"));
         assert!(text(self.get(CONTEXT)).contains("124,000 / 한도 200,000"));
         assert!(text(self.get(CONTEXT)).contains("압축 (UTC)  기록 있음"));
         let mut changed = self.rows.borrow().clone();
         changed[1].context.used_tokens = Some(150000);
         publish_update(&self.updates, Ok(Snapshot { rows: changed, ..Snapshot::default() }));
         self.tick(hwnd);
-        assert!(text(buttons[1]).contains("컨텍스트 25.0% 남음 · 압축됨"));
+        assert!(text(buttons[1]).contains("남은 컨텍스트 25.0% · 압축됨"));
         self.toggle_card(hwnd, 1);
-        assert!(text(buttons[1]).contains("컨텍스트 25.0% 남음 · 압축됨"));
+        assert!(text(buttons[1]).contains("남은 컨텍스트 25.0% · 압축됨"));
         assert_eq!(IsWindowVisible(self.get(CONTEXT)), 0);
         self.toggle_card(hwnd, 1);
         SetFocus(logos[1]);
@@ -115,7 +111,7 @@ impl Window {
         self.tick(hwnd);
         assert_eq!(self.feed.buttons.borrow().len(), 3);
         assert_eq!(self.feed.logos.borrow().len(), 3);
-        assert_eq!(self.feed_header(), HEADER.max(size * 3 + 55));
+        assert_eq!(self.feed_header(), 31 + (size + 7) * 3);
         RedrawWindow(hwnd, null(), null_mut(), RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
         // The recent cutoff advances even when the collector has no changed snapshot.
         let old = crate::time::to_iso8601(crate::time::now() - 86_401);
@@ -267,7 +263,7 @@ impl Window {
             feed,
             OPEN,
             "BUTTON",
-            "이 프로젝트에서 이어서 요청하기  ↗",
+            "세션 열기  ↗",
             BS_OWNERDRAW as u32,
         )?;
         self.add(feed, COPY, "BUTTON", "복사", BS_OWNERDRAW as u32)?;
@@ -279,7 +275,6 @@ impl Window {
         // Native control calls can synchronously reenter drawing and focus handlers.
         // Publish handle changes with short borrows, then call Win32 without a borrow.
         let rows = self.visible.borrow().clone();
-        self.feed.history_line.set(rows.iter().any(|row| row.status_context() != row.status()));
         if self
             .feed
             .open
@@ -427,7 +422,7 @@ impl Window {
             let dismissed = self.settings.borrow().closed.contains_key(&self.visible.borrow()[index].id);
             set_text(self.get(DISMISS), if dismissed { "waid 목록으로 되살리기" } else { "waid에서 보지 않기" });
             let y = p(index as i32 * self.feed_header() + self.feed_header()) - scroll;
-            for (id, top, height) in [(REQUEST, 30, 66), (ANSWER, 130, 88), (PROMPT, 252, 48), (CONTEXT, 326, 96)] {
+            for (id, top, height) in [(REQUEST, 28, 48), (ANSWER, 108, 64), (PROMPT, 204, 40), (CONTEXT, 272, 96)] {
                 MoveWindow(
                     self.get(id),
                     p(56),
@@ -458,21 +453,21 @@ impl Window {
             MoveWindow(
                 self.get(OPEN),
                 p(18),
-                y + p(430),
-                (bounds.right - p(36)).max(1),
-                p(36),
+                y + p(376),
+                (bounds.right / 2 - p(22)).max(1),
+                p(32),
                 1,
             );
             MoveWindow(
                 self.get(COPY),
                 bounds.right - p(72),
-                y + p(226),
+                y + p(178),
                 p(44),
                 p(24),
                 1,
             );
-            MoveWindow(self.get(DISMISS), p(18), y + p(474),
-                (bounds.right - p(36)).max(1), p(32), 1);
+            MoveWindow(self.get(DISMISS), bounds.right / 2 + p(4), y + p(376),
+                (bounds.right / 2 - p(22)).max(1), p(32), 1);
         }
         InvalidateRect(feed, null(), 1);
     }
@@ -549,11 +544,12 @@ impl Window {
             );
         }
         let line = p(skin.font_size + 7);
+        let title_line = RECT { left: p(72), top: p(15), right: card.right, bottom: p(15) + line };
         let arrow = RECT {
             left: card.right - p(40),
             right: card.right - p(10),
-            top: p(18),
-            bottom: p(48),
+            top: title_line.top + (line - p(30)) / 2,
+            bottom: title_line.top + (line + p(30)) / 2,
         };
         visual::rounded(dc, arrow, p(15), skin.background, None);
         // Draw chevrons with strokes instead of font-dependent Unicode symbols.
@@ -568,14 +564,15 @@ impl Window {
         SelectObject(dc, old);
         DeleteObject(pen);
         let status_right = arrow.left - p(8);
-        let status_left = status_right - p((skin.font_size * 8).max(96));
-        let badge_width = p(skin.font_size * 4 + 8);
+        let status_width = p((skin.font_size * 8).max(96))
+            .min((status_right - title_line.left) / 3);
+        let status_left = status_right - status_width;
+        let badge_width = p(skin.font_size * 4 + 8).min(status_width);
         let badge_left = (status_left + status_right - badge_width) / 2;
         let badge = RECT {
             left: badge_left,
             right: badge_left + badge_width,
-            top: p(22),
-            bottom: p(22 + skin.font_size + 6),
+            ..title_line
         };
         let color = *skin.state_colors.get(&row.state).unwrap_or(&skin.muted);
         visual::rounded(
@@ -606,34 +603,59 @@ impl Window {
             RECT {
                 left: status_left,
                 right: status_right,
-                top: badge.bottom + p(2),
-                bottom: badge.bottom + p(2) + line,
+                top: badge.bottom,
+                bottom: badge.bottom + line,
             },
             self.body.get(),
             skin.muted,
             DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS,
         );
+        let text_width = |value: &str| {
+            let mut measured = RECT::default();
+            let old = SelectObject(dc, self.body.get());
+            DrawTextW(dc, wide(value).as_ptr(), -1, &mut measured,
+                DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+            SelectObject(dc, old);
+            measured.right
+        };
+        let date = row.date_label(open, crate::time::now());
+        let date_rect = RECT {
+            left: status_left - p(8) - text_width(&date),
+            right: status_left - p(8),
+            ..title_line
+        };
+        draw(
+            dc,
+            &date,
+            date_rect,
+            self.body.get(),
+            skin.muted,
+            DT_SINGLELINE | DT_RIGHT | DT_VCENTER | DT_END_ELLIPSIS,
+        );
+        let inset = if row.context_highlighted() { p(6) } else { 0 };
+        let context_right = date_rect.left - p(8);
+        let context_rect = RECT {
+            left: (context_right - text_width(&row.context_summary()) - inset * 2)
+                .max(title_line.left + p(72).min((context_right - title_line.left).max(0) / 3)),
+            right: context_right,
+            ..title_line
+        };
         self.draw_context(
             hwnd,
             dc,
             &row,
-            RECT {
-                left: p(72),
-                right: card.right - p(12),
-                top: badge.bottom + p(2) + line,
-                bottom: badge.bottom + p(2) + line * 2,
-            },
+            context_rect,
         );
-        let context = row.status_context();
-        if context != row.status() {
+        let status_context = row.status_context();
+        if let Some(previous) = status_context.strip_prefix(&format!("{} · ", row.status())) {
             draw(
                 dc,
-                &context,
+                previous,
                 RECT {
-                    left: p(72),
+                    left: status_left,
                     right: card.right - p(12),
-                    top: badge.bottom + p(2) + line * 2,
-                    bottom: badge.bottom + p(2) + line * 3,
+                    top: title_line.top + line * 2,
+                    bottom: title_line.bottom + line * 2,
                 },
                 self.body.get(),
                 skin.muted,
@@ -645,28 +667,12 @@ impl Window {
         } else {
             row.project().into()
         };
-        let date_rect = RECT {
-            left: status_left - p(skin.font_size * 5 + 8),
-            right: status_left - p(8),
-            top: p(22),
-            bottom: p(44),
-        };
-        draw(
-            dc,
-            &row.date_label(open, crate::time::now()),
-            date_rect,
-            self.body.get(),
-            skin.muted,
-            DT_SINGLELINE | DT_RIGHT | DT_VCENTER | DT_END_ELLIPSIS,
-        );
         draw(
             dc,
             &title,
             RECT {
-                left: p(72),
-                top: p(15),
-                right: date_rect.left - p(8),
-                bottom: p(15) + line,
+                right: context_rect.left - p(8),
+                ..title_line
             },
             self.heading.get(),
             skin.foreground,
@@ -677,9 +683,9 @@ impl Window {
             &row.task,
             RECT {
                 left: p(72),
-                top: p(17) + line,
+                top: title_line.bottom,
                 right: status_left - p(8),
-                bottom: p(19) + line * 2,
+                bottom: title_line.bottom + line,
             },
             self.body.get(),
             skin.foreground,
@@ -741,9 +747,9 @@ impl Window {
             };
             visual::rounded(dc, inner, p(14), skin.background, None);
             for (label, icon, top, height) in [
-                ("Prompt", ">_", 0, 96),
-                ("답변", "✦", 100, 118),
-                ("Prompt · 첫 요청", ">_", 222, 78),
+                ("Prompt", ">_", 0, 76),
+                ("답변", "✦", 80, 92),
+                ("Prompt · 첫 요청", ">_", 176, 68),
             ] {
                 let avatar = RECT {
                     left: p(20),
@@ -778,7 +784,7 @@ impl Window {
                     RECT {
                         left: p(54),
                         right: bounds.right - p(26),
-                        top: y + p(top + 29),
+                        top: y + p(top + 27),
                         bottom: y + p(top + height + 2),
                     },
                     p(12),
@@ -793,8 +799,8 @@ impl Window {
                 RECT {
                     left: p(58),
                     right: bounds.right - p(28),
-                    top: y + p(303),
-                    bottom: y + p(323),
+                    top: y + p(248),
+                    bottom: y + p(268),
                 },
                 self.body.get(),
                 skin.muted,

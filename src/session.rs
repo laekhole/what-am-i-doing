@@ -111,7 +111,10 @@ pub fn collect_with_history(now: i64, history: bool) -> Vec<Session> {
     // 조용해지고, 새로 막힌 소스는 그 스냅샷에서 바로 보인다.
     crate::diag::reset();
 
-    let processes: Vec<(Process, Agent)> = proc::list()
+    let all_processes = proc::list();
+    #[cfg(windows)]
+    let terminal_sessions = crate::terminal::collect(&all_processes, now);
+    let processes: Vec<(Process, Agent)> = all_processes
         .into_iter()
         .filter_map(|p| matchers::identify(&p).map(|a| (p, a)))
         .collect();
@@ -162,6 +165,8 @@ pub fn collect_with_history(now: i64, history: bool) -> Vec<Session> {
     }
 
     sessions.extend(crate::orca::collect(now, history));
+    #[cfg(windows)]
+    sessions.extend(terminal_sessions);
     let mut seen = HashSet::new();
     sessions.retain(|s| seen.insert(s.id.clone()));
     dedupe_titles(&mut sessions);

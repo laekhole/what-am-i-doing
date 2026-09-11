@@ -90,12 +90,9 @@ impl Row {
     }
 
     fn context_summary(&self) -> String {
-        let usage = self.context.used_percent().map(|n| {
-            if n >= 75.0 { format!("{:.1}% 남음", (100.0 - n).max(0.0)) }
-            else { format!("{n:.1}%") }
-        })
+        let remaining = self.context.used_percent().map(|n| format!("{:.1}%", (100.0 - n).max(0.0)))
             .unwrap_or_else(|| "미확인".into());
-        format!("컨텍스트 {usage}{}", if self.context.compaction_observed { " · 압축됨" } else { "" })
+        format!("남은 컨텍스트 {remaining}{}", if self.context.compaction_observed { " · 압축됨" } else { "" })
     }
 
     fn context_detail(&self) -> String {
@@ -592,9 +589,9 @@ mod tests {
         let rows = snapshot_rows(value.to_string().as_bytes()).unwrap().rows;
         assert_eq!(
             rows[0].accessible_text(),
-            "프로젝트  repo main\n태스크  ≈ 한글 작업\n상태  내 차례\nCodex · —\n컨텍스트 미확인"
+            "프로젝트  repo main\n태스크  ≈ 한글 작업\n상태  내 차례\nCodex · —\n남은 컨텍스트 미확인"
         );
-        assert_eq!(rows[1].accessible_text(), "프로젝트  —\n태스크  —\n상태  미확인\n— · —\n컨텍스트 미확인");
+        assert_eq!(rows[1].accessible_text(), "프로젝트  —\n태스크  —\n상태  미확인\n— · —\n남은 컨텍스트 미확인");
         assert_eq!(field(&serde_json::json!("가나다"), 2), "가나…");
         assert_eq!(field(&serde_json::json!(" \n "), 2), "—");
         assert_eq!(field(&serde_json::json!("\0"), 2), "—");

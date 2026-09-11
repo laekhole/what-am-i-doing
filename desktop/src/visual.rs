@@ -3,7 +3,7 @@ use std::ptr::null_mut;
 use windows_sys::Win32::{
     Foundation::{HANDLE, RECT},
     Graphics::{Gdi::*, GdiPlus::*},
-    UI::WindowsAndMessaging::*,
+    UI::{Shell::SHCreateMemStream, WindowsAndMessaging::*},
 };
 
 pub struct Visuals {
@@ -11,7 +11,8 @@ pub struct Visuals {
     pub fonts: [HANDLE; 2],
     pub app: HICON,
     pub app_small: HICON,
-    pub mascot: HICON,
+    pub mascot: *mut GpBitmap,
+    mascot_stream: *mut std::ffi::c_void,
     pub codex: HICON,
     pub claude: HICON,
     pub orca: HICON,
@@ -26,6 +27,12 @@ impl Visuals {
             };
             GdiplusStartup(&mut token, &input, null_mut());
             let logo = include_bytes!("../assets/waid.png");
+            let data = include_bytes!("../../assets/waid-mascot.png");
+            let mascot_stream = SHCreateMemStream(data.as_ptr(), data.len() as u32);
+            let mut mascot = null_mut();
+            if !mascot_stream.is_null() {
+                GdipCreateBitmapFromStream(mascot_stream, &mut mascot);
+            }
             Self {
                 token,
                 fonts: [
@@ -43,12 +50,24 @@ impl Visuals {
                 }),
                 app: png_icon_sized(logo, GetSystemMetrics(SM_CXICON)),
                 app_small: png_icon_sized(logo, GetSystemMetrics(SM_CXSMICON)),
-                mascot: png_icon(include_bytes!("../../assets/waid-mascot.png")),
+                mascot,
+                mascot_stream,
                 codex: png_icon(include_bytes!("../assets/openai.png")),
                 claude: ico_icon(include_bytes!("../assets/claude.ico")),
                 orca: png_icon(include_bytes!("../assets/orca.png")),
             }
         }
+    }
+    pub unsafe fn draw_mascot(&self, dc: HDC, x: i32, y: i32, size: i32) -> bool {
+        let mut graphics = null_mut();
+        if self.mascot.is_null() || GdipCreateFromHDC(dc, &mut graphics) != 0 {
+            return false;
+        }
+        GdipSetInterpolationMode(graphics, InterpolationModeHighQualityBicubic);
+        GdipSetPixelOffsetMode(graphics, PixelOffsetModeHalf);
+        let drawn = GdipDrawImageRectI(graphics, self.mascot.cast(), x, y, size, size) == 0;
+        GdipDeleteGraphics(graphics);
+        drawn
     }
     pub unsafe fn logo(&self, dc: HDC, agent_id: &str, x: i32, y: i32, size: i32) -> bool {
         let icon = match agent_id {
@@ -71,7 +90,6 @@ impl Drop for Visuals {
             for icon in [
                 self.app,
                 self.app_small,
-                self.mascot,
                 self.codex,
                 self.claude,
                 self.orca,
@@ -79,6 +97,14 @@ impl Drop for Visuals {
                 if !icon.is_null() {
                     DestroyIcon(icon);
                 }
+            }
+            if !self.mascot.is_null() {
+                GdipDisposeImage(self.mascot.cast());
+            }
+            // GDI+ needs its source stream until the image is disposed.
+            if !self.mascot_stream.is_null() {
+                let vtable = *(self.mascot_stream as *const *const windows_sys::core::IUnknown_Vtbl);
+                ((*vtable).Release)(self.mascot_stream);
             }
             if self.token != 0 {
                 GdiplusShutdown(self.token);
@@ -175,4 +201,54 @@ pub unsafe fn rounded(dc: HDC, rect: RECT, radius: i32, color: u32, border: Opti
         GdipDeletePath(path);
     }
     GdipDeleteGraphics(graphics);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mascot_preserves_transparency_and_shape_at_common_dpis() {
+        let visuals = Visuals::new();
+        unsafe {
+            for size in [32, 40, 48, 64, 96] {
+                let dc = CreateCompatibleDC(null_mut());
+                assert!(!dc.is_null());
+                let info = BITMAPINFO {
+                    bmiHeader: BITMAPINFOHEADER {
+                        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                        biWidth: size, biHeight: -size, biPlanes: 1, biBitCount: 32,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                let mut bits = null_mut();
+                let bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
+                assert!(!bitmap.is_null());
+                let old = SelectObject(dc, bitmap);
+                let pixels = std::slice::from_raw_parts_mut(bits as *mut u32, (size * size) as usize);
+                for background in [0xfff5f7fb, 0xff102038] {
+                    pixels.fill(background);
+                    assert!(visuals.draw_mascot(dc, 0, 0, size));
+                    GdiFlush();
+                    assert_eq!(pixels[0] & 0xffffff, background & 0xffffff, "transparent corner at {size}px");
+                    let center = pixels[(size * (size / 2) + size / 2) as usize];
+                    assert!(center & 255 > (center >> 16) & 255, "blue body at {size}px");
+                    assert!(pixels.iter().filter(|p| **p & 0xffffff != background & 0xffffff).count() > pixels.len() / 3);
+                    // Keep the actual native rendering available for visual inspection.
+                    let mut bmp = b"BM".to_vec();
+                    bmp.extend_from_slice(&(54 + pixels.len() as u32 * 4).to_le_bytes());
+                    bmp.extend_from_slice(&[0; 4]);
+                    bmp.extend_from_slice(&54u32.to_le_bytes());
+                    bmp.extend_from_slice(std::slice::from_raw_parts(&info.bmiHeader as *const _ as *const u8, 40));
+                    bmp.extend(pixels.iter().flat_map(|p| p.to_le_bytes()));
+                    let path = std::env::temp_dir().join(format!("waid-mascot-{size}-{background:x}.bmp"));
+                    std::fs::write(path, bmp).unwrap();
+                }
+                SelectObject(dc, old);
+                DeleteObject(bitmap);
+                DeleteDC(dc);
+            }
+        }
+    }
 }

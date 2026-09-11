@@ -1378,17 +1378,7 @@ impl Window {
         let mut r = RECT::default();
         GetClientRect(hwnd, &mut r);
         let p = |n| self.px(hwnd, n);
-        DrawIconEx(
-            dc,
-            p(16),
-            p(9),
-            self.visuals.mascot,
-            p(32),
-            p(32),
-            0,
-            null_mut(),
-            DI_NORMAL,
-        );
+        self.visuals.draw_mascot(dc, p(16), p(9), p(32));
         draw(
             dc,
             if self.demo { "waid / 샘플" } else { "waid" },

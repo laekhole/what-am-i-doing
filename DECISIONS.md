@@ -326,3 +326,161 @@ DB 는 읽기 전용으로만 연다. 편집기가 WAL 로 잡고 있어 열리�
 성능은 파일 시각으로 막는다. DB 와 `-wal` 의 시각이 그대로면 질의 자체를 하지 않고 직전 결과를 쓴다. 대화 본문 테이블(`cursorDiskKV`, `bubbleId`)은 매 틱에 훑지 않는다. 실측: Cursor 6.7 MB DB 의 헤더 질의 17행 2.1 ms. 코어 바이너리는 467 KB 에서 546 KB 가 됐다.
 
 **상태는 지어내지 않는다.** JSON·SQLite 기록에는 턴 종료 이벤트가 없으므로 event_state 를 만들지 않고 미확인으로 둔다. 시각이 기록에서 나오지 않으면 파일 시각 추정으로 표시한다. 사용자 요청이 하나도 없는 JSON 문서(편집기 설정 파일 등)와 요청·제목이 모두 빈 DB 행은 세션으로 만들지 않는다. Cursor 의 `richText` 는 편집기 내부 구조체이므로 작업 텍스트로 쓰지 않는다.
+
+## D33 — 모바일·PC 외부 연결 아키텍처 Astra 검토 (2026-09-10)
+
+**상태: 검토 의견, 미채택.** 사용자 [원안 30개 절](mobile-pc-connect-architecture.md)을 보존하고 요청한 GPT-6 Astra의 독립 검토와 주 에이전트의 저장소·공식 문서 대조를 합쳤다. 제품 코드·의존성·로드맵을 변경하거나 서버를 배포한 작업이 아니다. 아래 위험은 제안서의 설계 공백이며, 아직 없는 원격 기능에서 취약점을 재현했다는 뜻이 아니다.
+
+**판정: 조건부로 현실적이지만 원안 그대로는 출시 설계로 부족하다.** 회원가입 없이 기기끼리 신뢰하고, 중앙에 사용자 콘텐츠를 저장하지 않으며, P2P를 우선하는 서비스는 가능하다. 이를 무서버·운영비 0·모든 망에서 연결·백그라운드 상시 연결까지 보장하는 것으로 확대할 수는 없다. 가장 먼저 고칠 것은 QR의 신뢰 부트스트랩, 브라우저와 네이티브 앱의 구분, 중계 남용 방어다.
+
+**핵심 단순화: WebRTC + STUN/TURN + 작은 signaling 서비스.** TURN은 WebRTC가 직접 연결에 실패했을 때 사용하는 중계 경로다. 별도 `RelayTransport`로 WebRTC 위에 다시 쌓을 필요가 없다. 사용자별 Cloudflare Tunnel과 custom relay까지 함께 운영하는 계획을 기본안에서 제외한다. DataChannel은 SCTP/DTLS/ICE를 조합하며 직결·중계에서 같은 앱 메시지를 운반할 수 있다. [RFC 8831 §1·5](https://www.rfc-editor.org/rfc/rfc8831.html#section-5), [RFC 8445 §2](https://www.rfc-editor.org/rfc/rfc8445.html#section-2).
+
+### 현재 waid와 맞지 않는 전제
+
+| 확인한 사실 | 설계에 주는 의미 |
+|---|---|
+| [README](README.md#version-roadmap)는 v0.4.0 Android·waidaway LAN을 모바일 브라우저 우선으로 제안한다. 원안은 앱 설치·기기 키 저장을 전제한다. | 클라이언트 형태를 정하기 전 mDNS·Keychain·백그라운드 연결을 공통 기능으로 확정할 수 없다. |
+| [기존 서버](src/serve.rs)는 localhost HTTP이며 `/`, `/snapshot.json`, `/events`에 인증·TLS가 없다. [호출부](src/lib.rs)는 `--html --watch`에서 사용한다. | bind 주소만 바꾸거나 Tunnel에 연결하면 민감한 세션 정보를 외부에 노출할 수 있다. 기존 JSON 수집 결과를 재사용하되 원격 인증·권한 경계를 마련해야 한다. |
+| 현재 갱신은 SSE다. | Quick Tunnel을 기존 화면에 붙이는 지름길은 SSE 미지원에 걸린다. 정식 Tunnel과 Quick Tunnel을 구분해야 한다. |
+| [코어](Cargo.toml)는 외부 크레이트 0개, [데스크톱](desktop/Cargo.toml)은 serde_json·Windows API 정도를 사용한다. | 검증된 TLS/WebRTC/암호화 의존성 도입은 별도 근거가 필요하다. 기존 무의존성 목표를 지키려고 암호 프로토콜을 직접 구현해서는 안 된다. |
+| 과거 D10의 영구 읽기 전용 원칙과 최신 README의 사용자 요청 전달 계획이 다르다. | 수집기는 계속 읽기 전용으로 유지하고, 원격 입력을 구현하기 전에 별도 전달 경계·허용 범위를 명시해야 한다. 이번 검토가 과거 기록을 소급 변경하지는 않는다. |
+
+Quick Tunnel은 개발·테스트용이고 SLA를 보장하지 않으며 SSE를 지원하지 않는다. 이 제한을 정식 Tunnel 전체의 제한으로 일반화해서는 안 된다. [Cloudflare Quick Tunnels](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/).
+
+### 출시 전에 막아야 할 문제
+
+**1. QR에 기기 신원과 세션을 결합하는 규칙이 없다 — 원안 §5·6·23·24.**
+
+`device_id`, 짧은 TTL, 1회용 token, 기기 이름 확인만으로는 상대 공개키가 진짜인지 알 수 없다. pairing token을 signaling 서버에 bearer 값으로 넘기는 구현이라면 서버가 먼저 사용하거나 공개키를 바꿀 수 있다. 장기 **공개키** 또는 그 지문은 secret이 아니므로 QR에 넣어도 된다. QR로 얻은 신뢰값을 검증된 인증 키 교환에 결합하고, 실제 양쪽 기기 키·역할·새 연결 세션과 묶어야 한다. WebRTC를 쓰면 연결의 DTLS fingerprint도 그 신원에 결합해 검증해야 한다. HTTPS signaling 자체가 악성 signaling 서버의 MITM을 막지는 않는다. [RFC 8827 §9.1](https://www.rfc-editor.org/rfc/rfc8827.html#section-9.1).
+
+pairing은 Desktop 사용자가 켠 짧은 창에서만 허용하고, 서버로 secret 원문을 전달하지 않는 검증된 절차를 선택한다. 성공한 인증·Desktop 승인에 결합해 1회 사용을 원자적으로 확정한다. 짧은 숫자 코드를 쓴다면 고엔트로피 QR secret과 동급으로 취급하지 말고 검증된 PAKE 등 해당 조건에 맞는 방식을 선택해야 한다. QR을 훔쳐본 공격자까지 구별하려면 실제 기기의 인증된 비교값 확인이 필요하다. 화면의 모델명만 비교하는 Confirm은 신원 검증이 아니다. endpoint hint는 인증 정보로 취급하지 않고, 로그·URL query·분석 도구에 pairing secret을 남기지 않는다. 이는 요구조건이며 새 암호 프로토콜 명세가 아니다.
+
+**2. '중계가 읽지 못한다'는 요구와 선택적 암호화가 충돌한다 — §9·13·14·24.**
+
+인증된 양 끝점 사이의 WebRTC DataChannel은 TURN을 거쳐도 DTLS 암호문을 전달한다. 앞 항목의 상대 신원 검증이 성립한다면 TURN만을 불신하기 위해 매 메시지에 별도 암호화·전자서명을 중복 구현할 필요는 없다. [RFC 8831 §7](https://www.rfc-editor.org/rfc/rfc8831.html#section-7).
+
+반면 일반 HTTP/HTTPS Cloudflare Tunnel은 모바일→Cloudflare와 Cloudflare→origin 구간이 나뉜다. origin까지 암호화해도 Cloudflare가 HTTP 내용을 읽을 수 없는 E2E 구조가 되지는 않는다. 이 경로에서도 중계 운영자를 불신하려면 별도의 검증된 종단간 인증·암호화 계층이 필수다. 일반 WSS relay가 양쪽 TLS를 종료하는 경우도 마찬가지다. [Cloudflare SSL/TLS 인증서 경계](https://developers.cloudflare.com/ssl/concepts/).
+
+**3. 브라우저 클라이언트의 코드 배포 경계가 빠졌다 — §4·6·9·25.**
+
+`http://192.168.x.x`에서 내려받은 웹페이지는 localhost 예외가 아니다. `crypto.subtle` 같은 API의 secure context 요구, 인증서 신뢰·갱신, QR 스캔을 맡을 앱/브라우저 역할을 함께 풀어야 한다. 일반 모바일 웹페이지에 네이티브 Bonjour 탐색이나 OS Keychain 기능이 있다고 가정할 수 없다. Chrome의 `chrome.mdns`는 Platform Apps API다. [W3C Secure Contexts §3.1](https://www.w3.org/TR/secure-contexts/#is-origin-trustworthy), [Web Crypto 인터페이스](https://www.w3.org/TR/webcrypto/#crypto-interface), [Chrome mDNS API](https://developer.chrome.com/docs/apps/reference/mdns).
+
+HTTPS 웹앱에서 LAN 서버로 접근할 때도 브라우저별 권한·mixed content·Origin/CORS 조건이 있다. Chrome은 Local Network Access 권한과 일부 mixed content 예외를 도입했으므로 모든 브라우저에서 무조건 차단되거나 허용된다고 단정하지 않는다. [Chrome Local Network Access](https://developer.chrome.com/blog/local-network-access).
+
+더 큰 문제는 **불신하는 relay 사업자가 클라이언트 HTML/JS도 매번 제공한다면**, 암호화 직전의 평문이나 키 사용 코드를 바꿀 수 있다는 점이다. non-extractable 키만으로 악성 동일 origin 코드의 키 사용까지 막을 수 없다. 웹 클라이언트에서는 코드 제공자를 신뢰하는 범위를 명시하거나, relay와 독립된 신뢰 경로로 배포하는 서명된 설치형 클라이언트 등을 선택해야 한다. 이 결론은 Web Crypto의 script injection·동일 origin·키 저장 한계에 근거한 설계 추론이다. [W3C Web Crypto §6.2](https://www.w3.org/TR/webcrypto/#security-developers).
+
+**4. 계정이 없다는 이유로 서버 인증과 비용 통제를 생략할 수 없다 — §10·13·17·18·28.**
+
+기기 키는 계정 대신 쓸 수 있다. 하지만 누구나 새 키를 만들 수 있으므로 '유효한 키 보유'가 유료 대역폭 사용 자격은 아니다. rendezvous 등록 시 키 소유를 증명하고, paired peer의 조회·연결 요청만 허용하며, 인증된 절차 뒤에 짧은 TURN credential을 발급해야 한다. 운영용 TURN API secret을 앱에 내장해서는 안 된다. TURN 자체에도 allocation·permission·인증 상태가 있다. [RFC 8656 §3](https://www.rfc-editor.org/rfc/rfc8656.html#section-3).
+
+기기별 상한만으로는 무한 키 생성 남용을 막지 못한다. 연결·메시지 크기·동시 allocation·발급 빈도·전체 예산 상한과 차단 정책이 필요하다. IP 제한은 공유 NAT의 정상 사용자까지 막을 수 있어 보조 수단이다. 익명 공개 서비스를 무제한으로 제공하지 않고, 예산 소진 시 거부할 수 있는 운영 조건을 공개해야 한다. 이 부분은 프로토콜 기능만으로 해결되지 않는 운영 설계다.
+
+관리형 TURN도 운영자 backend에서 단기 credential을 발급하는 절차가 필요하다. 모바일이 service API key를 직접 보유하는 방식으로 단순화하지 않는다. [Cloudflare TURN credential 발급](https://developers.cloudflare.com/realtime/turn/generate-credentials/).
+
+**5. 공개키 삭제만으로 이미 허용한 연결은 취소되지 않는다 — §19·22.**
+
+Desktop을 해당 신뢰 관계의 최종 권한자로 둔다. 해제 즉시 활성 연결·세션 토큰·미실행 요청을 무효화하고, 매 작업 직전에 현재 권한을 확인해야 한다. 앱 재시작·백업 복원으로 폐기한 신뢰가 되살아나지 않도록 저장·복원 규칙도 정한다. 모바일에 알림이 도달해야만 차단되는 구조여서는 안 된다. 이미 전달된 데이터는 회수할 수 없다. 각 Desktop의 신뢰는 개별 관계이며 한 곳의 해제를 전체 기기의 전역 해제로 표시하지 않는다. 기기 키 변경·분실·재설치는 새 pairing을 요구하고 자동 재신뢰하지 않는다.
+
+**6. replay 방지와 프롬프트 중복 실행 방지는 다르다 — §7·8·11.**
+
+검증된 보안 채널의 record 보호와 앱의 권한 검사를 기본으로 사용한다. 모든 요청에 timestamp·nonce·서명을 직접 설계하면 시계 오차·정규 직렬화·세션 간 재사용 방어까지 구현해야 한다. 프롬프트 전달에는 별도로 기기·대상 세션·요청 ID에 결합된 중복 처리 방지와 ACK가 필요하다. 재연결·Desktop 재시작 뒤에도 필요한 기간의 처리 기록을 보존한다. 대상 앱이 원자적 idempotency를 지원하지 않으면 실행 후 ACK 전 장애에서 '정확히 한 번'을 보장할 수 없다. 이때 결과 미확인으로 표시하고 자동 재전송하지 않는다. 원격 입력 권한은 열람 권한과 구분하고, 연결 인증 성공이 임의 셸 명령 허용으로 이어지지 않게 한다.
+
+**7. 모든 네트워크·잠든 기기·상시 백그라운드 연결은 보장할 수 없다 — §12·25·29.**
+
+TURN은 CGNAT·직결 실패를 보완하지만 outbound까지 막힌 망에서 연결을 만들어 주지는 않는다. TURN/TLS 443도 일반 HTTPS와 같은 프로토콜은 아니므로 허용 목록·명시적 프록시·검사 장비 환경에서 실패할 수 있다. Desktop이 꺼져 있거나 잠들면, 서버에 콘텐츠를 보관하지 않는 구조로 최신 내용을 가져올 수 없다. 실패·재시도·마지막 관측 시각을 표시해야 한다. 연결 방식을 기본 화면에서 숨길 수는 있지만 진단 정보까지 없애서는 안 된다. NAT 우회는 가용성 보장이 아니다. [RFC 8656 §2·3.1](https://www.rfc-editor.org/rfc/rfc8656.html#section-3.1).
+
+초기 모바일 연결은 화면을 열었을 때 연결하고 복귀·Wi-Fi/LTE 전환 시 재연결·재조회하는 방식으로 정의한다. iOS의 일반 앱은 임의 socket을 계속 유지하도록 무제한 실행되지 않으며, Android도 Doze에서 네트워크 사용이 중단될 수 있다. 백그라운드 작업 API는 상시 socket 보장이 아니다. 나중에 알림이 필요하면 APNs/FCM 등 별도 전달 경로·push token 보관·최소 payload를 검토하되, 즉시 깨우기나 PC 기동을 보장한다고 설명하지 않는다. [Apple background 전략](https://developer.apple.com/documentation/BackgroundTasks/choosing-background-strategies-for-your-app), [Android Doze·App Standby](https://developer.android.com/training/monitoring-device-state/doze-standby).
+
+### 남길 구성과 뺄 구성
+
+| 구성 | 권고와 추가 조건 |
+|---|---|
+| QR pairing + 기기 키 + 권한·해제 | 필수. 수동 pairing과 재연결 신뢰를 먼저 완성한다. |
+| WebRTC DataChannel | 인터넷에서도 P2P 우선이라는 원안 요구를 유지한다면 채택 후보. 조회·작은 명령·이벤트로 시작한다. |
+| STUN + TURN | WebRTC의 동일 ICE 경로에 포함한다. 외부 연결 출시에서 TURN을 다음 단계로 미루지 않는다. |
+| Signaling/rendezvous | NAT 뒤 기기들의 자동 재연결에 필요. 하나의 작은 서비스로 시작하고 메타데이터·수명·권한을 제한한다. |
+| 사용자별 Cloudflare Tunnel | 기본 제품 경로에서 제외. 운영자가 통제하는 개발 실험이나 사용자가 선택하는 자체 호스팅 배포에는 별도 검토 가능하다. |
+| Cloudflare Realtime TURN | Tunnel과 다른 제품이다. 관리형 TURN 제공자 후보로는 검토 가능하며 사용자별 Tunnel을 추가할 이유가 되지 않는다. |
+| Custom encrypted WSS relay | 기본안에서 제외. P2P 요구를 명시적으로 유예하는 별도 MVP 대안이거나, 실제 TURN 실패망 비중이 추가 경로의 유지비를 정당화할 때만 검토한다. |
+| Local/WebRTC/Relay/Cloudflare 네 종류의 transport 클래스 | 미리 만들지 않는다. 앱 메시지·권한 경계와 실제 쓰는 전송 경로 하나부터 구현한다. TURN을 별도 앱 transport로 만들지 않는다. |
+| mDNS·BLE·파일 전송·다중 Desktop 동기화 | QR 경로로 초기 연결이 된다면 후속으로 미룬다. 재탐색 실패나 실제 사용 요구가 확인될 때 추가한다. |
+
+관리형 TURN의 자격 증명 발급과 운영자 설정은 여전히 필요하다. Cloudflare 전체를 불필요하다고 평가한 것이 아니라, 사용자별 Tunnel을 WebRTC 중계와 중복 도입하는 안을 제외한 것이다. [Cloudflare Realtime TURN](https://developers.cloudflare.com/realtime/turn/).
+
+ICE는 후보 쌍을 우선순위에 따라 검사하고 선택하는 절차다. LAN 완료→STUN 완료→TURN 완료의 독립 직렬 재시도 세 개로 구현할 필요가 없다. TURN 후보 준비·할당과 실제 사용자 payload의 TURN 전송도 다르다. '직결 선호 + 연결 지연 상한'을 목표로 하고, 보안 검증 실패를 평문이나 무인증 fallback으로 우회하지 않는다. [RFC 8445 §2.1–2.3](https://www.rfc-editor.org/rfc/rfc8445.html#section-2.1).
+
+```mermaid
+flowchart LR
+    M[Mobile] <-->|인증된 DataChannel 직결| D[Desktop]
+    M -.->|연결 협상| S[Signaling / rendezvous]
+    D -.->|연결 협상| S
+    M <-->|직결 실패 시 DTLS 암호문| T[TURN]
+    T <-->|같은 DataChannel| D
+    D --> C[읽기 전용 수집 결과]
+```
+
+### 서버 경계와 운영비
+
+| 범위 | 서버가 필요한가 |
+|---|---|
+| 같은 LAN의 QR pairing·직접 연결 | 공개 서버 없이 가능. 안전한 클라이언트 배포·초기 인증은 별도로 해결한다. |
+| 인터넷의 직접 도달 가능한 주소로 연결 | 주소 교환·라우터 설정 등 조건이 맞으면 중계 없이 가능하다. 임의의 NAT에서 무설정으로 되는 것은 아니다. |
+| NAT 뒤 기기의 자동 발견·연결 협상 | 이 제품 UX에서는 도달 가능한 signaling/rendezvous 서비스가 필요하다. 사용자가 호스팅해도 역할은 남는다. |
+| 직결 불가 망의 데이터 전송 | 공인망에서 도달 가능한 TURN 등 중계가 필요하다. |
+| 오프라인 Desktop의 최신 데이터 열람 | 원본 Desktop이 응답하지 않고 서버 복제도 없으면 불가능하다. 모바일에 이미 받은 캐시만 시각과 함께 보여줄 수 있다. |
+
+'사용자 데이터 비저장'은 문서·프롬프트·응답의 서버 영구 보관 금지로 구체화한다. 중계 버퍼에 암호문이 잠시 존재하는 것과 콘텐츠 저장 서비스는 구별한다. IP·기기 식별자·접속 시각·SDP/ICE도 개인정보가 될 수 있는 메타데이터다. TTL뿐 아니라 access log·오류 추적·백업·패킷 캡처의 보관 범위까지 제한한다. 연결 라우팅은 본질적으로 일시적 상태를 가지며, 남용 차단·사용량 집계가 세션보다 오래 필요할 수 있다. 따라서 §28의 stateless는 '사용자 콘텐츠 DB 없음'과 동의어가 아니다.
+
+비용은 **중계된 바이트 × 사업자 단가 + signaling/상시 연결 비용 + 운영·장애 대응**으로 판단한다. 예를 들어 변경 여부와 무관하게 5 KiB를 2초마다 보내고 1,000명이 하루 1시간씩 30일 사용하면, 전량 중계 시 한 방향 payload만 약 276.48 GB다. 중계 비율을 곱하고 실제 청구 방식·프로토콜 overhead·양방향 트래픽을 더해야 한다. 이 수치는 산식 예시이며 waid 실측이나 요금 견적이 아니다. 우선 작은 snapshot과 변경 이벤트만 전송하고, 중계 비율·바이트·연결 성공 시간은 콘텐츠 없이 집계한다. 무료 티어나 무제한 익명 사용을 지속 가능성의 근거로 삼지 않는다.
+
+### 권장 검증 순서와 미결정 사항
+
+1. **클라이언트·신뢰 경계 결정:** 현재 브라우저 우선 계획을 유지할지 설치형 앱으로 바꿀지 비교한다. HTTPS/키 보관/코드 공급자를 불신하는 조건이 실제 기기에서 성립하는지부터 확인한다. 최신 README의 계획은 이 검토만으로 변경하지 않는다.
+2. **LAN 보안 완성:** QR로 신원을 확인하고 열람·권한 해제·재시작을 검증한다. 원격 입력은 대상 세션 확인·중복 처리·결과 미확인 UX까지 별도 검증해야 출시할 수 있다.
+3. **외부 연결 한 번에 검증:** 같은 앱 메시지에 signaling·WebRTC·STUN·TURN을 함께 붙여 직결/강제 중계/UDP 차단/인증 실패를 확인한다. WebRTC와 TURN 사이에 제품 출시 단계를 나누지 않는다.
+4. **실측 후 확대:** 네트워크 전환·배터리·연결 지연·중계 비용을 보고 mDNS, 추가 relay, 파일 전송, 백그라운드 알림을 선택한다.
+
+구현 전에 남는 결정은 클라이언트 형태, 운영 주체·월 예산, 배경 알림 필요성, 원격 입력 허용 범위다. 기기 키 생성·보관 방식과 QR 인증 프로토콜·라이브러리 선정도 미완료다. 단순 Ed25519 선택만으로 키 교환·세션 암호화가 정해지지는 않는다.
+
+### 원안 §30의 질문별 답
+
+| 번호 | 검토 질문 | 답 |
+|---|---|---|
+| 1 | WebRTC가 적절한가? | 인터넷 P2P가 필수라면 적절한 후보다. 작은 세션 목록·명령만으로 WebRTC가 필요한 것은 아니므로 LAN 단계에서는 필수가 아니다. |
+| 2 | Cloudflare Tunnel MVP는 합리적인가? | 통제된 PoC·선택형 자체 호스팅에는 가능하다. 일반 사용자의 무계정 기본 경로로 쓰려면 운영자가 provisioning·credential 수명을 대신 관리해야 한다. 기본안에서는 제외한다. |
+| 3 | TURN인가 custom relay인가? | WebRTC에는 TURN. P2P를 명시적으로 유예하는 relay-only 대안에서만 별도 WSS relay를 우선 검토한다. |
+| 4 | 계정 없는 identity는 안전한가? | 가능하다. 최초 키 인증·저장·권한·복구·서버 자원 자격을 구현해야 하며, 키 생성 자체는 비용 남용 방어가 아니다. |
+| 5 | QR pairing에 MITM이 없는가? | 현재 문서로는 보장 불가. QR 신뢰값과 실제 키 교환·DTLS 세션을 인증해 결합하는 규칙이 빠졌다. |
+| 6 | revoke는 어떻게 하는가? | Desktop 권한 목록의 영속 변경, 활성 세션 종료·재개 차단, 구독·미실행 대기열 폐기, 실행 직전 재검사. 이미 전달된 데이터·명령의 회수는 보장하지 않는다. |
+| 7 | 모바일 background는 어떻게 하는가? | foreground 연결·복귀 시 재조회부터 제공한다. background 알림은 별도 범위로 두고 OS의 실행·전달 한계를 따른다. |
+| 8 | 모든 주요 NAT/CGNAT 환경에서 동작하는가? | TURN으로 범위를 넓힐 수 있으나 보장 불가. 차단망·proxy·망 전환·Desktop 수면을 포함한 실측과 실패 UX가 필요하다. |
+| 9 | 악성 relay에도 payload를 보호하는가? | 신원이 결합된 WebRTC DTLS는 TURN에서도 보호한다. 일반 HTTP Tunnel에는 추가 E2E가 필수다. 코드 공급자 신뢰와 메타데이터 노출·지연·차단은 별도다. |
+| 10 | 무서버 범위를 구분했는가? | 원안은 불충분하다. LAN 직접 연결은 공개 서버 없이 가능하지만, 일반 NAT에서 자동 재연결하는 UX에는 signaling과 필요시 relay가 남는다. |
+| 11 | Tailscale/Cloudflare 직접 사용보다 복잡한가? | 그렇다. 사용자 설치·계정 부담을 줄이는 만큼 기기 신뢰·NAT traversal·운영 복잡성을 프로젝트가 맡는다. 네 경로 동시 구현은 현재 범위에 과하다. |
+| 12 | 장기적으로 지속 가능한가? | 트래픽·중계 비율·자원 상한·운영 담당·예산이 정해져야 판단 가능하다. 공개 무제한 무료 relay나 무료 티어만으로는 근거가 부족하다. |
+
+**검증 범위:** 원안 30개 절과 현재 소스·호출부·공식 RFC/제품 문서를 대조한 설계 검토다. 실기 pairing, NAT/CGNAT·강제 TURN·기업망 연결, iOS/Android background, 공격 시뮬레이션, 배터리·중계 비용은 미검증이다. 제품 코드 변경이 없어 빌드·단위 테스트는 실행하지 않았다. 기존 제품의 실제 검증 결과는 [VALIDATION.md](VALIDATION.md)에 있으며 이번 검토를 실환경 통과로 추가하지 않는다.
+
+## D34 — SSH 터미널 관찰과 tmux 수집 검토 (2026-09-10)
+
+**상태: 조사 결과와 구현 후보. 제품 지원·구현 확정 아님.** SSH 사용의 대부분이 tmux라는 요구를 반영하면, 앞선 로컬 터미널 화면 관찰 제안은 주 수집 경로로 부족하다. 텍스트를 읽는 비용보다 관찰할 수 없는 화면과 에이전트 대화 식별·상태 의미가 더 큰 문제다. 실측 범위는 [검증 기록](VALIDATION.md#ssh-터미널-텍스트-비용탭-구조-조사--2026-09-10)에 분리한다.
+
+- **성능:** Microsoft는 TextPattern/TextRange가 프로세스 간 호출을 사용하며 텍스트 캐시를 제공하지 않는다고 설명한다. 한 글자씩 반복 호출하거나 무제한 스크롤백을 매번 가져오는 방식은 피한다. 구현한다면 대상 터미널만 관찰하고 읽는 범위·빈도를 제한하며 UI 스레드에서 분리한다. 변경 이벤트도 출력량에 따라 많아지므로 합쳐 처리해야 한다. 내용 해시 비교는 후속 파싱을 줄일 뿐 이미 수행한 읽기 비용을 없애지 않는다. 현재 짧은 실측의 작은 지연을 제품 전체 CPU·입력 지연 보장으로 사용하지 않는다. [TextPattern 성능](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-understandingperformanceissues), [스레드 지침](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-threading).
+- **Windows Terminal 탭:** 현재 PC에서는 헤더 5개와 본문 1개만 접근성 트리에 노출됐다. 검토한 upstream 소스도 선택 변경 시 본문 컨테이너를 비우고 선택 탭의 Content만 연결한다. 헤더 존재가 비활성 탭 본문 읽기 가능성을 뜻하지 않는다. 창의 프로세스 수명·UI runtime ID·선택 관계로 로컬 요소를 구분하되, 이름·탭 순서·HWND를 에이전트 대화 ID로 쓰지 않는다. 비활성 탭 관찰을 위해 사용자의 탭을 자동 순회하는 방식은 작업 화면을 바꾸므로 채택하지 않는다. [탭 처리 소스](https://github.com/microsoft/terminal/blob/main/src/cascadia/TerminalApp/TabManagement.cpp), [접근성 구조](https://github.com/microsoft/terminal/blob/main/doc/terminal-a11y-2023.md).
+- **tmux:** 일반 SSH의 화면은 tmux가 현재 클라이언트에 그린 합성 화면이다. 보이는 여러 pane은 Windows의 개별 터미널 UI 요소가 아니며, 다른 tmux window·분리된 session·확대 때문에 숨은 pane의 최신 내용은 그 화면에서 얻을 수 없다. 같은 로컬 탭의 본문이 다른 tmux window로 바뀌어도 로컬 UI ID는 그대로일 수 있다. 이전 스크롤백이나 상태줄의 활동 표시는 현재 에이전트 상태 증거가 아니다. [tmux 화면 구성 소스](https://github.com/tmux/tmux/blob/master/screen-redraw.c).
+- **상태:** 프로세스가 존재하거나 출력이 바뀌는 사실은 작업 중의 확정 근거가 아니다. 출력이 멈춰도 추론·네트워크·도구 실행 중일 수 있다. 화면에서 현재 입력/승인 대기 또는 작업 표시를 판독하더라도 에이전트별 검증을 거친 추정값으로 분리한다. `error` 문자열이나 셸 프롬프트 복귀만으로 에이전트 실패·요청 완료를 확정하지 않는다. 가려짐·복사 모드·연결 단절·관찰 공백은 알 수 없음으로 처리하고 마지막 관측 시각을 남긴다. 정확한 working/waiting은 기존 [관찰 로직](desktop/src/main.rs)의 의미에 맞는 요청·종료 이벤트가 필요하다.
+- **원격 설치 없는 후보:** waid의 별도 SSH 연결로 이미 설치된 tmux에 `list-panes -a -F ...`와 제한된 `capture-pane -p -t <pane-id>` 조회를 보내면 동일 tmux 서버 소켓의 숨은 pane도 식별·조회할 수 있다. 명령 이름·경로·pane 상태는 단서이고 코딩 작업 상태는 별도다. 호스트·사용자·소켓·tmux 서버 수명·pane ID를 함께 구분하고, 같은 pane에서 에이전트를 다시 실행한 경우 대화 ID를 별도로 확인해야 한다. 처음에는 범위를 제한한 조회를 검증하고, 지속 스트림이 필요할 때 control mode를 검토한다. control mode의 출력은 연결한 session의 모든 window/pane이며 모든 tmux session 전체가 자동 구독되는 것은 아니다. [tmux 명령·식별자](https://man.openbsd.org/tmux.1), [Control Mode](https://github.com/tmux/tmux/wiki/Control-Mode).
+- **접근 조건:** 위 후보는 원격 플러그인·설정 파일 변경을 요구하지 않아도 추가 SSH 인증, 원격 명령 실행 권한과 해당 tmux 소켓 접근이 필요하다. MFA·점프 호스트·제한 셸 환경에서는 불가능할 수 있으며 기존 터미널의 인증 연결을 임의로 공유할 수 있다고 가정하지 않는다. 이미 존재하는 에이전트 로그를 별도 연결로 읽을 수 있으면 정확한 상태 수집 후보가 되지만 로그·pane 매핑도 검증해야 한다. 원격 명령 조회까지 불가능한 환경에서는 로컬 화면만으로 모든 숨은 세션과 정확한 상태를 자동 확인할 수 없다. [SSH 원격 명령과 인증](https://man.openbsd.org/ssh.1).
+
+원격 수집 후보는 현재 README의 로컬 전용·네트워크 수집 없음 설명을 바꾸는 기능이다. 이번 조사는 원격 연결이나 지원 약속을 추가하지 않았다.
+
+## D35 — 일반 SSH의 로컬 화면 관찰 지원 (2026-09-10)
+
+PowerShell SSH 에이전트 감지 구현 요청에 대해 [D34](#d34--ssh-터미널-관찰과-tmux-수집-검토-2026-09-10)의 보조 경로를 우선 적용했다. 현재 접속 대상에 기존 SSH 설정을 사용하는 읽기 전용 조회를 한 번 시도했지만 비대화형 인증이 거부됐다. 원격 설치·설정 변경 없이 가능한 로컬 화면 감지를 구현하며 별도 로그인·숨은 tmux 전체 수집은 구현하지 않는다. [OpenSSH 인증·BatchMode](https://man.openbsd.org/ssh_config.5)에 따라 기존 터미널의 인증 성공을 새 연결의 인증 가능성으로 간주하지 않는다.
+
+- 기존 `proc::list` 결과에 SSH 클라이언트가 있을 때만 내장 Windows PowerShell/.NET UI Automation으로 노출된 터미널 문서를 읽는다. 추가 Rust 의존성·원격 코드·설정 파일은 없다. 에이전트 배너 또는 Codex 하단 형식과 입력 표시를 함께 확인한다. 탭 제목만으로 에이전트를 만들지 않는다.
+- 최대 16개 문서, 문서당 16,000 UTF-16 단위, 5초 캐시와 4초 프로세스 제한을 둔다. UI 스레드가 아닌 기존 수집기에서 실행하고 창·탭·스크롤·입력은 조작하지 않는다. 프로세스 시작 시각·창·선택 탭·문서 runtime ID·에이전트로 **화면 관찰 항목**을 구분한다. 이는 대화 ID나 tmux pane ID가 아니다.
+- 상태·컨텍스트·원격 cwd·PID·대화 ID·확정 요청 시각은 채우지 않는다. 화면 문자열로 로컬 파일을 열거나 세션 복귀·제외 자동 복원을 수행하지 않는다. 읽을 수 있는 최근 입력/하단 작업명은 추정 미리보기로만 사용한다. 실제 모델 토큰이 보이면 표시한다.
+- SSH 프로세스와 UIA 문서의 정확한 대응은 확인되지 않으므로 같은 PC의 다른 로컬 터미널도 관찰될 수 있다. 이 때문에 호스트를 단정하지 않고 `terminal_screen` 근거와 `화면 관찰` 제목을 노출한다. 비활성 탭·숨은 pane·배너/하단이 없는 화면·동일 화면의 여러 에이전트는 정확히 수집하지 못하며, 화면이 사라지면 해당 관찰 항목도 사라진다. 전체 원격 세션 지원으로 표현하지 않는다.
+
+실측·회귀 검사와 미검증 범위는 [검증 기록](VALIDATION.md#powershell-ssh-화면-감지--2026-09-10)에 둔다.

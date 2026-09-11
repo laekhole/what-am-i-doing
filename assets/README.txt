@@ -32,6 +32,10 @@ waid-on-light.png: 433 × 241 px
 적용 위치
 ---------
 README / GitHub 저장소 첫 화면: waid-horizontal.png (밝은 테마), waid-on-dark.png (어두운 테마)
-앱 상단 / 창 / 작업표시줄: waid-app-icon.png에서 변환한 desktop/assets/waid.png
+앱 상단: waid-mascot.png 원본을 GDI+로 직접 축소 (32 논리 픽셀, 화면 배율 반영)
+창 / 작업표시줄: waid-app-icon.png에서 변환한 desktop/assets/waid.png (256px)
 실행 파일 / 트레이 / 설치·제거 / 시작 메뉴: waid.ico (같은 앱 타일의 16~256px 크기별 이미지)
 아이콘 재생성: 저장소 루트에서 powershell -File assets/build-icons.ps1
+
+question_mark/는 물음표 시안 보관용이며 앱과 빌드에서 참조하지 않습니다.
+상단 마스코트는 투명 PNG를 실제 표시 크기로 한 번만 보간하며, 중간 HICON 확대·축소를 하지 않습니다.

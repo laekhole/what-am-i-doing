@@ -19,6 +19,8 @@ mod theme;
 mod tmpl;
 mod time;
 mod transcript;
+#[cfg(windows)]
+mod terminal;
 
 pub use transcript::ContextUsage;
 
@@ -400,6 +402,9 @@ fn doctor() {
     if let Some(path) = orca::path() {
         println!("\nOrca SSH hook  {} 개 (최근 24시간)\n  {}", orca::collect(now, false).len(), path.display());
     }
+    #[cfg(windows)]
+    println!("\nSSH 터미널 화면 관찰  {} 개 (보이는 Codex·Claude 화면, 상태 미확인)",
+        terminal::collect(&procs, now).len());
 
     // 위 목록을 만들며 읽지 못한 것들. "왜 내 세션이 안 보이지"의 답이다.
     // JSON 스냅샷의 `warnings` 와 같은 출처를 쓴다 — 진단이 두 벌이 되면

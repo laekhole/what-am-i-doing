@@ -1,5 +1,54 @@
 # Windows 검증 기록 — 2026-09-06
 
+## PowerShell SSH 화면 감지 — 2026-09-10
+
+- `cargo test --release --locked --offline`: 최종 코드에서 core **94개**, CLI **6개** 통과. 화면 판별 회귀 검사에는 Codex 배너·하단 표시, Claude 배너, 한글 미리보기, 혼합 에이전트·단순 언급·셸 복귀 제외, 입력 길이 제한, 대화/요청/경로/상태 정보를 지어내지 않는 조건을 포함했다. 최초 배너만 지원하던 코드의 검사는 Windows 정책(os error 4551)으로 실행되지 않았다. 이후 실제 화면에서 배너가 사라지는 경우를 확인해 수정한 최종 코드의 결과와 구분한다. 정책 변경·우회는 하지 않았다.
+- `cargo test --manifest-path desktop/Cargo.toml --target-dir desktop/target/context-label --release --locked --offline`: desktop **31개**, 단일 EXE **1개** 통과, 환경 의존 **3개 ignored**. 이번 변경과 기존 미커밋 UI 수정이 함께 있는 상태의 검사다.
+- 실제 Windows Terminal의 기존 SSH 창을 입력·탭 전환 없이 읽었다. UIA helper는 문서 1개·약 11,000 UTF-16 단위, 읽기 오류 없음이었다. 최종 CLI `--json` 수집 1회는 **2,458ms**에 전체 스냅샷을 반환했고, `terminal_screen` Codex **1개**, 화면과 일치하는 모델, 추정 작업명, Unknown 상태, 비어 있는 context/session_id/cwd/pid를 확인했다. 이 시간은 로컬 로그 수집까지 포함하며 UIA 전용 지연이 아니다. 원문·작업명은 검증 문서에 복사하지 않았다.
+- [새 EXE](target/release/waid-desktop-ssh.exe)는 desktop release 산출물과 SHA-256이 일치한다. 별도 `WAID_DATA_DIR`에서 새 앱을 실행해 접근성 트리의 `화면 관찰` 카드·Codex 모델·추정 미리보기·미확인 상태와 실제 사용 중 바뀐 입력의 반영을 확인했다. 화면 캡처는 기존 항상 위 창/다른 앱에 가려 육안 근거에서 제외했다. 새 EXE의 `--waid-core --json`, `WAID_TERMINAL_SCAN=0`에서 관찰 0개, `--licenses` 실행을 확인했다. 검증용 앱과 자식 수집기만 종료했으며 기존 waid와 기본 설정은 보존했다. 최종 `git diff --check` 통과.
+- 별도 SSH 원격 조회는 `BatchMode=yes`, `StrictHostKeyChecking=yes`, `UpdateHostKeys=no`, `PermitLocalCommand=no`, `ClearAllForwardings=yes`와 연결 제한을 적용해 한 번 시도했으나 인증 단계에서 거부됐다. 원격 명령 실행·tmux 조회·원격 설정 변경 성공으로 기록하지 않는다. 제품은 SSH 연결을 시도하지 않는다.
+- 실제 Claude SSH 화면, 기본 콘솔, 긴 화면/다중 pane/복사 모드, 장시간 성능과 UIA 장애 주입은 미검증이다. 숨은 탭·tmux pane 전체와 정확한 요청/상태/대화 식별은 구현 범위 밖이다. 세부 설계는 [D35](DECISIONS.md#d35--일반-ssh의-로컬-화면-관찰-지원-2026-09-10)에 기록했다.
+
+## SSH 터미널 텍스트 비용·탭 구조 조사 — 2026-09-10
+
+- 10:43 +09:00, 실제 Windows Terminal **1.24.2607.10001**의 기존 창을 읽기 전용으로 조회했다. Orca Computer Use에서 탭 5개와 터미널 본문 1개를 확인했으며, 직접 UI Automation 조회에서도 서로 다른 runtime ID의 TabItem 5개·선택된 탭 1개·`TermControl`의 TextPattern 1개였다. 탭 제목 네 개가 같았다. 탭 선택·포커스·스크롤·원격 명령·설정은 변경하지 않았다. 탭 헤더 TextBlock도 TextPattern을 제공하므로 본문과 구분해야 한다.
+- [측정 스크립트](.tools/ssh-observation/measure-uia.ps1)를 `powershell.exe -NoProfile -Mta -File .tools/ssh-observation/measure-uia.ps1 -WindowHandle <현재 창 핸들> -Repeats 10`으로 실행했다. 조회 대상이 WindowsTerminal인지 확인하고, 직접 API 호출만 Stopwatch로 측정한다. 스크립트·[최종 결과](.tools/ssh-observation/uia-measurements.json)는 Git에서 무시된 로컬 산출물이다. 터미널 본문은 메모리에서 길이만 세며 출력·저장하지 않는다. 창 핸들과 runtime ID는 영구 세션 식별자가 아니다.
+
+| 조회 | 표본 | 중앙값 | 최소–최대 |
+|---|---:|---:|---:|
+| 화면 범위 최대 4,000 UTF-16 코드 단위 | 10회 | 0.436 ms | 0.332–13.505 ms |
+| 문서 끝부분 최대 4,000 UTF-16 코드 단위 | 10회 | 1.1765 ms | 0.860–13.764 ms |
+| 전체 문서 11,062 UTF-16 코드 단위 | 10회 | 0.3685 ms | 0.338–0.465 ms |
+
+- 별도 1회 하위 UI 요소 탐색은 32개·34.145 ms였다. 최대값에는 첫 호출/JIT 등 초기 비용이 섞일 수 있으나 원인을 분리 측정하지 않았다. 전체 문서가 작은 이번 사례에서는 호출 수가 적은 전체 읽기가 끝부분 범위 이동보다 빨랐다. 이 결과를 긴 스크롤백에도 일반화하지 않는다. Orca CLI의 별도 1회 전체 상태 조회 2,341 ms는 CLI·통신·트리 생성 비용을 포함하므로 직접 텍스트 읽기 시간으로 사용하지 않는다.
+- 최초 스크립트는 TextPatternRangeEndpoint 네임스페이스 오류로 실패했고, 설치된 .NET 형식 확인 후 수정했다. 중간 탐색에서 탭 제목 TextBlock도 측정 대상에 포함된 것을 확인해 `TermControl`로 한정한 뒤 위 최종 결과를 얻었다. 길이 상한 검사는 최종 실행에서 통과했다.
+- **한계:** 현재 본문 하나의 짧은 호출 지연 측정이다. 지속적인 CPU·메모리 사용, 입력 지연, 고속 출력, 큰 스크롤백, 수십 개 탭/창, 탭 전환·최소화, 다른 터미널과 UIA 이벤트 폭주는 측정하지 않았다. 실제 원격 tmux의 버전·소켓·인증·숨은 pane 조회 및 에이전트 상태 판독도 미검증이다. 기존 소스의 상태 규칙과 Microsoft/tmux 공식 문서를 대조했으며 설계 판단은 [D34](DECISIONS.md#d34--ssh-터미널-관찰과-tmux-수집-검토-2026-09-10)에 기록했다. 제품 코드 변경이 없어 Cargo 빌드·테스트는 실행하지 않았다.
+
+## 카드 정렬·높이 개선 — 2026-09-10
+
+- `cargo test --manifest-path desktop/Cargo.toml --target-dir desktop/target/context-label --release --locked --offline`: 최종 변경에서 데스크톱 **31개**, 단일 EXE **1개** 통과, 기존 실환경 연결 3개 ignored. 실제 네이티브 카드 갱신·접기·스크롤·행 제거·목록 제외/복원, 과거 상태·컨텍스트·압축 기록의 접근성 문구와 상세 보존을 포함한다. 기존 코어 dead_code 경고 2개는 유지한다.
+- 기본 14px 글꼴에서 접힌 높이는 104px(과거 상태가 하나라도 있으면 125px)에서 94px로 변경했다. 마지막 기록을 컨텍스트 오른쪽에 배치해 별도 전역 높이 상태를 제거했다. 펼친 본문은 526→426px이며 긴 텍스트는 기존 읽기 전용 편집창의 스크롤로 확인할 수 있다.
+- 별도 `WAID_DATA_DIR`와 `--demo`로 125% 배율의 실제 Windows 화면을 확인했다. [변경 전](target/card-layout-preview/before.png), 밝은 테마 [접힘](target/card-layout-preview/daylight-collapsed.png)·[펼침](target/card-layout-preview/daylight-expanded.png), [최소 480 논리 픽셀 폭](target/card-layout-preview/daylight-narrow.png), 어두운 테마 [접힘](target/card-layout-preview/midnight-collapsed.png)·[펼침](target/card-layout-preview/midnight-expanded.png)을 직접 확인했다. 프로젝트·시간·상태 정렬, 프로젝트와 컨텍스트 글자 왼쪽 정렬, 25%·압축·미확인 표시, 클릭 후 접힘 전환과 한 줄 버튼 배치를 검증했다. 다른 창에 가렸거나 초기화가 끝나지 않은 캡처는 증거에서 제외했다.
+- 최종 release EXE를 [target/release/waid-desktop.exe](target/release/waid-desktop.exe)에 복사했고 빌드 산출물과 SHA-256 일치 및 `--licenses` 종료 코드 0·내장 폰트 라이선스를 확인했다. 직접 띄운 샘플만 종료했으며 사용자 기본 설정은 변경하지 않았다. 공개 배포·실제 세션 복귀·다른 DPI·최대 24px 사용자 글꼴의 육안 검증은 수행하지 않았다.
+
+## 기존 아이콘 복원·상단 렌더링 — 2026-09-10
+
+- 사용자가 assets에 복원한 앱 타일·마스코트·가로 로고와 재생성한 ICO·desktop/assets/waid.png가 Git HEAD의 기존 자산과 바이트 단위로 일치합니다. ICO의 9개 PNG 프레임 크기·RGBA·투명도와 디코딩을 확인했습니다. question_mark 보관 폴더는 변경하지 않았고 활성 빌드에서 참조하지 않습니다.
+- 상단 마스코트는 96px HICON 변환 후 DrawIconEx 재축소를 제거하고, 기존 GDI+로 원본 PNG를 현재 창의 DPI에 맞춘 32 논리 픽셀 크기에 직접 그립니다. [Microsoft의 보간 품질 설명](https://learn.microsoft.com/en-us/windows/win32/gdiplus/-gdiplus-using-interpolation-mode-to-control-image-quality-during-scaling-use)에 따라 HighQualityBicubic을 지정했습니다. 메모리 스트림은 이미지 해제 뒤 Release하며 새로운 패키지 없이 windows-sys의 Com 기능만 활성화했습니다.
+- 변환 대상 PNG가 이미지 미리보기에 매핑되어 기존 직접 덮어쓰기는 실패했습니다. 임시 파일 완성 후 File.Replace로 교체하도록 수정한 스크립트가 실제 매핑 상태에서도 성공했고, 결과 PNG·ICO의 원본 일치를 확인했습니다.
+- `cargo test --manifest-path desktop/Cargo.toml --target-dir desktop/target/context-label --release --locked --offline --bin waid-desktop`: 컴파일 성공, 테스트 실행 파일은 Windows 애플리케이션 제어 정책(os error 4551)으로 **실행되지 않았습니다**. 추가한 32·40·48·64·96px 및 밝고 어두운 배경의 네이티브 렌더링 회귀 검사도 미실행입니다. Com 기능 누락으로 생긴 초기 컴파일 오류는 수정했으며 정책 변경·우회는 하지 않았습니다.
+- 같은 캐시의 `cargo build --manifest-path desktop/Cargo.toml --target-dir desktop/target/context-label --release --locked --offline`는 종료 코드 0입니다. 최종 파일을 요청한 [target/release/waid-desktop.exe](target/release/waid-desktop.exe)에 복사했습니다. 4,566,016 bytes, SHA-256 `7927f4e9cf3ca500b88b39a459dab0b397ea48546c8354279025de7e9ab42a69`. 이전 question-logo 실행 파일의 실제 출력 위치는 desktop/target/context-label/release였으며 루트 target/release에 있었던 것은 아닙니다.
+- 최종 EXE의 `--licenses` 종료 코드 0, PE 아이콘 리소스 9개와 복원한 ICO의 바이트 일치, 기존 마스코트 PNG 포함·물음표 PNG 미포함을 확인했습니다. 별도 WAID_DATA_DIR·샘플 모드로 최종 EXE를 직접 실행하고 750×975 물리 픽셀(기본 600×780, 125%)에서 [밝은 테마](target/logo-rollback-preview/daylight.png)와 [어두운 테마](target/logo-rollback-preview/midnight.png)의 상단 윤곽·눈·투명 배경을 확인했습니다. 이 PNG들은 무시된 로컬 검증 산출물입니다. 직접 띄운 샘플만 종료했고 사용자 기본 설정은 수정하지 않았습니다.
+- `git diff --check` 통과. 기존 코어 dead_code 경고 2개는 유지합니다. 전체 자동 테스트·다른 배율의 실화면·Mac 실행·설치 프로그램 재설치·공개 배포는 미실행입니다.
+
+## 물음표 마스코트 로고 — 2026-09-10
+
+- 1254px 원본 두 개를 유지하고 기존 PowerShell 변환 코드로 Windows 앱 타일 256px, 상단 마스코트 96px, ICO 9개 크기(16·20·24·32·40·48·64·128·256px)를 생성했습니다. 모든 ICO 엔트리의 크기·오프셋·RGBA·투명도와 PNG 디코딩, 256px 엔트리와 앱 PNG의 바이트 일치를 확인했습니다.
+- `cargo test --manifest-path desktop/Cargo.toml --target-dir desktop/target/context-label --release --locked --offline --bin waid-desktop`: 30개 통과, 실환경 연결 3개 ignored. 상단 마스코트 참조를 96px 파생본으로 바꾼 뒤 `native::tests::window_controls_persist_and_maximize_is_unavailable`를 다시 실행해 통과했습니다. 새 PNG 두 개의 Windows 디코딩과 창·설정 경로를 확인하며, 기존 코어 dead_code 경고 2개는 유지합니다.
+- Windows SDK `rc.exe` 경로를 해당 빌드 셸에만 추가하고 같은 캐시에서 `cargo rustc ... -- -C extra-filename=-question-logo` release 빌드를 완료했습니다. 최종 [새 EXE](desktop/target/context-label/release/waid-desktop-question-logo.exe)의 PE 아이콘 리소스 9개가 새 ICO와 바이트 단위로 일치하며 `--licenses`가 종료 코드 0으로 내장 라이선스를 반환했습니다.
+- 별도 `WAID_DATA_DIR`와 `--demo`로 화면 확인했습니다. 첫 캡처는 다른 창에 가려져 제외했고, 샘플 전용 항상 위 설정으로 상단의 물음표와 32 논리 픽셀 배치를 확인했습니다. 큰 원본을 직접 로딩한 외곽선이 거칠어 96px bicubic 파생본으로 보완했습니다. 파생 PNG 육안 확인과 최종 EXE 네이티브 디코딩은 통과했으나 최종 화면 캡처는 이미지 보기 창에 가려져 개선 후 화면 증거로 인정하지 않았습니다. 직접 띄운 샘플 프로세스만 종료했습니다.
+- 설치 스크립트의 Windows 앱 설정·시작 메뉴·설치/제거 아이콘 연결과 Mac 패키징의 새 원본 참조를 소스로 확인했습니다. 실제 재설치·설치된 앱 아이콘 캐시·Mac 실행/패키징·공개 배포는 미실행입니다. README.ko.md는 읽거나 수정하지 않았습니다.
+
 ## v0.2.0 기능·문서 검토 — 2026-09-09
 
 - 현재 코어·데스크톱 패키지 버전은 모두 `0.2.0`입니다. README 두 언어와 `releases/v0.2.0.md`를 수집·상태·정리·컨텍스트·세션 복귀·템플릿·CLI·배포 구현에 맞춰 검토했습니다. 공개 Windows 릴리스와 v0.3.0 Mac 개발 단계를 구분합니다.

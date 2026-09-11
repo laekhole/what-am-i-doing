@@ -495,14 +495,14 @@ mod tests {
             "compaction_observed":true,"compacted_at":1788915540
         }}]});
         let row = crate::snapshot_rows(source.to_string().as_bytes()).unwrap().rows.remove(0);
-        assert_eq!(row.context_summary(), "컨텍스트 62.0% · 압축됨");
+        assert_eq!(row.context_summary(), "남은 컨텍스트 38.0% · 압축됨");
         assert!(row.context_detail().contains("124,000 / 한도 200,000"));
         assert!(row.context_detail().contains(&crate::time::to_iso8601(1788915600)));
-        assert!(row.accessible_text().contains("컨텍스트 62.0%"));
+        assert!(row.accessible_text().contains("남은 컨텍스트 38.0%"));
         let restored = saved_row(&row_value(&row)).unwrap();
         assert_eq!(restored.context, row.context);
         let unknown = Row::default();
-        assert_eq!(unknown.context_summary(), "컨텍스트 미확인");
+        assert_eq!(unknown.context_summary(), "남은 컨텍스트 미확인");
         assert!(unknown.context_detail().contains("압축 (UTC)  기록 미확인"));
         assert_eq!(saved_row(&json!({"id":"old"})).unwrap().context, unknown.context);
         let invalid = crate::context_value(&json!({"used_tokens":-1,"window_tokens":0,"observed_at":i64::MAX}));
@@ -510,19 +510,19 @@ mod tests {
         let mut zero = unknown.clone();
         zero.context.used_tokens = Some(0);
         zero.context.window_tokens = Some(200000);
-        assert_eq!(zero.context_summary(), "컨텍스트 0.0%");
+        assert_eq!(zero.context_summary(), "남은 컨텍스트 100.0%");
     }
     #[test]
     fn context_badges_include_the_quarter_boundary_and_compaction_without_a_limit() {
         for (used, limit, compacted, highlighted, label) in [
-            (Some(149999), Some(200000), false, false, "컨텍스트 75.0%"),
-            (Some(150000), Some(200000), false, true, "컨텍스트 25.0% 남음"),
-            (Some(160000), Some(200000), true, true, "컨텍스트 20.0% 남음 · 압축됨"),
-            (Some(200001), Some(200000), false, true, "컨텍스트 0.0% 남음"),
-            (None, Some(200000), true, true, "컨텍스트 미확인 · 압축됨"),
-            (Some(150000), None, false, false, "컨텍스트 미확인"),
-            (Some(150000), Some(0), false, false, "컨텍스트 미확인"),
-            (Some(32000), Some(200000), true, true, "컨텍스트 16.0% · 압축됨"),
+            (Some(149999), Some(200000), false, false, "남은 컨텍스트 25.0%"),
+            (Some(150000), Some(200000), false, true, "남은 컨텍스트 25.0%"),
+            (Some(160000), Some(200000), true, true, "남은 컨텍스트 20.0% · 압축됨"),
+            (Some(200001), Some(200000), false, true, "남은 컨텍스트 0.0%"),
+            (None, Some(200000), true, true, "남은 컨텍스트 미확인 · 압축됨"),
+            (Some(150000), None, false, false, "남은 컨텍스트 미확인"),
+            (Some(150000), Some(0), false, false, "남은 컨텍스트 미확인"),
+            (Some(32000), Some(200000), true, true, "남은 컨텍스트 84.0% · 압축됨"),
         ] {
             let row = Row { context: waid::ContextUsage {
                 used_tokens: used, window_tokens: limit, compaction_observed: compacted,
