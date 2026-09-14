@@ -1,5 +1,20 @@
 # CLI 사용과 확장
 
+## English / 한국어
+
+The CLI and bundled HTML dashboard support English and Korean. The system language is used by default (Korean for `ko`, English otherwise). Set `WAID_LANG=en` or `WAID_LANG=ko`, or use `--lang` to override it for one run:
+
+```sh
+waid --lang en --help
+waid --lang en doctor
+waid --lang en --html --watch
+waid --lang ko --html > snapshot.html
+```
+
+The live localhost dashboard has a **Language / 언어** selector. Its `?lang=en` or `?lang=ko` URL preserves the choice during live updates and can be bookmarked. Static HTML exports use the CLI language. Your requests, answers, paths, agent/model identifiers and JSON schema are preserved. CLI language selection is separate from the native app's saved language setting.
+
+한국어는 `--lang ko`, 영어는 `--lang en`으로 선택합니다. 실시간 HTML 대시보드는 **Language / 언어**에서 바꿀 수 있으며 갱신 후에도 URL의 언어 선택을 유지합니다.
+
 네이티브 앱은 TEMPLATES.md의 JSON 템플릿을 사용합니다.
 
 ## CLI 커스터마이징
@@ -68,6 +83,7 @@ waid --html --keys
 |---|---|
 | `{{count}}` `{{count.waiting}}` | 전체/상태별 세션 수 |
 | `{{any}}` `{{any.waiting}}` | 존재 여부 (조건 분기용) |
+| `{{language}}` `{{language.ko}}` `{{language.en}}` | 표시 언어 코드와 언어별 조건 |
 | `{{title}}` | `디렉터리/브랜치` |
 | `{{agent.display}}` | `Claude Code`, `Codex` … |
 | `{{llm.display}}` `{{llm.present}}` | 모델명, 알아냈는지 여부 |

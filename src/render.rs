@@ -209,7 +209,7 @@ fn cell(s: &Session, col: &Column, theme: &Theme, st: &Style) -> Cell {
 
 pub fn table(sessions: &[Session], theme: &Theme, st: &Style) -> String {
     if sessions.is_empty() {
-        return "실행 중인 코딩 에이전트가 없습니다.\n".to_string();
+        return crate::i18n::tr("실행 중인 코딩 에이전트가 없습니다.\n", "No coding agents are running.\n").to_string();
     }
 
     let rows: Vec<Vec<Cell>> = sessions

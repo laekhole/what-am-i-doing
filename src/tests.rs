@@ -430,7 +430,7 @@ fn populated_default_template_keeps_all_five_fields() {
         branch: None,
         pid: None,
     };
-    let html = crate::html::render(&[session.clone()], 110, crate::html::DEFAULT_TEMPLATE);
+    let html = crate::html::render_language(&[session.clone()], 110, crate::html::DEFAULT_TEMPLATE, crate::i18n::Language::Korean);
     for field in [
         "Windows MVP",
         ">Codex</span>",
@@ -442,10 +442,14 @@ fn populated_default_template_keeps_all_five_fields() {
         assert!(html.contains(field), "missing {field}");
     }
     assert!(!html.contains("{{"));
+    let english = crate::html::render_language(&[session.clone()], 110, crate::html::DEFAULT_TEMPLATE, crate::i18n::Language::English);
+    assert!(english.contains("<html lang=\"en\">") && english.contains("Waiting"));
+    assert!(english.contains("작업 &lt;검증&gt;") && !english.contains("작업 <검증>"));
+    assert!(!english.contains("내 차례") && !english.contains("{{"));
     session.task.text = None;
     session.llm_id = None;
     session.llm_display = None;
-    let html = crate::html::render(&[session], 110, crate::html::DEFAULT_TEMPLATE);
+    let html = crate::html::render_language(&[session], 110, crate::html::DEFAULT_TEMPLATE, crate::i18n::Language::Korean);
     assert!(html.contains("— 지시 내용 없음"));
     assert!(html.contains("<span class=\"chip\">—</span>"));
     assert!(html.contains(">Codex</span>"));
@@ -454,9 +458,11 @@ fn populated_default_template_keeps_all_five_fields() {
 #[test]
 fn default_template_renders_without_leftover_tags() {
     // 기본 템플릿과 컨텍스트가 어긋나면 화면에 {{...}} 가 그대로 남는다.
-    let out = crate::html::render(&[], crate::time::now(), crate::html::DEFAULT_TEMPLATE);
+    let out = crate::html::render_language(&[], crate::time::now(), crate::html::DEFAULT_TEMPLATE, crate::i18n::Language::Korean);
     assert!(!out.contains("{{"), "미치환 태그 잔존: {out}");
     assert!(out.contains("data-waid-root"), "갱신 훅이 사라졌다");
+    assert!(out.find("</form>").unwrap() < out.find("<div data-waid-root>").unwrap(),
+        "Live updates must preserve the language form's selection and focus");
     assert!(
         out.contains("돌고 있는 코딩 에이전트가 없습니다"),
         "빈 상태가 안 나온다"

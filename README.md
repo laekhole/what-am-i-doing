@@ -24,11 +24,13 @@ A native desktop app that shows the **current task, project, agent/model, and la
 | Context visibility | See the latest logged usage and compaction evidence. When 25% or less remains, the Windows card/list emphasizes the remaining percentage; observed compaction is also emphasized. |
 | Session organization | Search and filter, pin, hide, exclude and restore sessions. A distinguishable new user request automatically restores an excluded conversation. |
 | Return to work | Open an exact existing local Orca session, an associated ChatGPT link, or a manually connected supported Windows window. [Target-specific limits](#session-return) apply. |
-| Desktop convenience | Expandable one-column cards or a two-column list, always on top, 0–60% transparency, taskbar minimize, tray hide/restore and keyboard shortcuts on Windows. |
+| Desktop convenience | Expandable cards or a two-column list, always on top, transparency, taskbar minimize, and a Windows tray with session shortcuts, status summaries and quiet reply notifications. |
 | Custom appearance | Daylight/Midnight JSON templates with edit, preview, apply, import and export; settings persist across restarts. |
 | Local tools | CLI tables, streaming JSON, a localhost HTML dashboard, custom log adapters and `waid doctor` diagnostics. |
 
-Windows controls and status labels are currently primarily Korean; English names in this guide explain their function. Mac uses native AppKit controls with some shared Korean status/detail text. A language selector is not implemented.
+The current source supports **English and Korean** in the Windows app, Mac app, CLI and bundled local HTML dashboard. The published v0.2.0 EXE predates this language selector; build the current source until a newer release includes it.
+
+Use **English / 한국어** at the top of the Windows window or the tray language choices; on Mac, use the language selector beside Templates. The choice applies immediately and is saved across restarts. New installations follow the system language (Korean for Korean, English otherwise); existing settings without a language field retain Korean. Prompts, answers, project names and custom templates remain in their original language. Collector diagnostics retain the language used at launch until you restart waid; operating-system dialogs and errors follow the OS language. For CLI output, use `waid --lang en` or `waid --lang ko`; `WAID_LANG` overrides automatic language detection. The live HTML dashboard has its own language selector.
 
 ## Before you start
 
@@ -108,6 +110,12 @@ If local Windows application control blocks Rust tests or build scripts, use the
 
 Building on GitHub avoids a local build restriction, but downloaded EXEs still face the PC's application control policy. Authenticode signing and timestamping remain future release work; see [Microsoft's Smart App Control signing guidance](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control).
 
+The [Code signing policy](SIGNING.md) records the proposed SignPath Foundation path and application draft. The application has not been submitted or approved; existing releases remain without Authenticode signing.
+
+### Removing waid
+
+Choose **Exit** from the tray menu, then delete the portable EXE and any verification files you downloaded. To also remove saved settings and conversation previews, delete only waid's data folder: `%LOCALAPPDATA%\waid` on Windows, or your chosen `WAID_DATA_DIR`. Keep a backup if you want to restore it later. The coding agents' original logs are separate and should be kept.
+
 ## Build from source on Windows
 
 Only developers building from source need Rust (including Cargo) and linker tools for their Windows target. From the repository root:
@@ -134,7 +142,10 @@ The default window is **600×780 logical pixels**, with expandable session cards
 - **Transparency** opens a **0–60%** slider. Always-on-top and transparency settings persist across restarts.
 - Click a card header to expand the latest request, answer, and first prompt. Use the prompt's copy button to copy it. Collapsed cards show minutes ago within an hour, hours ago within 24 hours, and `yy-mm-dd` afterward; expanded cards always show `yy-mm-dd`.
 - Click a harness logo or **Open session** to return to its saved connection, or to the matching existing Orca session when no connection is saved. Use **Connect (연결)** in the expanded controls or **···** menu to select an existing supported window, associate a copied ChatGPT session link, or clear a connection. See [Session return](#session-return) for the supported targets.
-- **Minimize** keeps the window on the taskbar for normal restoration. **Close** hides it in the system tray. Click the tray icon to restore it, or choose **Exit** from its menu to quit.
+- **Minimize** keeps the window on the taskbar for normal restoration. **Close** hides it in the system tray and explains this once. Collection continues while hidden. Click the tray icon to restore it, or choose **Exit** from its menu to quit.
+- **Tray status and shortcuts:** hover for new-reply, Waiting, Working, Error and Unknown counts. Right-click for up to eight Waiting sessions, with new replies first; select one to use the existing session-return connection, or see its details if return is unavailable. **Show all Waiting (내 차례 모두 보기)** clears the window's search/agent filters and opens the Waiting list. Tray counts use the normal recent-session scope and always exclude hidden, dismissed and auxiliary sessions, independently of the window's search and Show all options. A badge marks new replies; a warning badge and text also expose collection errors/warnings. After a collection error, counts describe the last successful snapshot.
+- **Reply notifications:** Windows tray notifications are enabled by default, silent, and grouped over two seconds. They use project and agent names, without prompt/answer text. Only reliably observed post-launch request completions qualify; repeated snapshots, pre-launch answers and screen-only SSH observations do not trigger alerts. Clicking a single-reply notification opens that session; grouped or outdated notifications open the current Waiting list. Notifications are skipped while the waid window is in the foreground or Windows reports that notifications would be disruptive; Windows settings may also suppress them. New-reply markers remain available in the tray even when a banner is not shown. This uses the existing native tray API; persistent notification-center history is not promised.
+- **New reply is separate from Waiting:** explicitly opening a card or its details, or choosing **Clear new-reply markers (새 답변 표시 모두 지우기)**, clears the new marker without changing the session's observed state. Opening the original agent app does not establish that its answer was read. A new request clears the previous marker. Reply tracking starts fresh with each waid launch. Toggle **Reply notifications (답변 도착 알림)** in the tray to save the preference, or use **Pause for one hour (알림 1시간 쉬기)** for this run; paused notifications are not replayed afterward.
 - **···** expands the details, search, pin, dismiss, and template controls. Double-click a two-column list item or press Enter to open its session.
 - **Search** (`Ctrl+F`) opens the expanded view. Search tasks, projects, models, agents, and folders, combined with status and agent filters. Use **Compact** or Esc to return to the small window.
 - **Do not show in waid (waid에서 보지 않기)** in an expanded card removes that session from waid's default list only. The toolbar calls this **보지 않기** (`Ctrl+D`). It never deletes the original conversation or stops its agent. Find excluded sessions in **Show all (전체 보기)** and use **Restore** to bring them back. A session returns automatically when you send a **new user request in that conversation**, including from JSON-file and SQLite sources. Merely opening the conversation does not restore it. Revival needs distinguishable request evidence; a repeated identical request cannot be detected when the source exposes no changed request ID, request timestamp, or user-message history. Idle status, waiting for a response, or a missing process alone never removes it automatically. Up to 1,024 excluded sessions can be saved; restore entries to free space.
@@ -240,6 +251,8 @@ The HTML watch dashboard defaults to `http://127.0.0.1:7423`; `--port 0` chooses
 
 [CLI extensions](CLI.md) · [User templates](TEMPLATES.md) · [Validation record](VALIDATION.md) · [Product scope](PRODUCT.md) · [Design decisions](DECISIONS.md) · [Development history](HISTORY.md)
 
+[Reddit and GeekNews launch drafts](LAUNCH.md) are prepared for the bilingual build; they have not been posted.
+
 [Development history](HISTORY.md) records each project request, resulting changes, checks, and remaining work in Korean. The repository's [agent instructions](AGENTS.md) require an update for each project-related request; this is an agent-maintained work log, not an automatic capture of conversations.
 
 ## Contributors and AI assistance
@@ -251,4 +264,4 @@ Created and maintained by [laekhole](https://github.com/laekhole), with AI codin
 
 AI contributions are acknowledged in commit messages with `Co-authored-by` trailers.
 
-MIT
+waid source code is licensed under the [MIT License](LICENSE). Bundled Pretendard fonts retain their [SIL Open Font License](desktop/assets/fonts/LICENSE.txt); third-party assets retain their respective rights.

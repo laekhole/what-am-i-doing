@@ -15,6 +15,7 @@ use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::sync::OnceLock;
+use crate::i18n::tr;
 
 const OK: i32 = 0;
 const ROW: i32 = 100;
@@ -166,7 +167,7 @@ fn run(api: &Api, file: &Path, sql: &str, flags: i32) -> Result<Vec<Row>, String
     unsafe {
         if (api.open)(path.as_ptr(), &mut db, flags, null()) != OK {
             let why = if db.is_null() {
-                "열지 못했습니다".to_string()
+                tr("열지 못했습니다", "Could not open database").to_string()
             } else {
                 text_at((api.errmsg)(db))
             };
@@ -211,9 +212,9 @@ fn run(api: &Api, file: &Path, sql: &str, flags: i32) -> Result<Vec<Row>, String
 
 /// 읽기 전용 질의. 열 이름 그대로 돌려준다.
 pub fn query(file: &Path, sql: &str) -> Result<Vec<Row>, String> {
-    let api = api().ok_or("SQLite 라이브러리를 찾지 못했습니다")?;
+    let api = api().ok_or(tr("SQLite 라이브러리를 찾지 못했습니다", "SQLite library not found"))?;
     if !file.exists() {
-        return Err("파일이 없습니다".into());
+        return Err(tr("파일이 없습니다", "File not found").into());
     }
     match run(api, file, sql, OPEN_READONLY) {
         Ok(rows) => Ok(rows),
@@ -221,7 +222,7 @@ pub fn query(file: &Path, sql: &str) -> Result<Vec<Row>, String> {
         // 원본은 건드리지 않고 사본으로 한 번만 다시 시도한다.
         Err(first) => match copy_aside(file) {
             Some(copy) => run(api, &copy, sql, OPEN_READONLY)
-                .map_err(|second| format!("{first} (사본도 실패: {second})")),
+                .map_err(|second| crate::trf!("{first} (사본도 실패: {second})", "{first} (copy also failed: {second})")),
             None => Err(first),
         },
     }
@@ -256,6 +257,6 @@ fn copy_aside(file: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 pub fn exec(file: &Path, sql: &str) -> Result<(), String> {
-    let api = api().ok_or("SQLite 라이브러리를 찾지 못했습니다")?;
+    let api = api().ok_or(tr("SQLite 라이브러리를 찾지 못했습니다", "SQLite library not found"))?;
     run(api, file, sql, 0x2 | 0x4).map(|_| ())
 }

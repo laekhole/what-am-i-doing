@@ -54,6 +54,39 @@ fn embed_icon() {
     println!("cargo:rerun-if-changed={}", icon.display());
 
     let out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    let version = env!("CARGO_PKG_VERSION");
+    let numeric_version = [
+        env!("CARGO_PKG_VERSION_MAJOR"),
+        env!("CARGO_PKG_VERSION_MINOR"),
+        env!("CARGO_PKG_VERSION_PATCH"),
+        "0",
+    ].map(|part| part.parse::<u16>().expect("Windows version components must fit in 16 bits").to_string()).join(",");
+    let source = format!(r#"{}
+1 VERSIONINFO
+FILEVERSION {numeric_version}
+PRODUCTVERSION {numeric_version}
+FILEOS 0x40004
+FILETYPE 1
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "ProductName", "waid"
+            VALUE "ProductVersion", "{version}"
+            VALUE "FileVersion", "{version}"
+            VALUE "FileDescription", "waid - what am I doing?"
+            VALUE "OriginalFilename", "waid-desktop.exe"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
+"#, std::fs::read_to_string(&resource).unwrap());
+    let resource = out.join("waid.rc");
+    std::fs::write(&resource, source).unwrap();
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap();
     let (compiler, output, args): (PathBuf, PathBuf, Vec<String>) = if target_env == "msvc" {
         let compiler = find_tool("rc.exe", &manifest_dir);

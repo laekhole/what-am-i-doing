@@ -1,5 +1,33 @@
 # Windows 검증 기록 — 2026-09-06
 
+## 오픈소스 서명 신청과 EXE 메타데이터 준비 — 2026-09-14
+
+- GitHub API로 저장소 공개 상태와 기존 v0.2.0 단일 EXE 릴리스를 확인했다. SignPath 공식 신청 페이지와 공개된 임베드 폼 정의를 읽어 개인 유지관리자 선택, 회사명 선택사항, 필수 프로젝트·평판·연락처 정보와 동의·reCAPTCHA를 확인했다. 제출·계정 접근·MFA 상태 검사는 수행하지 않았다. 초기 프로젝트의 평판 심사 통과 여부는 미확정이다.
+- 두 Cargo 패키지와 README의 기존 MIT 선언을 대조해 누락된 [LICENSE](LICENSE) 전문을 추가했다. [신청 초안](SIGNING.md)의 로컬 문서 링크가 존재함을 검사했다. 모든 외부 의존성·폰트·로고의 지원 자격과 배포 고지를 포괄적으로 검증한 것은 아니다.
+- Windows SDK를 명령 범위 PATH에 추가한 `cargo build --manifest-path desktop/Cargo.toml --target-dir desktop/target/context-label --release --locked --offline` 성공. 기존 core dead_code 경고 2개가 남는다. 빌드에서 원래 아이콘·manifest 리소스 뒤에 Cargo 버전 기반 VERSIONINFO를 생성하며 서명자 명의를 넣지 않는다.
+- `./desktop/test-version-info.ps1 -Executable ./desktop/target/context-label/release/waid-desktop.exe` 통과: ProductName=`waid`, 문자열 FileVersion/ProductVersion=`0.2.0`, 숫자 버전=`0.2.0.0`, 설명·원본 파일명 일치. 이전 메타데이터 없는 EXE는 검사기가 거부했다. 루트 재검사의 첫 인자명 오타는 수정 후 정상 통과로 구분했다. EXE는 실행하지 않았고 `Get-AuthenticodeSignature`는 여전히 `NotSigned`/`None`이다.
+- `git diff --check` 통과. MSVC 리소스 빌드만 검증했으며 로컬 GNU target/windres가 없어 GNU 빌드는 미검증이다. 앱 동작 변경이 없는 리소스 준비여서 전체 Cargo 테스트를 재실행하지 않았다. 기존 전달용 bilingual EXE는 덮어쓰지 않았다. SignPath 승인·Authenticode 실제 서명·Smart App Control 실행 확인과 앞선 앱 영문화의 최종 실행 검증은 남아 있다.
+
+## 한국어·영어 전환과 소개글 준비 — 2026-09-14
+
+- `cargo test --release --locked --offline`: core **95개**, CLI 통합 **7개** 통과. 한국어·영어 help/진단/오류, `--lang` 검증과 `WAID_LANG` 우선순위, 영문 HTML의 한국어 대화 원문 보존·escaping·JSON 상태 불변·URL 언어 선택·SSE 갱신을 검사했다. 이후 언어 폼을 갱신 영역 밖에 두고 localhost 별칭을 허용한 최종 HTML의 template 검사 2개와 HTTP/SSE 통합 검사 1개도 통과했다. 번들 JavaScript 구문·loopback 호스트 분기와 폼 위치 확인을 수행했다.
+- 배지 문구 축약 전 `cargo test --manifest-path desktop/Cargo.toml --target-dir desktop/target/context-label --release --locked --offline`: desktop **35개**, 단일 EXE **1개** 통과, 환경 의존 **4개 ignored**. core와 합쳐 **138개 통과**다. 언어 설정 왕복·기존 설정 한국어 유지·대화 원문 보존과, 별도 프로세스의 Win32 컨트롤/상태/접근성/트레이 언어 전환을 검사했다. 설정 파일 잠금으로 저장 실패를 주입해 기존 언어·화면·저장 파일·미저장 표시를 보존함도 확인했다. 기존 native 검사 그룹은 한국어와 영어 환경 각각 7개 통과/1개 ignored였으며 GDI 개수는 반복 시 62로 유지됐다.
+- 별도 `WAID_DATA_DIR=target/english-qa`와 `--demo`로 실제 사용자 대화를 수집하지 않는 중간 EXE를 실행했다. Computer Use의 접근성 트리로 영문 메뉴·샘플 카드·컨텍스트 상세를 확인했다. 도구의 화면 캡처는 다른 창에 가려 시각 근거에서 제외했다. PID·실행 경로·창 소유자를 검증하는 로컬 Win32 helper로 샘플 창만 렌더링한 [영문 카드](target/english-qa/cards-en.png), [영문 목록](target/english-qa/native-en.png), [영문 필터](target/english-qa/filters-en.png), [한국어 전환](target/english-qa/filters-ko.png)을 확인했다. 이는 PrintWindow 렌더링과 네이티브 메시지 호출이며 물리적 마우스 조작·혼합 DPI 검증은 아니다. 영문 필터/버튼/본문의 읽기와 즉시 한국어 전환을 확인했다.
+- 위 카드에서 긴 영문 컨텍스트가 잘리는 점을 보고 최종 코드의 Windows 배지를 `25.0% left · Compacted` / `Context ? · Compacted`로 줄였다. 카드 너비 계산과 카드·목록의 표시가 같은 함수를 사용하며 한국어·상세·접근성 문구는 유지한다. 해당 배지 assertions를 기존 격리 검사에 추가했다. **이 마지막 수정 후 desktop 검사 바이너리는 컴파일됐으나 Windows 앱 제어 정책(os error 4551)으로 실행 전 차단**됐다. 앞선 138개 통과를 이 최종 검사의 통과로 대체하지 않는다.
+- 최종 `cargo build --manifest-path desktop/Cargo.toml --target-dir desktop/target/context-label --release --locked --offline` **종료 코드 0**. [전달용 EXE](target/release/waid-desktop-bilingual.exe)는 빌드 산출물과 SHA-256 `dfd05c535fbbb102657a8a79525084895c267a1d2448cf6d5de62a707086a8ec`가 일치한다. 이 최종 EXE의 샘플 실행 역시 Windows 앱 제어에 차단돼 최종 배지 실화면·재실행 검증은 미완료다. 정책 변경·우회·다른 이름으로 테스트 차단 우회는 하지 않았다. 기존 core dead_code 경고 2개는 남는다.
+- Mac Rust/Swift에 선택·메뉴·접근성·편집기 갱신을 반영하고 기존 action/스모크 검사를 보강했다. action 검사는 별도 프로세스로 격리해 전역 언어 변경이 병렬 검사에 간섭하지 않는다. Rust 구문 검토와 차이 검사는 통과했지만 **이 Windows 환경에서 Swift 컴파일·Mac 스모크·실기는 미실행**이다. 기존 Mac CI 성공을 이번 변경의 결과로 주장하지 않는다.
+- `git diff --check` 통과. 기존 실행 중인 waid·사용자 설정·대화를 보존했고 검증용 샘플 프로세스만 종료했다. [소개글](LAUNCH.md)은 로컬 초안이며 커밋·푸시·새 릴리스·Reddit/GeekNews 게시를 하지 않았다. 공개된 v0.2.0 EXE는 이번 영어 전환을 포함하지 않는다. 수집 진단은 시작 언어를 유지하고 운영체제 문구·사용자 템플릿은 번역 대상이 아닌 제약을 README와 [D37](DECISIONS.md#d37--한국어영어-전환과-공개-소개-준비-2026-09-14)에 기록했다.
+
+## 트레이 세션 요약과 답변 알림 — 2026-09-14
+
+- Windows SDK 10.0.26100.0의 `rc.exe`를 해당 명령의 PATH에 추가하고 `cargo test --manifest-path desktop/Cargo.toml --target-dir desktop/target/tray --release --locked --offline` 실행: 제품 코드의 최종 동작 변경까지 반영한 **desktop 33개·단일 EXE 1개 통과**, 기존 환경 의존 3개 ignored. 새 요청별 중복 제거, 실행 전 답변 제외, Waiting→Waiting의 새 요청, 숨김/재등장, 신뢰 없는 화면 관찰, 묶기, 확인 표시와 Waiting 분리, 필터 독립성, UTF-16 길이 제한을 검사했다. 네이티브 검사에서는 숨긴 창의 갱신·메뉴 항목·콜백을 통한 세션 선택/상세 복귀·알림 설정 저장·수집 오류 표시·Explorer 아이콘 재등록과 배지 100회 갱신의 GDI 증가 상한(+2)을 확인했다.
+- 별도 설정/어댑터 경로에서 **샘플 로그 하나만 읽는 실제 EXE**를 실행했다. 기본 어댑터 12개를 샘플 경로/감지하지 않는 실행명으로 대체하고 Orca hook 경로와 SSH 화면 관찰을 분리한 뒤 `doctor`에서 reader 1개·샘플 1개·실행 감지/Orca/SSH 0개를 확인했다. 실행 전 답변의 미확인 표시와 첫 닫기 안내, 저장된 안내 확인값, 창을 숨긴 상태에서 새 요청/답변을 추가했을 때 `작업 중 1`→`새 답변 1 · 내 차례 1` 갱신을 확인했다. [실제 메뉴 캡처](target/tray-qa/menu.png)는 최종 제품 동작 빌드의 샘플 세션이며 실제 사용자 대화가 아니다.
+- Orca Computer Use의 창 목록·접근성 조회를 사용했다. 숨긴 앱/일시적인 메뉴는 도구에서 찾지 못하는 경우가 있고 일부 창 캡처는 다른 앱/경계 밖 픽셀이 섞여 시각 근거에서 제외했다. 샘플 PID·실행 경로를 검증하는 로컬 Win32 보조 스크립트로 샘플 창을 배치하고 트레이 콜백을 호출해 실제 네이티브 메뉴 영역만 캡처했다. 이는 실제 마우스 우클릭·모든 모니터/DPI 조합의 종단 검증을 뜻하지 않는다.
+- **Windows 자체 알림 표시 확인:** 명시적으로 실행한 환경 의존 검사에서 `SHQueryUserNotificationState = 5`, 네이티브 알림 요청 성공과 **`NIN_BALLOONSHOW` 수신**을 확인했다. 명령은 위 Cargo 옵션에 `--bin waid-desktop windows_notification_reports_display_through_shell_callback -- --ignored --nocapture`를 추가했다. UI Automation으로 알림 제목을 찾는 별도 시도는 제목을 찾지 못했으므로 배너 픽셀/배치 확인으로 기록하지 않는다.
+- 이후 같은 환경 의존 검사를 직접 알림 함수 호출에서 **숨긴 창의 일반 수집 갱신→알림 전송 경로**까지 검사하도록 보강했다. 이 최종 테스트 바이너리는 컴파일됐지만 **Windows 애플리케이션 제어 정책(os error 4551)이 실행 전에 차단**했다. 앞선 직접 알림 확인을 이 보강 검사의 통과로 대체하지 않는다. 최종 코드에는 해당 검사가 ignored로 남으며 명시적으로 실행해야 한다. 초기 콜백 상수 누락 경고와 테스트 변수 이름 충돌도 수정 전 결과이며, 남은 빌드 경고는 기존 core dead_code 2개다. 정책 변경·우회는 하지 않았다.
+- 기존 사용자 waid와 기본 설정·원본 대화를 보존했고 샘플 앱과 그 수집기만 종료했다. 실제 에이전트 앱 네 종류로의 복귀, 알림 배너 직접 클릭, 방해 금지/잠금/장시간 실행·1시간 경과, 모든 DPI에서 배지 가독성 및 Mac 동작은 이번에 실기 검증하지 않았다. 설계와 OS 알림 보관 한계는 [D36](DECISIONS.md#d36--창을-숨긴-동안의-트레이와-답변-알림-2026-09-14)을 따른다.
+- **최종 실행 파일:** `cargo build --manifest-path desktop/Cargo.toml --target-dir desktop/target/tray --release --locked --offline` 종료 코드 0. 최종 EXE의 `--licenses`를 stdout/stderr를 끝까지 읽고 종료를 기다리는 프로세스 호출로 확인해 종료 코드 0과 내장 SIL 라이선스를 확인했다. 최초 PowerShell 직접 대입 호출은 종료 대기를 올바르게 처리하지 못해 파이프 종료(os error 109)를 발생시켰으며, 이를 제품 성공/OS 정책 차단으로 기록하지 않는다. [전달용 EXE](target/release/waid-desktop-tray.exe)와 빌드 원본의 SHA-256은 `D452663E5F64202CC0532784FD76C85DA827D70D17EC70B1230876A543B5C548`로 일치한다. 새 경로에 준비했으며 기존 실행 파일을 덮어쓰지 않았다. `git diff --check` 통과.
+
 ## PowerShell SSH 화면 감지 — 2026-09-10
 
 - `cargo test --release --locked --offline`: 최종 코드에서 core **94개**, CLI **6개** 통과. 화면 판별 회귀 검사에는 Codex 배너·하단 표시, Claude 배너, 한글 미리보기, 혼합 에이전트·단순 언급·셸 복귀 제외, 입력 길이 제한, 대화/요청/경로/상태 정보를 지어내지 않는 조건을 포함했다. 최초 배너만 지원하던 코드의 검사는 Windows 정책(os error 4551)으로 실행되지 않았다. 이후 실제 화면에서 배너가 사라지는 경우를 확인해 수정한 최종 코드의 결과와 구분한다. 정책 변경·우회는 하지 않았다.

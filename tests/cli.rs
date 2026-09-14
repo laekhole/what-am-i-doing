@@ -45,6 +45,36 @@ fn request(address: &str, path: &str) -> String {
 }
 
 #[test]
+fn language_flags_override_locale_and_validate_before_help() {
+    let run = |locale: &str, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_waid"))
+            .env("WAID_LANG", locale)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    for (locale, args, expected, absent) in [
+        ("ko", vec!["--help", "--lang", "en"], "Usage:", "사용법:"),
+        ("en", vec!["--lang", "ko", "--help"], "사용법:", "Usage:"),
+        ("en", vec!["--help"], "Usage:", "사용법:"),
+    ] {
+        let result = run(locale, &args);
+        assert!(result.status.success());
+        let help = String::from_utf8(result.stdout).unwrap();
+        assert!(help.contains(expected) && !help.contains(absent));
+        assert!(help.contains("--lang ko|en"));
+    }
+    for args in [vec!["--lang", "fr", "--help"], vec!["--lang"], vec!["--lang", "en-US"]] {
+        let result = run("en", &args);
+        assert_eq!(result.status.code(), Some(2));
+        assert!(String::from_utf8(result.stderr).unwrap().contains("--lang"));
+    }
+    let result = run("ko", &["--lang", "en", "--port", "no"]);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(String::from_utf8(result.stderr).unwrap().contains("--port must be between"));
+}
+
+#[test]
 fn native_binary_serves_transcript_without_process_and_streams_updates() {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -68,6 +98,8 @@ fn native_binary_serves_transcript_without_process_and_streams_updates() {
         Command::new(env!("CARGO_BIN_EXE_waid"))
             .current_dir(&fixture.dir)
             .args([
+                "--lang",
+                "ko",
                 "--agent",
                 "fixture",
                 "--html",
@@ -118,6 +150,14 @@ fn native_binary_serves_transcript_without_process_and_streams_updates() {
         assert!(html.contains(expected), "missing {expected}");
     }
     assert!(!html.contains("{{"));
+    assert!(html.contains("<html lang=\"ko\">"));
+    let english = request(address, "/?lang=en");
+    for expected in ["<html lang=\"en\">", "<b>1</b> Waiting", "MVP fixture", "value=\"en\" selected"] {
+        assert!(english.contains(expected), "missing {expected}");
+    }
+    assert!(!english.contains("내 차례") && !english.contains("{{"));
+    assert!(request(address, "/?lang=ko").contains("<b>1</b> 내 차례"));
+    assert!(request(address, "/?lang=invalid").contains("<html lang=\"ko\">"));
     let mut events = TcpStream::connect(address).unwrap();
     events
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -148,6 +188,7 @@ fn native_binary_serves_transcript_without_process_and_streams_updates() {
         }
     }
     assert!(request(address, "/snapshot.json").contains("\"state\": \"working\""));
+    assert!(request(address, "/?lang=en").contains("<b>1</b> Working"));
 }
 
 #[test]

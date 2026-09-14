@@ -27,6 +27,69 @@
 
 ## 프롬프트별 작업 기록
 
+### 2026-09-14 17:53 +09:00 — 개인 오픈소스 배포의 무료 서명 신청 준비
+
+- 요청: 개인 GitHub 오픈소스라는 배포 조건을 반영해 Windows 공개 서명 경로를 구체화하기.
+- 상태: 부분 완료 — SignPath 신청 자료와 EXE 제품 메타데이터 준비·로컬 검증 완료. 신청 제출·심사·실제 서명·차단 해소는 미완료.
+- 변경·이유: 기존 MIT 선언의 누락된 전문, README 제거 안내와 Code signing policy 연결, 영어 신청 초안과 승인 전/후 작업 구분을 추가했다. 개인 유지관리자 신청이 가능함을 확인하되 초기 프로젝트의 평판 심사 통과를 단정하지 않았다. 기존 Windows 리소스 빌드에 Cargo 버전 기반 제품명·파일/제품 버전을 추가하고 실행 없이 읽는 검사 하나를 남겼다. 새 의존성은 없다. 서명 서비스 승인 전에는 기존 릴리스 워크플로우를 변경하지 않는 이유와 후속 서명 순서는 [D38](DECISIONS.md#d38--오픈소스-windows-코드-서명-준비-2026-09-14)에 기록했다.
+- 관련 파일: [라이선스](LICENSE), [신청 초안·정책](SIGNING.md), [README](README.md), [Windows 리소스 빌드](desktop/build.rs), [메타데이터 검사](desktop/test-version-info.ps1), [설계](DECISIONS.md), [검증](VALIDATION.md), [HISTORY.md](HISTORY.md).
+- 검증: 공식 조건·실제 신청폼·공개 GitHub 릴리스 확인. MSVC release 빌드와 EXE 메타데이터 검사 통과, 이전 메타데이터 없는 EXE의 거부 확인. 문서 로컬 링크와 `git diff --check` 통과. EXE는 `NotSigned`이며 실행하지 않았다. GNU 빌드와 전체 앱 회귀 검사는 미실행. 정확한 명령·결과·제한은 [검증 기록](VALIDATION.md#오픈소스-서명-신청과-exe-메타데이터-준비--2026-09-14)을 참고한다.
+- 남은 일: 검토한 준비 파일의 공개 저장소 반영, 유지관리자 계정·MFA와 구성요소 라이선스 확인, 신청자 연락처·약관 동의·reCAPTCHA를 포함한 공식 폼 제출과 평판 심사. 승인 후 서명 서비스 연결·수동 승인·서명/체크섬/Sigstore 검증 및 실제 Windows 다운로드·실행 확인이 필요하다. 사용자 연락처를 추정하거나 저장하지 않았고 기존 변경·실행 앱·설정을 보존했다. 이번 작업에서 신청·가입·결제·커밋·푸시·릴리스·OS 정책 변경은 수행하지 않았다.
+
+### 2026-09-14 17:47 +09:00 — Windows 네이티브 앱 기준으로 점검 범위 정정
+
+- 요청: 앞선 출시 체크리스트 점검이 Windows 네이티브 응용프로그램이라는 점을 반영했는지 확인.
+- 상태: 완료 — Windows 출시 기준으로 답변 범위와 우선순위를 명확히 했다.
+- 변경·이유: 제품 코드·설정 변경 없음. 앞선 답변에서 선택형 HTML과 개발 중인 Mac 문제를 함께 강조한 범위 혼선을 정정했다. Windows의 오류 안내, 데이터 저장·삭제 안내와 지원 경로, 라이선스 전문, 접근성·DPI·최종 실행 검증에 초점을 맞췄다. 웹 SEO·파비콘·모바일 CTA와 HTML/Mac 전용 문제를 Windows 네이티브 출시 필수 보완으로 취급하지 않는다. 개인정보·라이선스 안내도 별도 웹페이지 구축 요구가 아니다.
+- 관련 파일: [HISTORY.md](HISTORY.md). 기존 점검 근거: [Windows UI](desktop/src/native.rs), [사용 안내](README.md), [검증 기록](VALIDATION.md).
+- 검증: 최신 작업 기록과 직전 소스 점검 결과를 재확인했다. `git diff --check -- HISTORY.md` 통과. 범위 설명만 정정했으므로 빌드·자동 테스트·실행 중 앱 조작은 수행하지 않았다.
+- 남은 일: 범위 확인 답변에는 없음. Windows 구현 보완과 기존 미검증 사항은 앞선 점검 결과대로 남는다.
+
+### 2026-09-14 16:58 +09:00 — 웹 출시 체크리스트 20개를 앱 기준으로 점검
+
+- 요청: 웹사이트 출시 요소 20개를 waid가 데스크톱 응용프로그램이라는 차이에 맞춰 점검하기.
+- 상태: 완료 — 현재 미커밋 변경을 포함한 소스·문서·자산 조사와 HTML 오류 재현 완료. 보완 구현은 이번 요청 범위 밖이다.
+- 변경·이유: 제품 코드·설정 변경 없음. SEO·가입 전환 요소는 네이티브 앱과 localhost 대시보드의 적용 여부를 구분했다. Windows 폼 오류가 수집 경고에 가려지는 표시 우선순위, HTML 갱신 실패 후 실시간 표시 유지, Mac 초기 로딩·빈 결과 안내 부족을 확인했다. 개인정보 안내는 README에 있으나 저장 데이터 삭제 안내·명시적 지원/비공개 보안 제보 경로·프로젝트 MIT 라이선스 전문은 찾지 못했다. 추적 없는 현재 제품에 쿠키 배너·분석 설치를 누락 기능으로 간주하지 않았다.
+- 관련 파일: [HISTORY.md](HISTORY.md). 조사 근거: [README.md](README.md), [Windows 표시·폼](desktop/src/native.rs), [카드 접근성](desktop/src/native/accordion.rs), [Mac 상태](desktop/src/macos.rs), [Mac UI](desktop/src/macos/App.swift), [설정 저장](desktop/src/ui.rs), [HTML](src/default.html), [HTML 렌더러](src/html.rs), [로컬 서버](src/serve.rs), [템플릿 이스케이프](src/tmpl.rs), [이미지 사용](desktop/src/visual.rs), [릴리스 흐름](.github/workflows/release.yml), [기존 검증 기록](VALIDATION.md).
+- 검증: README·최신 HISTORY·소스 호출 경로와 자산 크기를 읽기 전용으로 대조했다. 실제 HTML 스크립트를 Node v24.19.0 vm·가짜 DOM/응답에서 실행해 네트워크 실패 후 live 유지, 연결 끊김 뒤 HTTP 500에서 live 재표시의 오류 재현 2개를 assert로 확인했다(종료 코드 0; 정상 동작 통과를 뜻하지 않음). Windows 폼 오류 가림과 Mac 안내 부족은 정적 경로 확인이며 실기 재현은 미실행이다. 활성 ICO의 PNG 압축 프레임 9개와 1024px·353 KiB Orca 원본의 32 논리 px 표시를 확인했다. HTML 348px 미만 넘침은 CSS에 근거한 예상이며 실제 브라우저 미검증이다. `git diff --check -- HISTORY.md` 통과. 코드 변경이 없어 Cargo 빌드·회귀 검사는 재실행하지 않았고 실제 사용자 앱·설정·대화와 기존 변경을 보존했다.
+- 남은 일: 발견한 오류 피드백·Mac 초기/빈 상태 보완, 개인정보 접근·삭제·지원/신고 안내와 라이선스 전문 정리, 접근성·좁은 창·혼합 DPI 실기 확인. 마지막 영문 배지 변경 이후 Windows 실행/테스트 정책 차단과 Mac 최신 빌드 미검증은 [VALIDATION.md](VALIDATION.md)의 기존 미완료 사항이며 이번 점검으로 해소하지 않았다. 체크리스트 검토는 전체 보안 검증을 의미하지 않는다.
+
+### 2026-09-14 16:57 +09:00 — Windows 앱 제어 차단 원인과 공개 배포 서명 조사
+
+- 요청: 웹 공개 전에 Windows 앱 제어에 차단되는 문제를 해결할 수 있는 배포 방법 확인.
+- 상태: 부분 완료 — 로컬 차단 원인 진단·서명 방식 조사 완료, 실제 인증서 발급·서명·차단 해소 검증은 미완료.
+- 변경·이유: 제품 코드·릴리스 구성·OS 설정 변경 없음. 현재 EXE의 미서명 상태와 Smart App Control 차단 근거를 확인하고, 기존 Sigstore 배포 검증에 Windows용 RSA Authenticode 서명과 타임스탬프를 추가하는 경로를 제안했다. [Microsoft 서명 요구사항](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control)과 [SmartScreen 평판 안내](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation)에 따라 코드 서명과 신규 다운로드 평판을 구분했다. 서명만으로 모든 PC의 정책·경고 해소를 보장하지 않는다.
+- 관련 파일: [HISTORY.md](HISTORY.md). 조사 대상: [릴리스](.github/workflows/release.yml), [빌드](desktop/build.ps1), [패키징](desktop/package.ps1), [배포 후보](target/release/waid-desktop-bilingual.exe).
+- 검증: `Get-AuthenticodeSignature` 결과 `NotSigned`, 서명자·타임스탬프 없음. Smart App Control 레지스트리 값 `VerifiedAndReputablePolicyState=1`과 CodeIntegrity 로그의 해당 EXE·테스트 바이너리 차단 이벤트 3077/3033을 확인했다. 현재 사용자·로컬 컴퓨터 인증서 저장소의 코드 서명 인증서는 0개였다. `CiTool -lp -json`은 접근 거부되어 전체 정책 목록은 확인하지 못했다. 릴리스는 EXE 복사·SHA256SUMS 생성 후 Sigstore 서명만 수행함을 읽기 검토했다. Microsoft·인증기관·SignPath 공식 문서에서 한국 조직용 Artifact Signing, 개인용 IV 인증서, 무료 오픈소스 심사, Store MSIX 배포 조건을 대조했다. `git diff --check -- HISTORY.md` 통과. 조사·기록만 변경하여 빌드·자동 테스트는 재실행하지 않았다.
+- 남은 일: 배포자 명의와 서명 서비스 확정, 외부 본인/조직 확인과 인증서 발급 또는 무료 지원 승인. 이후 최종 EXE에 Authenticode 서명·타임스탬프 → 서명 검증 → SHA256SUMS 재생성 → Sigstore 서명 순서를 릴리스에 연결하고 Smart App Control이 켜진 환경에서 실제 다운로드·실행을 확인해야 한다. 가입·결제·신청 제출·릴리스 게시·OS 정책 변경은 수행하지 않았다.
+
+### 2026-09-14 16:28 +09:00 — 앱 한국어·영어 전환과 Reddit·GeekNews 소개 초안
+
+- 요청: 외부 사용자 피드백을 받기 위해 기존 한국어 앱에 영어를 추가하고 Reddit·GeekNews 소개글 초안을 준비. 범위 확인 결과 실제 게시·웹사이트 공개는 제외.
+- 상태: 구현·초안·최종 EXE 빌드 완료 — 중간 빌드 회귀·실화면 확인 완료, 마지막 배지 수정 이후 테스트·EXE 실행 검증은 Windows 정책에 차단.
+- 변경·이유: 기존 설정에 언어 선택을 저장하고 Windows·Mac UI와 CLI·로컬 HTML의 제품 문구를 번역했다. 새 설치는 시스템 언어를 감지하고 기존 설정은 한국어를 유지하며 대화 원문은 보존한다. 새 의존성 없이 공용 언어 선택을 사용한다. 기존 트레이·알림의 미커밋 작업을 보존했다. 설계와 수집 진단의 재시작 제약은 [D37](DECISIONS.md#d37--한국어영어-전환과-공개-소개-준비-2026-09-14)을 참고한다.
+- 관련 파일: [언어 선택](src/i18n.rs), [Windows UI](desktop/src/native.rs), [카드](desktop/src/native/accordion.rs), [트레이](desktop/src/native/tray.rs), [공용 표시](desktop/src/main.rs), [설정](desktop/src/ui.rs), [Mac UI](desktop/src/macos/App.swift), [Mac 연결](desktop/src/macos.rs), [세션 복귀](desktop/src/activate.rs), [Windows 복귀](desktop/src/activate/windows.rs), [CLI](src/lib.rs), [HTML](src/default.html), [렌더러](src/html.rs), [로컬 서버](src/serve.rs), [검사](tests/cli.rs), [소개 초안](LAUNCH.md), [사용 안내](README.md), [CLI 안내](CLI.md), [Mac 안내](MACOS.md), [검증](VALIDATION.md), [설계](DECISIONS.md).
+- 검증: core 95개·CLI 7개·desktop 35개·단일 EXE 1개로 총 138개 통과, 환경 의존 4개 ignored. 언어 저장·이전 설정 호환·원문 유지·저장 실패 복원과 Windows 한국어/영어 컨트롤·필터·샘플 카드 렌더링을 확인했다. 마지막 HTML 보완의 template 2개·HTTP/SSE 1개도 통과했다. 배지 문구를 축약한 최종 desktop 테스트 바이너리와 EXE는 Windows 앱 제어 정책(os error 4551)으로 실행 전 차단됐다. 최종 release 빌드·전달본 해시 일치·`git diff --check`는 통과. [최종 EXE](target/release/waid-desktop-bilingual.exe), 진단·렌더러·검사 변경과 자세한 결과는 [검증 기록](VALIDATION.md#한국어영어-전환과-소개글-준비--2026-09-14)을 참고한다. Mac Swift 빌드·스모크·실기는 미실행.
+- 남은 일: 정책이 허용하는 환경에서 마지막 배지 수정 이후 테스트·EXE 실행 및 Mac 검증. 기존 사용자 앱·설정과 이전 미커밋 변경을 보존했으며 샘플만 종료했다. 실제 공개에는 새 영문 포함 릴리스와 소개글 게시가 필요하고 이번 요청에서는 커밋·푸시·배포·게시·정책 변경을 하지 않았다.
+
+### 2026-09-14 11:01 +09:00 — 트레이 세션 요약·바로가기와 답변 도착 알림 구현
+
+- 요청: 앞선 제안 중 가장 적절한 방향으로 창을 상시 띄우지 않는 waid 사용 경험 개선.
+- 상태: 구현·실행 파일 준비 완료 — 기본 회귀 검사와 Windows 알림 표시 확인 완료. 보강한 추가 통합 검사 1건은 OS 정책 차단으로 미검증.
+- 변경·이유: 기존 트레이에 상태 요약·새 답변/오류 배지·내 차례 세션 바로가기·무음 묶음 알림·알림 설정과 1시간 쉬기를 추가했다. 요청 단위로 중복을 막고 사용자 차례와 새 답변 표시를 분리했다. 검색 필터 독립성, 숨김/제외/보조 세션 배제, 수집 오류, 첫 닫기 안내 및 복귀 실패 시 마지막 답변 상세를 보완했다. 기존 수집·복귀를 재사용해 서비스·의존성을 추가하지 않았다. 설계는 [D36](DECISIONS.md#d36--창을-숨긴-동안의-트레이와-답변-알림-2026-09-14)에 기록했다.
+- 관련 파일: [트레이 상태·알림·검사](desktop/src/native/tray.rs), [Windows 창](desktop/src/native.rs), [카드 확인](desktop/src/native/accordion.rs), [설정](desktop/src/ui.rs), [사용 안내](README.md), [제품 범위](PRODUCT.md), [설계](DECISIONS.md), [검증](VALIDATION.md), [새 EXE](target/release/waid-desktop-tray.exe), [HISTORY.md](HISTORY.md).
+- 검증: 제품 동작 변경을 반영한 desktop 33개·단일 EXE 1개 통과, 기존 환경 의존 3개 ignored. 별도 샘플 EXE의 숨김 중 갱신·실제 트레이 메뉴를 확인했고, 명시적으로 실행한 네이티브 알림 검사는 Windows의 NIN_BALLOONSHOW 수신을 확인했다. 이후 같은 검사를 일반 수집 갱신 경로까지 보강한 최종 테스트 바이너리는 컴파일 후 Windows 애플리케이션 제어 정책(os error 4551)에 차단되어 미실행이다. 최종 release 빌드와 EXE 라이선스 실행·전달본 해시 일치·`git diff --check` 통과. 초기 경고/테스트 컴파일 오류와 PowerShell 출력 파이프 오류는 수정·호출 보완 전 결과로 구분했다. 자세한 근거는 [검증 기록](VALIDATION.md#트레이-세션-요약과-답변-알림--2026-09-14)에 있다.
+- 남은 일: 기존 waid를 트레이에서 종료하고 새 EXE 실행으로 적용. 정책이 허용하는 환경에서 보강한 알림 통합 검사 재확인. 실제 에이전트 대상별 복귀·배너 클릭·방해 금지·장시간/혼합 DPI 검증은 남아 있다. 기존 앱·설정·대화를 보존했고 검증용 앱과 수집기만 종료했으며 정책 변경·우회·커밋·배포는 하지 않았다.
+
+### 2026-09-14 10:11 +09:00 — 창을 상시 표시하지 않는 트레이·알림 사용 방식 제안
+
+- 요청: waid를 최소화하거나 닫아 둔 상태에서도 세션의 답변 종료와 사용자 차례를 확인할 수 있는 방향 및 보완 대안 제안.
+- 상태: 완료 — 현재 구현 조사와 기능 방향 제안. 구현은 요청 범위에 포함되지 않음.
+- 변경·이유: 제품 코드·설정 변경 없음. 기존 최소화·트레이 숨김·백그라운드 수집과 정적인 트레이 메뉴를 확인했다. 상태 요약·세션 바로가기·새 답변 알림을 우선 제안하고, 사용자 차례와 새 알림 확인 여부를 구분했다. 전역 단축키·일시적인 요약 패널은 후속 대안으로 제시했다. 기존 설계 이력은 [설계 결정](DECISIONS.md)을 참고한다.
+- 관련 파일: [HISTORY.md](HISTORY.md). 조사 근거: [README.md](README.md), [제품 범위](PRODUCT.md), [Windows 창·트레이](desktop/src/native.rs), [실행 이후 상태 관찰](desktop/src/main.rs), [목록 정책](desktop/src/ui.rs).
+- 검증: README·최신 기록·트레이 등록/메뉴/숨김·수집 갱신·상태 관찰·필터 코드를 읽고 Microsoft의 트레이 표시 및 방해 금지 공식 안내와 대조했다. `git diff --check -- HISTORY.md` 통과, 변경 파일은 HISTORY.md만 확인했다. 문서 변경만 있어 빌드·자동 테스트·실행 중 앱 조작은 수행하지 않았다.
+- 남은 일: 제안 답변에는 없음. 기능 구현·알림 API의 포터블 EXE 적용 검증·실사용 검증은 후속 작업이다. 과거 답변 재알림 방지, 신뢰할 수 있는 답변 종료 근거, 알림 중복 방지 및 수집 오류 표시는 구현 시 반영해야 한다.
+
 ### 2026-09-11 15:01 +09:00 — 미커밋 변경 확인 및 커밋·푸시
 
 - 요청: 작업 트리에 커밋할 변경이 있는지 확인하고, 있으면 커밋 후 원격에 푸시하기.

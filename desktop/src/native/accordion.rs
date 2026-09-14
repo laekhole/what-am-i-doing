@@ -41,8 +41,8 @@ impl Window {
         assert_eq!(logos.len(), 2);
         let size = self.skin.borrow().font_size;
         assert_eq!(self.feed_header(), 31 + (size + 7) * 3);
-        assert!(text(buttons[1]).contains("미확인 · 마지막 기록: 작업 중"));
-        assert!(text(logos[1]).contains("미확인 · 마지막 기록: 작업 중"));
+        assert!(text(buttons[1]).contains(tr("미확인 · 마지막 기록: 작업 중", "Unknown · Last recorded: Working")));
+        assert!(text(logos[1]).contains(tr("미확인 · 마지막 기록: 작업 중", "Unknown · Last recorded: Working")));
         RedrawWindow(hwnd, null(), null_mut(), RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
         assert_ne!(IsWindowVisible(logos[0]), 0);
 
@@ -71,16 +71,16 @@ impl Window {
         assert!(text(buttons[1]).contains("refreshed"));
         assert!(text(logos[1]).contains("refreshed"));
         assert_eq!(text(self.get(ANSWER)), "updated answer");
-        assert!(text(buttons[1]).contains("남은 컨텍스트 38.0%"));
-        assert!(text(self.get(CONTEXT)).contains("124,000 / 한도 200,000"));
-        assert!(text(self.get(CONTEXT)).contains("압축 (UTC)  기록 있음"));
+        assert!(text(buttons[1]).contains(tr("남은 컨텍스트 38.0%", "Context remaining 38.0%")));
+        assert!(text(self.get(CONTEXT)).contains(tr("124,000 / 한도 200,000", "124,000 / limit 200,000")));
+        assert!(text(self.get(CONTEXT)).contains(tr("압축 (UTC)  기록 있음", "Compaction (UTC)  Observed")));
         let mut changed = self.rows.borrow().clone();
         changed[1].context.used_tokens = Some(150000);
         publish_update(&self.updates, Ok(Snapshot { rows: changed, ..Snapshot::default() }));
         self.tick(hwnd);
-        assert!(text(buttons[1]).contains("남은 컨텍스트 25.0% · 압축됨"));
+        assert!(text(buttons[1]).contains(tr("남은 컨텍스트 25.0% · 압축됨", "Context remaining 25.0% · Compacted")));
         self.toggle_card(hwnd, 1);
-        assert!(text(buttons[1]).contains("남은 컨텍스트 25.0% · 압축됨"));
+        assert!(text(buttons[1]).contains(tr("남은 컨텍스트 25.0% · 압축됨", "Context remaining 25.0% · Compacted")));
         assert_eq!(IsWindowVisible(self.get(CONTEXT)), 0);
         self.toggle_card(hwnd, 1);
         SetFocus(logos[1]);
@@ -172,18 +172,18 @@ impl Window {
         let mut point = POINT { x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2 };
         ScreenToClient(self.get(FEED), &mut point);
         assert_eq!(ChildWindowFromPointEx(self.get(FEED), point, CWP_SKIPINVISIBLE), logo);
-        assert!(text(logo).contains("해당 세션으로 이동"));
+        assert!(text(logo).contains(tr("해당 세션으로 이동", "Open this session")));
         SendMessageW(logo, BM_CLICK, 0, 0);
         assert_eq!(self.selected().unwrap().id, self.visible.borrow()[2].id);
         assert!(self.feed.open.borrow().is_none(), "logo must not toggle the card");
         assert!(self.expanded.get(), "unlinked demo sessions show details");
-        assert!(self.notice.borrow().contains("연결을 확인할 수 없어"));
+        assert!(self.notice.borrow().contains(tr("연결을 확인할 수 없어", "Cannot confirm the connected")));
         self.command(hwnd, BACK, 0);
 
         // The card action must target its open conversation, even if focus selected another row.
         self.toggle_card(hwnd, 1);
         let dismissed = self.visible.borrow()[1].id.clone();
-        assert_eq!(text(self.get(DISMISS)), "waid에서 보지 않기");
+        assert_eq!(text(self.get(DISMISS)), tr("waid에서 보지 않기", "Dismiss from waid"));
         assert_ne!(GetWindowLongPtrW(self.get(DISMISS), GWL_STYLE) as u32 & WS_VISIBLE, 0);
         self.busy.set(true);
         send(self.get(LIST), LB_SETCURSEL, 0, 0);
@@ -197,7 +197,7 @@ impl Window {
         self.command(hwnd, ALL, 0);
         let index = self.visible.borrow().iter().position(|row| row.id == dismissed).unwrap();
         self.toggle_card(hwnd, index);
-        assert_eq!(text(self.get(DISMISS)), "waid 목록으로 되살리기");
+        assert_eq!(text(self.get(DISMISS)), tr("waid 목록으로 되살리기", "Restore to waid"));
         SendMessageW(self.get(DISMISS), BM_CLICK, 0, 0);
         assert!(!self.settings.borrow().closed.contains_key(&dismissed));
         SendMessageW(self.get(DISMISS), BM_CLICK, 0, 0);
@@ -230,7 +230,7 @@ impl Window {
         let feed = CreateWindowExW(
             WS_EX_CONTROLPARENT,
             name.as_ptr(),
-            wide("세션 대화 목록").as_ptr(),
+            wide(tr("세션 대화 목록", "Session conversations")).as_ptr(),
             WS_CHILD | WS_VSCROLL | WS_CLIPCHILDREN,
             0,
             0,
@@ -247,9 +247,9 @@ impl Window {
         self.controls.borrow_mut().insert(FEED, feed);
         for (id, label) in [
             (REQUEST, "Prompt"),
-            (ANSWER, "답변"),
-            (PROMPT, "Prompt · 첫 요청"),
-            (CONTEXT, "컨텍스트"),
+            (ANSWER, tr("답변", "Answer")),
+            (PROMPT, tr("Prompt · 첫 요청", "Prompt · First request")),
+            (CONTEXT, tr("컨텍스트", "Context")),
         ] {
             self.add(
                 feed,
@@ -263,12 +263,23 @@ impl Window {
             feed,
             OPEN,
             "BUTTON",
-            "세션 열기  ↗",
+            tr("세션 열기  ↗", "Open session  ↗"),
             BS_OWNERDRAW as u32,
         )?;
-        self.add(feed, COPY, "BUTTON", "복사", BS_OWNERDRAW as u32)?;
-        self.add(feed, DISMISS, "BUTTON", "waid에서 보지 않기", BS_OWNERDRAW as u32)?;
+        self.add(feed, COPY, "BUTTON", tr("복사", "Copy"), BS_OWNERDRAW as u32)?;
+        self.add(feed, DISMISS, "BUTTON", tr("waid에서 보지 않기", "Dismiss from waid"), BS_OWNERDRAW as u32)?;
         Ok(())
+    }
+
+    pub(super) unsafe fn localize_feed(&self) {
+        for (id, label) in [
+            (FEED, tr("세션 대화 목록", "Session conversations")),
+            (OPEN, tr("세션 열기  ↗", "Open session  ↗")),
+            (COPY, tr("복사", "Copy")),
+            (DISMISS, tr("waid에서 보지 않기", "Dismiss from waid")),
+        ] {
+            set_text(self.get(id), label);
+        }
     }
 
     pub(super) unsafe fn rebuild_feed(&self, hwnd: HWND) {
@@ -326,7 +337,7 @@ impl Window {
             }
             let button = self.feed.buttons.borrow()[index];
             let logo = self.feed.logos.borrow()[index];
-            let logo_label = format!("{} · 해당 세션으로 이동", row.accessible_text());
+            let logo_label = waid::trf!("{} · 해당 세션으로 이동", "{} · Open this session", row.accessible_text());
             if text(logo) != logo_label {
                 set_text(logo, &logo_label);
             }
@@ -334,7 +345,7 @@ impl Window {
             let label = format!(
                 "{} · {}",
                 row.accessible_text(),
-                if open { "접기" } else { "펼치기" }
+                if open { tr("접기", "Collapse") } else { tr("펼치기", "Expand") }
             );
             if text(button) != label {
                 set_text(button, &label);
@@ -348,7 +359,7 @@ impl Window {
                     (CONTEXT, context_detail.as_str()),
                 ] {
                     let value = if value.is_empty() || value == "—" {
-                        "아직 읽은 기록이 없습니다."
+                        tr("아직 읽은 기록이 없습니다.", "No records read yet.")
                     } else {
                         value
                     };
@@ -420,7 +431,7 @@ impl Window {
         }
         if let Some(index) = open_index {
             let dismissed = self.settings.borrow().closed.contains_key(&self.visible.borrow()[index].id);
-            set_text(self.get(DISMISS), if dismissed { "waid 목록으로 되살리기" } else { "waid에서 보지 않기" });
+            set_text(self.get(DISMISS), if dismissed { tr("waid 목록으로 되살리기", "Restore to waid") } else { tr("waid에서 보지 않기", "Dismiss from waid") });
             let y = p(index as i32 * self.feed_header() + self.feed_header()) - scroll;
             for (id, top, height) in [(REQUEST, 28, 48), (ANSWER, 108, 64), (PROMPT, 204, 40), (CONTEXT, 272, 96)] {
                 MoveWindow(
@@ -482,6 +493,7 @@ impl Window {
         let next = if self.feed.open.borrow().as_ref() == Some(&row.id) {
             None
         } else {
+            self.tray.borrow_mut().acknowledge(&row.id);
             Some(row.id)
         };
         *self.feed.open.borrow_mut() = next;
@@ -493,6 +505,7 @@ impl Window {
                 .min(self.px(hwnd, index as i32 * self.feed_header())),
         );
         self.rebuild(hwnd);
+        self.refresh_tray(hwnd);
     }
 
     unsafe fn draw_card_header(&self, hwnd: HWND, item: &DRAWITEMSTRUCT) {
@@ -567,7 +580,7 @@ impl Window {
         let status_width = p((skin.font_size * 8).max(96))
             .min((status_right - title_line.left) / 3);
         let status_left = status_right - status_width;
-        let badge_width = p(skin.font_size * 4 + 8).min(status_width);
+        let badge_width = status_width;
         let badge_left = (status_left + status_right - badge_width) / 2;
         let badge = RECT {
             left: badge_left,
@@ -587,7 +600,7 @@ impl Window {
             &format!(
                 "● {}",
                 if row.state == "idle" {
-                    "유휴"
+                    tr("유휴", "Idle")
                 } else {
                     row.status()
                 }
@@ -635,7 +648,7 @@ impl Window {
         let inset = if row.context_highlighted() { p(6) } else { 0 };
         let context_right = date_rect.left - p(8);
         let context_rect = RECT {
-            left: (context_right - text_width(&row.context_summary()) - inset * 2)
+            left: (context_right - text_width(&context_badge(&row)) - inset * 2)
                 .max(title_line.left + p(72).min((context_right - title_line.left).max(0) / 3)),
             right: context_right,
             ..title_line
@@ -748,8 +761,8 @@ impl Window {
             visual::rounded(dc, inner, p(14), skin.background, None);
             for (label, icon, top, height) in [
                 ("Prompt", ">_", 0, 76),
-                ("답변", "✦", 80, 92),
-                ("Prompt · 첫 요청", ">_", 176, 68),
+                (tr("답변", "Answer"), "✦", 80, 92),
+                (tr("Prompt · 첫 요청", "Prompt · First request"), ">_", 176, 68),
             ] {
                 let avatar = RECT {
                     left: p(20),
@@ -795,7 +808,7 @@ impl Window {
             // The source supplies session activity time, not individual message timestamps.
             draw(
                 dc,
-                &format!("{} · {} · 마지막 기록 {}", row.agent, row.status_context(), row.short_date()),
+                &waid::trf!("{} · {} · 마지막 기록 {}", "{} · {} · Last recorded {}", row.agent, row.status_context(), row.short_date()),
                 RECT {
                     left: p(58),
                     right: bounds.right - p(28),

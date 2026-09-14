@@ -1,4 +1,5 @@
 //! Manual associations are window returns, never proof of a conversation.
+use waid::i18n::tr;
 use serde_json::{json, Value};
 use std::{io::Write, mem::size_of, os::windows::{io::FromRawHandle, process::CommandExt}, process::Command};
 use windows_sys::Win32::{
@@ -199,7 +200,7 @@ fn same_window(saved: &Value, current: &Value) -> bool {
 
 /// Activate only a still-existing user-selected window. No app launching or input.
 pub fn open_window(saved: &Value) -> Result<(), String> {
-    let stale = "연결한 창이 종료되었거나 바뀌었습니다. 창을 다시 연결하세요.";
+    let stale = tr("연결한 창이 종료되었거나 바뀌었습니다. 창을 다시 연결하세요.", "The connected window closed or changed. Connect it again.");
     let hwnd = saved["hwnd"].as_u64().and_then(|v| usize::try_from(v).ok()).ok_or(stale)? as HWND;
     let kind = saved["kind"].as_str().ok_or(stale)?;
     let current = if kind == "powershell" {
@@ -210,7 +211,7 @@ pub fn open_window(saved: &Value) -> Result<(), String> {
     unsafe {
         if IsIconic(hwnd) != 0 { ShowWindowAsync(hwnd, SW_RESTORE); }
         if SetForegroundWindow(hwnd) == 0 {
-            return Err("Windows에서 창 전환을 허용하지 않았습니다. 작업 표시줄에서 선택하세요.".into());
+            return Err(tr("Windows에서 창 전환을 허용하지 않았습니다. 작업 표시줄에서 선택하세요.", "Windows did not allow switching windows. Select it from the taskbar.").into());
         }
     }
     Ok(())

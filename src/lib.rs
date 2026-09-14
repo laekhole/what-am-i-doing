@@ -6,6 +6,7 @@ mod tests_diag;
 mod adapters;
 mod diag;
 mod html;
+pub mod i18n;
 mod json;
 mod matchers;
 mod orca;
@@ -25,8 +26,9 @@ mod terminal;
 pub use transcript::ContextUsage;
 
 use render::Style;
+use i18n::{tr, set_language, Language};
 
-const USAGE: &str = concat!("waid ", env!("CARGO_PKG_VERSION"), " — what am I doing?
+const USAGE_KO: &str = concat!("waid ", env!("CARGO_PKG_VERSION"), " — what am I doing?
 
 사용법:
   waid [옵션]
@@ -38,6 +40,7 @@ const USAGE: &str = concat!("waid ", env!("CARGO_PKG_VERSION"), " — what am I 
   -j, --json            JSON 스냅샷                          레이어 3: 파이프
 
 옵션:
+      --lang ko|en      표시 언어 (기본: 시스템 언어)
       --watch           지속 갱신 (--html 이면 로컬 서버)
       --history         날짜 제한 없이 기존 세션도 수집
       --template FILE   HTML 템플릿 (기본: 내장)
@@ -54,7 +57,37 @@ const USAGE: &str = concat!("waid ", env!("CARGO_PKG_VERSION"), " — what am I 
 관찰만 합니다. 에이전트를 실행하거나 종료하거나 명령을 보내지 않습니다.
 ");
 
+const USAGE_EN: &str = concat!("waid ", env!("CARGO_PKG_VERSION"), " — what am I doing?
+
+Usage:
+  waid [options]
+  waid doctor
+
+Output:
+  -1, --once            Print a table once and exit (default)
+      --html            HTML dashboard
+  -j, --json            JSON snapshot
+
+Options:
+      --lang ko|en      Display language (default: system language)
+      --watch           Keep updating (--html starts a localhost server)
+      --history         Include sessions without a date limit
+      --template FILE   HTML template (default: bundled)
+      --eject           Write the bundled HTML template to stdout
+      --keys            List available template keys
+      --port N          --html --watch port (default 7423, 0 assigns a free port)
+  -i, --interval SEC    Polling interval (default 2)
+      --agent NAME      Show only this agent
+      --waiting         Show only sessions waiting for your input
+      --color / --no-color
+  -h, --help            Show this help
+  -V, --version
+
+Read-only: waid never starts, stops, or sends commands to agents.
+");
+
 struct Args {
+    action: Option<&'static str>,
     json: bool,
     html: bool,
     template: Option<String>,
@@ -70,6 +103,7 @@ struct Args {
 
 fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut a = Args {
+        action: None,
         json: false,
         html: false,
         template: None,
@@ -84,33 +118,28 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
     };
     while let Some(arg) = it.next() {
         match arg.as_str() {
-            "-h" | "--help" => {
-                print!("{USAGE}");
-                std::process::exit(0);
-            }
-            "-V" | "--version" => {
-                println!("waid {}", env!("CARGO_PKG_VERSION"));
-                std::process::exit(0);
-            }
+            "-h" | "--help" => a.action = Some("help"),
+            "-V" | "--version" => a.action = Some("version"),
             "doctor" => a.doctor = true,
             "-1" | "--once" => {}
             "-j" | "--json" => a.json = true,
             "--html" => a.html = true,
-            "--eject" => {
-                print!("{}", html::DEFAULT_TEMPLATE);
-                std::process::exit(0);
-            }
-            "--keys" => {
-                print_keys();
-                std::process::exit(0);
+            "--eject" => a.action = Some("eject"),
+            "--keys" => a.action = Some("keys"),
+            "--lang" => {
+                let v = it.next().ok_or(tr("--lang 에 ko 또는 en이 필요합니다", "--lang requires ko or en"))?;
+                let language = Language::from_code(&v)
+                    .filter(|_| matches!(v.as_str(), "ko" | "en"))
+                    .ok_or(tr("--lang 은 ko 또는 en이어야 합니다", "--lang must be ko or en"))?;
+                set_language(language);
             }
             "--template" => {
-                a.template = Some(it.next().ok_or("--template 에 파일 경로가 필요합니다")?);
+                a.template = Some(it.next().ok_or(tr("--template 에 파일 경로가 필요합니다", "--template requires a file path"))?);
                 a.html = true;
             }
             "--port" => {
-                let v = it.next().ok_or("--port 에 값이 필요합니다")?;
-                a.port = v.parse::<u16>().map_err(|_| "--port 는 0..65535 여야 합니다")?;
+                let v = it.next().ok_or(tr("--port 에 값이 필요합니다", "--port requires a value"))?;
+                a.port = v.parse::<u16>().map_err(|_| tr("--port 는 0..65535 여야 합니다", "--port must be between 0 and 65535"))?;
             }
             "--watch" => a.watch = true,
             "--history" => a.history = true,
@@ -118,18 +147,18 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
             "--color" => a.color = Some(true),
             "--no-color" => a.color = Some(false),
             "-i" | "--interval" => {
-                let v = it.next().ok_or("--interval 에 값이 필요합니다")?;
-                a.interval = v.parse::<u64>().map_err(|_| "--interval 은 숫자여야 합니다")?.max(1);
+                let v = it.next().ok_or(tr("--interval 에 값이 필요합니다", "--interval requires a value"))?;
+                a.interval = v.parse::<u64>().map_err(|_| tr("--interval 은 숫자여야 합니다", "--interval must be a positive integer"))?.max(1);
             }
             "--agent" => {
-                let v = it.next().ok_or("--agent 에 값이 필요합니다")?;
+                let v = it.next().ok_or(tr("--agent 에 값이 필요합니다", "--agent requires a value"))?;
                 if matchers::by_name(&v).is_none() {
                     let known: Vec<&str> = matchers::all().iter().map(|a| a.name).collect();
-                    return Err(format!("알 수 없는 에이전트 '{v}'. 가능: {}", known.join(", ")));
+                    return Err(crate::trf!("알 수 없는 에이전트 '{v}'. 가능: {}", "Unknown agent '{v}'. Available: {}", known.join(", ")));
                 }
                 a.agent = Some(v);
             }
-            other => return Err(format!("알 수 없는 옵션 '{other}' — `waid --help`")),
+            other => return Err(crate::trf!("알 수 없는 옵션 '{other}' — `waid --help`", "Unknown option '{other}' — `waid --help`")),
         }
     }
     Ok(a)
@@ -149,6 +178,7 @@ fn snapshot(args: &Args) -> (Vec<session::Session>, i64) {
 
 /// Run the CLI, also used by the desktop executable's internal collector mode.
 pub fn run(args: impl Iterator<Item = String>) {
+    set_language(Language::detect());
     let args = match parse_args(args) {
         Ok(a) => a,
         Err(e) => {
@@ -157,13 +187,24 @@ pub fn run(args: impl Iterator<Item = String>) {
         }
     };
 
+    if let Some(action) = args.action {
+        match action {
+            "help" => print!("{}", tr(USAGE_KO, USAGE_EN)),
+            "version" => println!("waid {}", env!("CARGO_PKG_VERSION")),
+            "eject" => print!("{}", html::DEFAULT_TEMPLATE),
+            "keys" => print_keys(),
+            _ => unreachable!(),
+        }
+        return;
+    }
+
     if args.doctor {
         doctor();
         return;
     }
 
     if args.json && args.html {
-        eprintln!("waid: --json 과 --html 은 함께 쓸 수 없습니다");
+        eprintln!("{}", tr("waid: --json 과 --html 은 함께 쓸 수 없습니다", "waid: --json and --html cannot be used together"));
         std::process::exit(2);
     }
 
@@ -241,14 +282,14 @@ fn print_keys() {
     let sessions = session::collect(now);
     let ctx = html::context(&sessions, now);
 
-    println!("전역 키 ({}개 세션 기준)\n", sessions.len());
+    println!("{}", crate::trf!("전역 키 ({}개 세션 기준)\n", "Global keys ({} sessions)\n", sessions.len()));
     let mut list: Vec<&String> = ctx.keys().filter(|k| *k != "sessions").collect();
     list.sort();
     for k in list {
         println!("  {{{{{k}}}}}");
     }
 
-    println!("\n{{{{#each sessions}}}} 안에서 쓸 수 있는 키\n");
+    println!("{}", tr("\n{{#each sessions}} 안에서 쓸 수 있는 키\n", "\nKeys inside {{#each sessions}}\n"));
     let sample = html::context(&sessions, now);
     if let Some(tmpl::Val::List(items)) = sample.get("sessions") {
         if let Some(first) = items.first() {
@@ -274,36 +315,36 @@ fn print_keys() {
 
 /// 감지 경로를 진단한다. "왜 내 세션이 안 보이지"에 답하기 위한 유일한 서브커맨드.
 fn doctor() {
-    println!("waid {} — 진단\n", env!("CARGO_PKG_VERSION"));
+    println!("{}", crate::trf!("waid {} — 진단\n", "waid {} — diagnostics\n", env!("CARGO_PKG_VERSION")));
 
     let procfs = std::path::Path::new("/proc/self/cmdline").exists();
     println!(
-        "프로세스 열거   {}",
-        if cfg!(windows) { "Windows Tool Help API (첫 조회부터 수집, cwd·인자 없음)" }
-        else if procfs { "/proc (정확: cwd 확보 가능)" } else { "ps 폴백 (cwd 없음)" }
+        "{} {}", tr("프로세스 열거  ", "Processes     "),
+        if cfg!(windows) { tr("Windows Tool Help API (첫 조회부터 수집, cwd·인자 없음)", "Windows Tool Help API (collected on first scan; no cwd/arguments)") }
+        else if procfs { tr("/proc (정확: cwd 확보 가능)", "/proc (cwd available)") } else { tr("ps 폴백 (cwd 없음)", "ps fallback (no cwd)") }
     );
 
     println!(
         "SQLite          {}",
         if sqlite::available() {
-            "OS 라이브러리 사용 가능 (편집기 DB 읽기 O)"
+            tr("OS 라이브러리 사용 가능 (편집기 DB 읽기 O)", "OS library available (editor databases readable)")
         } else {
-            "없음 — SQLite 소스는 꺼집니다"
+            tr("없음 — SQLite 소스는 꺼집니다", "Unavailable — SQLite sources disabled")
         }
     );
 
     let home = std::env::var("HOME").unwrap_or_else(|_| "(unset)".into());
     println!("HOME            {home}");
     if let Some(home) = adapters::home() {
-        println!("사용 홈         {}", home.display());
+        println!("{} {}", tr("사용 홈        ", "Resolved home  "), home.display());
     }
     match theme::path() {
         Some(p) => println!(
-            "테마            {} {}",
+            "{} {} {}", tr("테마           ", "Theme          "),
             p.display(),
-            if p.exists() { "(적용됨)" } else { "(없음 — 기본값)" }
+            if p.exists() { tr("(적용됨)", "(loaded)") } else { tr("(없음 — 기본값)", "(missing — defaults)") }
         ),
-        None => println!("테마            (경로 확인 불가 — 기본값)"),
+        None => println!("{}", tr("테마            (경로 확인 불가 — 기본값)", "Theme           (path unavailable — defaults)")),
     }
 
     match adapters::dir() {
@@ -312,31 +353,31 @@ fn doctor() {
                 .iter()
                 .filter(|x| !matches!(x.origin, adapters::Origin::Builtin))
                 .count();
-            println!(
-                "어댑터          {} ({}개 로드됨)",
+            println!("{}", crate::trf!(
+                "어댑터          {} ({}개 로드됨)", "Adapters        {} ({} loaded)",
                 d.display(),
                 n
-            );
+            ));
         }
-        None => println!("어댑터          (경로 확인 불가)"),
+        None => println!("{}", tr("어댑터          (경로 확인 불가)", "Adapters        (path unavailable)")),
     }
 
     // 어댑터 오타는 조용히 무시되지만, 여기서는 반드시 보여준다.
     // "왜 내 어댑터가 안 먹지"의 답이 여기 있어야 한다.
     let problems = adapters::problems();
     if !problems.is_empty() {
-        println!("\n어댑터 문제");
+        println!("{}", tr("\n어댑터 문제", "\nAdapter problems"));
         for p in problems {
             println!("  ! {p}");
         }
     }
 
-    println!("\n에이전트");
+    println!("{}", tr("\n에이전트", "\nAgents"));
     #[cfg(windows)]
     let procs = match proc::windows_snapshot() {
         Ok(processes) => processes,
         Err(error) => {
-            println!("  ! 프로세스 열거 실패: {error}");
+            println!("{}", crate::trf!("  ! 프로세스 열거 실패: {error}", "  ! Process enumeration failed: {error}"));
             Vec::new()
         }
     };
@@ -349,7 +390,7 @@ fn doctor() {
             .filter(|p| matchers::identify(p).map(|x| x.name) == Some(a.name))
             .count();
         let origin = match &d.origin {
-            adapters::Origin::Builtin => "내장".to_string(),
+            adapters::Origin::Builtin => tr("내장", "bundled").to_string(),
             adapters::Origin::User(p) => format!(
                 "← {}",
                 p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
@@ -366,27 +407,27 @@ fn doctor() {
             kinds.push("sqlite");
         }
         let reader = if kinds.is_empty() {
-            "읽기 X".to_string()
+            tr("읽기 X", "no reader").to_string()
         } else {
             kinds.join("+")
         };
-        println!("  {:<12} {:<16} 실행 중 {:<3} {}", a.name, reader, n, origin);
+        println!("{}", crate::trf!("  {:<12} {:<16} 실행 중 {:<3} {}", "  {:<12} {:<16} running {:<3} {}", a.name, reader, n, origin));
     }
 
     let now = time::now();
-    println!("\n트랜스크립트 (최근 24시간)");
+    println!("{}", tr("\n트랜스크립트 (최근 24시간)", "\nTranscripts (last 24 hours)"));
     for d in adapters::table().iter().filter(|d| d.agent.has_reader) {
         let a = d.agent;
         let ts = transcript::discover(a.name, now);
-        println!("  {:<12} {} 개", a.name, ts.len());
+        println!("{}", crate::trf!("  {:<12} {} 개", "  {:<12} {} found", a.name, ts.len()));
         // 루트를 전부 보여주고, 각각 실제로 존재하는지 표시한다.
         // "어느 셸에서 띄웠든 한 화면에"가 안 될 때 여기서 원인이 보여야 한다.
         for root in d.transcript_dirs.iter().chain(d.json_dirs.iter()) {
-            let mark = if root.is_dir() { "O" } else { "· 없음" };
+            let mark = if root.is_dir() { "O" } else { tr("· 없음", "· missing") };
             println!("      [{mark}] {}", root.display());
         }
         for q in &d.queries {
-            let mark = if q.file.is_file() { "O" } else { "· 없음" };
+            let mark = if q.file.is_file() { "O" } else { tr("· 없음", "· missing") };
             println!("      [{mark}] {} (sqlite)", q.file.display());
         }
         for t in ts.iter().take(3) {
@@ -400,18 +441,18 @@ fn doctor() {
     }
 
     if let Some(path) = orca::path() {
-        println!("\nOrca SSH hook  {} 개 (최근 24시간)\n  {}", orca::collect(now, false).len(), path.display());
+        println!("{}", crate::trf!("\nOrca SSH hook  {} 개 (최근 24시간)\n  {}", "\nOrca SSH hook  {} found (last 24 hours)\n  {}", orca::collect(now, false).len(), path.display()));
     }
     #[cfg(windows)]
-    println!("\nSSH 터미널 화면 관찰  {} 개 (보이는 Codex·Claude 화면, 상태 미확인)",
-        terminal::collect(&procs, now).len());
+    println!("{}", crate::trf!("\nSSH 터미널 화면 관찰  {} 개 (보이는 Codex·Claude 화면, 상태 미확인)",
+        "\nSSH terminal screen observations  {} found (visible Codex/Claude screens, status unknown)", terminal::collect(&procs, now).len()));
 
     // 위 목록을 만들며 읽지 못한 것들. "왜 내 세션이 안 보이지"의 답이다.
     // JSON 스냅샷의 `warnings` 와 같은 출처를 쓴다 — 진단이 두 벌이 되면
     // 둘 중 하나는 반드시 낡는다.
     let source_problems = transcript::source_problems();
     if !source_problems.is_empty() {
-        println!("\n소스 문제");
+        println!("{}", tr("\n소스 문제", "\nSource problems"));
         for p in &source_problems {
             println!("  ! {p}");
         }

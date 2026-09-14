@@ -1,5 +1,6 @@
 //! Bounded terminal-screen observations when SSH hides the real processes/logs.
 use crate::{
+    i18n::tr,
     json::{self, Json},
     proc::Process,
     session::{Confidence, Session, State, Task},
@@ -113,8 +114,8 @@ fn observation(value: &Json, now: i64) -> Option<Session> {
         evidence: "terminal_screen",
         legacy_id: crate::session::short_id(&[&id]),
         id,
-        title: format!(
-            "{} · 화면 관찰",
+        title: crate::trf!(
+            "{} · 화면 관찰", "{} · Screen observation",
             project.chars().take(100).collect::<String>()
         ),
         agent: crate::matchers::by_name(name)?,
@@ -123,7 +124,7 @@ fn observation(value: &Json, now: i64) -> Option<Session> {
         task: Task {
             text: prompt
                 .or(label)
-                .or_else(|| Some("터미널에서 에이전트 화면 감지".into())),
+                .or_else(|| Some(tr("터미널에서 에이전트 화면 감지", "Agent screen detected in terminal").into())),
             source: "terminal_screen",
             confidence: Confidence::Inferred,
         },
@@ -139,7 +140,7 @@ fn observation(value: &Json, now: i64) -> Option<Session> {
 fn scan(now: i64) -> Result<(Vec<Session>, bool), String> {
     let powershell = std::env::var_os("SystemRoot")
         .map(std::path::PathBuf::from)
-        .ok_or("Windows 경로를 찾지 못했습니다.")?
+        .ok_or(tr("Windows 경로를 찾지 못했습니다.", "Windows system directory is unavailable."))?
         .join("System32/WindowsPowerShell/v1.0/powershell.exe");
     let mut child = Command::new(powershell)
         .args([
@@ -155,8 +156,8 @@ fn scan(now: i64) -> Result<(Vec<Session>, bool), String> {
         .stderr(Stdio::null())
         .creation_flags(0x08000000)
         .spawn()
-        .map_err(|e| format!("화면 관찰 실행 실패: {e}"))?;
-    let stdout = child.stdout.take().ok_or("화면 관찰 출력 없음")?;
+        .map_err(|e| crate::trf!("화면 관찰 실행 실패: {e}", "Could not start screen observation: {e}"))?;
+    let stdout = child.stdout.take().ok_or(tr("화면 관찰 출력 없음", "No screen observation output"))?;
     const LIMIT: u64 = 2 * 1024 * 1024;
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();
@@ -176,30 +177,30 @@ fn scan(now: i64) -> Result<(Vec<Session>, bool), String> {
                 let _ = child.kill();
                 let _ = child.wait();
                 break Err(match result {
-                    Err(e) => format!("화면 관찰 실패: {e}"),
-                    _ => "화면 관찰 시간 초과 (4초)".into(),
+                    Err(e) => crate::trf!("화면 관찰 실패: {e}", "Screen observation failed: {e}"),
+                    _ => tr("화면 관찰 시간 초과 (4초)", "Screen observation timed out (4 seconds)").into(),
                 });
             }
         }
     };
     let bytes = reader
         .join()
-        .map_err(|_| "화면 관찰 출력 실패")?
-        .map_err(|_| "화면 관찰 출력 실패")?;
+        .map_err(|_| tr("화면 관찰 출력 실패", "Could not read screen observation output"))?
+        .map_err(|_| tr("화면 관찰 출력 실패", "Could not read screen observation output"))?;
     if !status?.success() {
-        return Err("Windows UI Automation 화면을 읽지 못했습니다.".into());
+        return Err(tr("Windows UI Automation 화면을 읽지 못했습니다.", "Could not read the Windows UI Automation screen.").into());
     }
     if bytes.len() as u64 > LIMIT {
-        return Err("화면 관찰 출력 상한 초과".into());
+        return Err(tr("화면 관찰 출력 상한 초과", "Screen observation output exceeds the size limit").into());
     }
     let value = std::str::from_utf8(&bytes)
         .ok()
         .and_then(|s| json::parse(s.trim_start_matches('\u{feff}')).ok())
-        .ok_or("화면 관찰 응답 형식 오류")?;
+        .ok_or(tr("화면 관찰 응답 형식 오류", "Invalid screen observation response"))?;
     let screens = value
         .get("screens")
         .and_then(Json::as_array)
-        .ok_or("화면 관찰 목록 없음")?;
+        .ok_or(tr("화면 관찰 목록 없음", "Screen observation list is missing"))?;
     Ok((
         screens
             .iter()
@@ -238,7 +239,7 @@ pub fn collect(processes: &[Process], now: i64) -> Vec<Session> {
     match &cache.as_ref().unwrap().1 {
         Ok((rows, partial)) => {
             if *partial {
-                crate::diag::warn("일부 터미널 화면을 읽지 못했습니다.".into());
+                crate::diag::warn(tr("일부 터미널 화면을 읽지 못했습니다.", "Some terminal screens could not be read.").into());
             }
             rows.clone()
         }

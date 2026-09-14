@@ -61,8 +61,9 @@ pub fn warnings() -> Vec<String> {
         if *dropped > 0 {
             let hidden = dropped + out.len() - (MAX_WARNINGS - 1);
             out.truncate(MAX_WARNINGS - 1);
-            out.push(clamp(format!(
-                "경고 {hidden}건이 더 있습니다 (상한 {MAX_WARNINGS}건)"
+            out.push(clamp(crate::trf!(
+                "경고 {hidden}건이 더 있습니다 (상한 {MAX_WARNINGS}건)",
+                "{hidden} more warnings (limit: {MAX_WARNINGS})"
             )));
         }
         out
@@ -76,31 +77,32 @@ pub fn warnings() -> Vec<String> {
 /// "권한 문제"를 가른다.
 pub fn dir_error(dir: &Path, error: &std::io::Error) {
     if error.kind() != std::io::ErrorKind::NotFound {
-        warn(format!("폴더를 읽지 못했습니다: {} — {error}", dir.display()));
+        warn(crate::trf!("폴더를 읽지 못했습니다: {} — {error}", "Could not read folder: {} — {error}", dir.display()));
     }
 }
 
 pub fn file_error(path: &Path, error: &std::io::Error) {
     if error.kind() != std::io::ErrorKind::NotFound {
-        warn(format!("파일을 읽지 못했습니다: {} — {error}", path.display()));
+        warn(crate::trf!("파일을 읽지 못했습니다: {} — {error}", "Could not read file: {} — {error}", path.display()));
     }
 }
 
 /// 파일은 남고 그 줄만 빠진다. 잘린 경계 줄은 여기 포함되지 않는다.
 pub fn unparsed_lines(path: &Path, lines: usize) {
-    warn(format!("형식 오류로 {lines}줄을 건너뜁니다: {}", path.display()));
+    warn(crate::trf!("형식 오류로 {lines}줄을 건너뜁니다: {}", "Skipping malformed lines: {lines} — {}", path.display()));
 }
 
 /// 문서 전체가 JSON 이 아니었다. 세션 한 장이 통째로 빠진다.
 pub fn unparsed_document(path: &Path) {
-    warn(format!("JSON 형식 오류로 건너뜁니다: {}", path.display()));
+    warn(crate::trf!("JSON 형식 오류로 건너뜁니다: {}", "Skipping malformed JSON: {}", path.display()));
 }
 
 /// 상한을 넘는 JSON 은 파싱하지 않는다(§8). 조용히 빠지면 원인을 못 찾는다.
 pub fn oversized(path: &Path, size: u64, limit: u64) {
     let mib = (1024 * 1024) as f64;
-    warn(format!(
+    warn(crate::trf!(
         "크기 상한 {:.0} MiB 를 넘어 건너뜁니다: {} ({:.1} MiB)",
+        "Skipping file above the {:.0} MiB limit: {} ({:.1} MiB)",
         limit as f64 / mib,
         path.display(),
         size as f64 / mib
@@ -109,5 +111,5 @@ pub fn oversized(path: &Path, size: u64, limit: u64) {
 
 /// 편집기 업데이트로 스키마가 바뀌거나 DB 가 잠긴 경우. 그 소스만 빈다.
 pub fn sqlite_error(file: &Path, detail: &str) {
-    warn(format!("SQLite 소스를 읽지 못했습니다: {} — {detail}", file.display()));
+    warn(crate::trf!("SQLite 소스를 읽지 못했습니다: {} — {detail}", "Could not read SQLite source: {} — {detail}", file.display()));
 }

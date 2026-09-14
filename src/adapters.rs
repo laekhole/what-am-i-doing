@@ -22,6 +22,7 @@
 //! 정규식이 아니라 실행 파일 이름 목록인 이유는 matchers.rs 를 보라.
 
 use crate::theme::{parse, Val};
+use crate::i18n::tr;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -436,16 +437,16 @@ fn parse_def(path: &PathBuf, text: &str) -> Result<Def, String> {
 
     let name = match kv.get("adapter.name") {
         Some(Val::Str(s)) if !s.is_empty() => s.clone(),
-        _ => return Err("adapter.name 이 없습니다".into()),
+        _ => return Err(tr("adapter.name 이 없습니다", "Missing adapter.name").into()),
     };
     if name.chars().any(|c| c.is_whitespace()) {
-        return Err(format!("adapter.name '{name}' 에 공백은 쓸 수 없습니다"));
+        return Err(crate::trf!("adapter.name '{name}' 에 공백은 쓸 수 없습니다", "adapter.name '{name}' cannot contain whitespace"));
     }
 
     let exec = strings(&kv, "adapter.exec");
     let markers = strings(&kv, "adapter.markers");
     if exec.is_empty() && markers.is_empty() {
-        return Err("adapter.exec 또는 adapter.markers 중 하나는 있어야 합니다".into());
+        return Err(tr("adapter.exec 또는 adapter.markers 중 하나는 있어야 합니다", "At least one of adapter.exec or adapter.markers is required").into());
     }
 
     let display = match kv.get("adapter.display") {
@@ -498,8 +499,8 @@ fn parse_def(path: &PathBuf, text: &str) -> Result<Def, String> {
             })
             .collect(),
         // 반쪽짜리 정의는 조용히 무시하지 않는다. doctor 가 이유를 보여준다.
-        (Some(_), None) => return Err("sqlite.file 에는 sqlite.query 가 필요합니다".into()),
-        (None, Some(_)) => return Err("sqlite.query 에는 sqlite.file 이 필요합니다".into()),
+        (Some(_), None) => return Err(tr("sqlite.file 에는 sqlite.query 가 필요합니다", "sqlite.file requires sqlite.query").into()),
+        (None, Some(_)) => return Err(tr("sqlite.query 에는 sqlite.file 이 필요합니다", "sqlite.query requires sqlite.file").into()),
         (None, None) => Vec::new(),
     };
 
@@ -564,7 +565,7 @@ fn load() -> &'static (Vec<Def>, Vec<String>) {
             let text = match std::fs::read_to_string(&p) {
                 Ok(t) => t,
                 Err(e) => {
-                    problems.push(format!("{}: 읽기 실패 ({e})", p.display()));
+                    problems.push(crate::trf!("{}: 읽기 실패 ({e})", "{}: read failed ({e})", p.display()));
                     continue;
                 }
             };

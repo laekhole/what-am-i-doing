@@ -1,4 +1,6 @@
 <!DOCTYPE html>
+<html lang="{{language}}">
+<head>
 <meta charset="utf-8">
 <title>waid</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -81,6 +83,16 @@
   .tally { display: flex; gap: 12px; margin-left: auto; color: var(--fg-dim); }
   .tally b { font-weight: 600; }
   .tally .w { color: var(--waiting); }
+
+  #language { margin: 0 0 12px; font-size: 11px; text-align: right; }
+  #language select, #language button {
+    font: inherit;
+    color: var(--fg);
+    background: var(--surface);
+    border: 1px solid var(--fg-dim);
+    border-radius: 4px;
+    padding: 4px;
+  }
 
   .grid {
     display: grid;
@@ -209,18 +221,29 @@
   }
 
   #live { margin-left: auto; }
-  #live.on::before  { content: "◉ live"; color: var(--working); }
-  #live.off::before { content: "○ 정지"; }
+  #live.on::before  { content: attr(data-live); color: var(--working); }
+  #live.off::before { content: attr(data-stopped); }
 </style>
+</head>
+<body>
+
+<form id="language" action="/" method="get" hidden>
+  <label for="lang">Language / 언어</label>
+  <select id="lang" name="lang">
+    <option value="ko"{{#if language.ko}} selected{{/if}}>한국어</option>
+    <option value="en"{{#if language.en}} selected{{/if}}>English</option>
+  </select>
+  <button type="submit">{{ui.apply}}</button>
+</form>
 
 <div data-waid-root>
   <header>
-    <h1>waid <span>{{count}} sessions</span></h1>
+    <h1>waid <span>{{count}} {{ui.sessions}}</span></h1>
     <div class="tally">
-      {{#if any.waiting}}<span class="w"><b>{{count.waiting}}</b> 내 차례</span>{{/if}}
-      {{#if any.working}}<span><b>{{count.working}}</b> 작업 중</span>{{/if}}
-      {{#if any.idle}}<span><b>{{count.idle}}</b> 유휴</span>{{/if}}
-      {{#if any.error}}<span><b>{{count.error}}</b> 오류</span>{{/if}}
+      {{#if any.waiting}}<span class="w"><b>{{count.waiting}}</b> {{ui.waiting}}</span>{{/if}}
+      {{#if any.working}}<span><b>{{count.working}}</b> {{ui.working}}</span>{{/if}}
+      {{#if any.idle}}<span><b>{{count.idle}}</b> {{ui.idle}}</span>{{/if}}
+      {{#if any.error}}<span><b>{{count.error}}</b> {{ui.error}}</span>{{/if}}
     </div>
   </header>
 
@@ -236,7 +259,7 @@
       {{#if task.present}}
         <p class="task{{#if task.inferred}} inferred{{/if}}">{{task.text}}</p>
       {{else}}
-        <p class="task none">— 지시 내용 없음</p>
+        <p class="task none">{{ui.no_task}}</p>
       {{/if}}
 
       <div class="meta">
@@ -249,15 +272,15 @@
   </div>
   {{else}}
   <div class="empty">
-    돌고 있는 코딩 에이전트가 없습니다.<br>
-    <small>감지 경로를 확인하려면 <code>waid doctor</code></small>
+    {{ui.empty}}<br>
+    <small>{{ui.doctor}} <code>waid doctor</code></small>
   </div>
   {{/if}}
 
   <footer>
     <span>waid {{version}}</span>
     <span>{{generated_at}}</span>
-    <span id="live"></span>
+    <span id="live" data-live="{{ui.live}}" data-stopped="{{ui.stopped}}" role="status"></span>
   </footer>
 </div>
 
@@ -265,7 +288,10 @@
   // --watch 로 띄웠을 때만 동작한다. 정적 출력에서는 조용히 아무것도 안 한다.
   (function () {
     var live = document.getElementById("live");
-    if (!window.EventSource || !location.port) return;
+    if (location.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(location.hostname)) return;
+    var languageForm = document.getElementById("language");
+    if (languageForm) languageForm.hidden = false;
+    if (!window.EventSource) return;
 
     var es = new EventSource("/events");
     es.onopen = function () { if (live) live.className = "on"; };
@@ -274,14 +300,14 @@
     es.onmessage = function () {
       // 서버가 다시 렌더한 페이지를 받아 루트만 갈아끼운다.
       // 템플릿 로직이 서버 한 곳에만 있으므로 클라이언트에 중복이 없다.
-      fetch("/", { cache: "no-store" })
+      fetch("/" + location.search, { cache: "no-store" })
         .then(function (r) { return r.text(); })
         .then(function (html) {
           var next = new DOMParser()
             .parseFromString(html, "text/html")
             .querySelector("[data-waid-root]");
           var cur = document.querySelector("[data-waid-root]");
-          if (next && cur) cur.innerHTML = next.innerHTML;
+          if (next && cur) cur.replaceChildren.apply(cur, next.childNodes);
           live = document.getElementById("live");
           if (live) live.className = "on";
         })
@@ -289,3 +315,5 @@
     };
   })();
 </script>
+</body>
+</html>

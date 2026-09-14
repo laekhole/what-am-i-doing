@@ -35,7 +35,7 @@ fn warnings_dedupe_and_stay_within_the_wire_bounds() {
     let warnings = crate::diag::warnings();
     // 요약 줄까지 세어 전체가 상한을 넘지 않는다.
     assert_eq!(warnings.len(), crate::diag::MAX_WARNINGS);
-    assert!(warnings.last().unwrap().contains("6건이 더 있습니다"));
+    assert!(warnings.last().unwrap().contains(crate::i18n::tr("6건이 더 있습니다", "6 more warnings")));
 }
 
 #[test]
@@ -73,13 +73,13 @@ fn unparsed_lines_are_counted_without_hiding_the_session() {
     let t = crate::transcript::read(&path, 100).unwrap();
     // 건강한 행은 사라지지 않는다. 빠진 줄만 따로 말한다.
     assert_eq!(t.current_prompt.as_deref(), Some("진단 픽스처"));
-    assert!(mentions("1줄") && mentions("unparsed"), "{:?}", crate::diag::warnings());
+    assert!(mentions(crate::i18n::tr("1줄", "malformed lines: 1")) && mentions("unparsed"), "{:?}", crate::diag::warnings());
 
     // 캐시로 답하는 회차도 같은 진단을 낸다. 두 번째 스냅샷부터 조용해지면
     // 사용자는 문제가 사라졌다고 읽는다.
     crate::diag::reset();
     assert!(crate::transcript::read(&path, 100).is_some());
-    assert!(mentions("1줄"), "{:?}", crate::diag::warnings());
+    assert!(mentions(crate::i18n::tr("1줄", "malformed lines: 1")), "{:?}", crate::diag::warnings());
 
     // 고쳐 쓰면 다음 스냅샷에서 조용해진다.
     fs::write(
@@ -144,7 +144,7 @@ fn sampled_jsonl_warnings_cover_append_and_boundary_lines() {
         drop(file);
         crate::diag::reset();
         assert!(crate::transcript::read(&path, 101).is_some());
-        assert!(mentions("1줄"), "new malformed line lost: {:?}", crate::diag::warnings());
+        assert!(mentions(crate::i18n::tr("1줄", "malformed lines: 1")), "new malformed line lost: {:?}", crate::diag::warnings());
         fs::remove_file(&path).unwrap();
 
         let path = temp(&format!("boundary-{name}")).with_extension("jsonl");
@@ -157,7 +157,7 @@ fn sampled_jsonl_warnings_cover_append_and_boundary_lines() {
         fs::write(&path, log).unwrap();
         crate::diag::reset();
         assert!(crate::transcript::read(&path, 100).is_some());
-        assert!(mentions("1줄"), "boundary malformed line lost: {:?}", crate::diag::warnings());
+        assert!(mentions(crate::i18n::tr("1줄", "malformed lines: 1")), "boundary malformed line lost: {:?}", crate::diag::warnings());
         fs::remove_file(path).unwrap();
     }
 }

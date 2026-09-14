@@ -186,8 +186,8 @@ pub fn collect(now: i64, history: bool) -> Vec<Session> {
             .and_then(|s| json::parse(s).ok())
         {
             Some(hooks) if merge(&hooks, sessions) => {}
-            _ => crate::diag::warn(format!(
-                "Orca hook 형식 또는 버전을 읽지 못했습니다: {}",
+            _ => crate::diag::warn(crate::trf!(
+                "Orca hook 형식 또는 버전을 읽지 못했습니다: {}", "Could not read Orca hook format or version: {}",
                 path.display()
             )),
         },

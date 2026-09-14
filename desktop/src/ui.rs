@@ -1,6 +1,7 @@
 //! Presentation and user preferences. Never writes agent data.
 use crate::Row;
 use serde_json::{json, Value};
+use waid::i18n::{tr, Language};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs, io,
@@ -33,9 +34,9 @@ pub struct Skin {
 
 pub fn color(text: &str) -> Result<u32, String> {
     if text.len() != 7 || !text.starts_with('#') {
-        return Err("색상은 #RRGGBB 형식이어야 합니다.".into());
+        return Err(tr("색상은 #RRGGBB 형식이어야 합니다.", "Colors must use #RRGGBB.").into());
     }
-    let n = u32::from_str_radix(&text[1..], 16).map_err(|_| "색상이 올바르지 않습니다.")?;
+    let n = u32::from_str_radix(&text[1..], 16).map_err(|_| tr("색상이 올바르지 않습니다.", "Invalid color."))?;
     Ok(((n >> 16) & 255) | (n & 0xff00) | ((n & 255) << 16))
 }
 fn contrast(a: u32, b: u32) -> f64 {
@@ -56,24 +57,24 @@ fn contrast(a: u32, b: u32) -> f64 {
 impl Skin {
     pub fn parse(text: &str) -> Result<Self, String> {
         if text.len() as u64 > MAX_CONFIG {
-            return Err("템플릿은 128 KiB 이하로 작성하세요.".into());
+            return Err(tr("템플릿은 128 KiB 이하로 작성하세요.", "Templates must be at most 128 KiB.").into());
         }
-        let v: Value = serde_json::from_str(text).map_err(|e| format!("JSON 오류: {e}"))?;
+        let v: Value = serde_json::from_str(text).map_err(|e| waid::trf!("JSON 오류: {e}", "JSON error: {e}"))?;
         if v["version"] != 1 {
-            return Err("지원하는 템플릿 version은 1입니다.".into());
+            return Err(tr("지원하는 템플릿 version은 1입니다.", "Only template version 1 is supported.").into());
         }
         let name = v["name"]
             .as_str()
             .filter(|s| {
                 !s.trim().is_empty() && !s.chars().any(char::is_control) && s.chars().count() <= 48
             })
-            .ok_or("name은 1~48자입니다.")?
+            .ok_or(tr("name은 1~48자입니다.", "name must contain 1–48 characters."))?
             .to_string();
         let c = |key: &str| {
             color(
                 v["colors"][key]
                     .as_str()
-                    .ok_or_else(|| format!("colors.{key}가 필요합니다."))?,
+                    .ok_or_else(|| waid::trf!("colors.{key}가 필요합니다.", "colors.{key} is required."))?,
             )
         };
         let n = |key: &str, min: i64, max: i64| {
@@ -81,15 +82,15 @@ impl Skin {
                 .as_i64()
                 .filter(|n| (min..=max).contains(n))
                 .map(|n| n as i32)
-                .ok_or_else(|| format!("{key}는 {min}~{max}입니다."))
+                .ok_or_else(|| waid::trf!("{key}는 {min}~{max}입니다.", "{key} must be between {min} and {max}."))
         };
         let mut fields = Vec::new();
-        for item in v["fields"].as_array().ok_or("fields 배열이 필요합니다.")? {
-            let field = item.as_str().ok_or("fields는 문자열 배열입니다.")?;
+        for item in v["fields"].as_array().ok_or(tr("fields 배열이 필요합니다.", "The fields array is required."))? {
+            let field = item.as_str().ok_or(tr("fields는 문자열 배열입니다.", "fields must be an array of strings."))?;
             if !["task", "project", "status", "agent", "model", "activity"].contains(&field)
                 || fields.iter().any(|f| f == field)
             {
-                return Err(format!("알 수 없거나 중복된 필드: {field}"));
+                return Err(waid::trf!("알 수 없거나 중복된 필드: {field}", "Unknown or duplicate field: {field}"));
             }
             fields.push(field.to_string());
         }
@@ -97,7 +98,7 @@ impl Skin {
             .iter()
             .all(|f| fields.iter().any(|x| x == f))
         {
-            return Err("task, project, status는 필수입니다.".into());
+            return Err(tr("task, project, status는 필수입니다.", "task, project and status are required.").into());
         }
         let mut icons = BTreeMap::new();
         for state in STATES {
@@ -106,7 +107,7 @@ impl Skin {
                 .filter(|s| {
                     !s.is_empty() && s.chars().count() <= 4 && !s.chars().any(char::is_control)
                 })
-                .ok_or_else(|| format!("icons.{state}는 1~4자의 기호입니다."))?;
+                .ok_or_else(|| waid::trf!("icons.{state}는 1~4자의 기호입니다.", "icons.{state} must contain 1–4 symbol characters."))?;
             icons.insert(state.to_string(), icon.to_string());
         }
         let mut state_colors = BTreeMap::new();
@@ -116,7 +117,7 @@ impl Skin {
                 color(
                     v["state_colors"][state]
                         .as_str()
-                        .ok_or_else(|| format!("state_colors.{state}가 필요합니다."))?,
+                        .ok_or_else(|| waid::trf!("state_colors.{state}가 필요합니다.", "state_colors.{state} is required."))?,
                 )?,
             );
         }
@@ -143,7 +144,7 @@ impl Skin {
             for background in [skin.background, skin.surface, skin.selection] {
                 if contrast(foreground, background) < 4.5 {
                     return Err(
-                        "텍스트·강조색과 목록 배경의 명암비는 4.5:1 이상이어야 합니다.".into(),
+                        tr("텍스트·강조색과 목록 배경의 명암비는 4.5:1 이상이어야 합니다.", "Text and accent colors must have at least 4.5:1 contrast against list backgrounds.").into(),
                     );
                 }
             }
@@ -189,12 +190,12 @@ impl Skin {
                 self.icons.get(&row.state).unwrap_or(&self.icons["unknown"]),
                 row.status(),
                 if row.auxiliary {
-                    " · 보조 세션"
+                    tr(" · 보조 세션", " · Auxiliary session")
                 } else {
                     ""
                 }
             ),
-            "activity" => format!("마지막 기록  {}", row.short_date()),
+            "activity" => waid::trf!("마지막 기록  {}", "Last recorded  {}", row.short_date()),
             _ => String::new(),
         }
     }
@@ -202,6 +203,9 @@ impl Skin {
 
 #[derive(Clone, Debug)]
 pub struct Settings {
+    pub language: Language,
+    pub notifications: bool,
+    pub tray_hint_seen: bool,
     pub two_columns: bool,
     pub always_on_top: bool,
     pub opacity: u8,
@@ -220,6 +224,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            language: Language::detect(),
+            notifications: true,
+            tray_hint_seen: false,
             two_columns: false,
             always_on_top: false,
             opacity: 100,
@@ -299,7 +306,7 @@ impl Settings {
     }
     pub fn close(&mut self, row: &Row) -> Result<(), String> {
         if !self.closed.contains_key(&row.id) && self.closed.len() >= 1024 {
-            return Err("목록 제외 기록은 최대 1,024개입니다.".into());
+            return Err(tr("목록 제외 기록은 최대 1,024개입니다.", "At most 1,024 dismissed sessions can be saved.").into());
         }
         let mut row = row.clone();
         if row.request_marker.is_empty() {
@@ -382,9 +389,12 @@ impl Settings {
         let text = read_bounded(path, MAX_SETTINGS)?;
         let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
         if v["version"] != 1 {
-            return Err("설정 파일 버전을 확인할 수 없습니다.".into());
+            return Err(tr("설정 파일 버전을 확인할 수 없습니다.", "Unsupported settings file version.").into());
         }
         let mut s = Self::default();
+        // Keep the original Korean UI when upgrading a pre-language settings file.
+        s.language = v["language"].as_str().and_then(Language::from_code)
+            .unwrap_or(Language::Korean);
         for (key, target) in [("pinned", &mut s.pinned), ("hidden", &mut s.hidden)] {
             if let Some(a) = v[key].as_array() {
                 for id in a
@@ -403,6 +413,8 @@ impl Settings {
                 .map(|(id, target)| (id.clone(), target.clone())).collect();
         }
         s.always_on_top = v["always_on_top"].as_bool().unwrap_or(false);
+        s.notifications = v["notifications"].as_bool().unwrap_or(true);
+        s.tray_hint_seen = v["tray_hint_seen"].as_bool().unwrap_or(false);
         s.two_columns = v["two_columns"].as_bool().unwrap_or(false);
         s.opacity = v["opacity"]
             .as_u64()
@@ -436,10 +448,10 @@ impl Settings {
     }
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let closed: Vec<Value> = self.closed.values().map(row_value).collect();
-        let v = json!({"version":1,"two_columns":self.two_columns,"always_on_top":self.always_on_top,"opacity":self.opacity,"closed":closed,"show_all":self.show_all,"pinned":self.pinned,"hidden":self.hidden,"search":self.search,"state":self.state,"agent":self.agent,"show_aux":self.show_aux,"show_hidden":self.show_hidden,"template":self.template,"session_targets":self.session_targets});
+        let v = json!({"version":1,"language":self.language.code(),"notifications":self.notifications,"tray_hint_seen":self.tray_hint_seen,"two_columns":self.two_columns,"always_on_top":self.always_on_top,"opacity":self.opacity,"closed":closed,"show_all":self.show_all,"pinned":self.pinned,"hidden":self.hidden,"search":self.search,"state":self.state,"agent":self.agent,"show_aux":self.show_aux,"show_hidden":self.show_hidden,"template":self.template,"session_targets":self.session_targets});
         let text = serde_json::to_string_pretty(&v)?;
         if text.len() as u64 > MAX_SETTINGS {
-            return Err(io::Error::other("설정 파일 크기 상한 8 MiB를 초과했습니다."));
+            return Err(io::Error::other(tr("설정 파일 크기 상한 8 MiB를 초과했습니다.", "Settings exceed the 8 MiB limit.")));
         }
         atomic_write(path, &text)
     }
@@ -468,7 +480,7 @@ fn read_bounded(path: &Path, limit: u64) -> Result<String, String> {
         .read_to_string(&mut text)
         .map_err(|e| e.to_string())?;
     if text.len() as u64 > limit {
-        return Err(format!("파일 크기 상한: {} KiB", limit / 1024));
+        return Err(waid::trf!("파일 크기 상한: {} KiB", "File size limit: {} KiB", limit / 1024));
     }
     Ok(text.trim_start_matches('\u{feff}').to_string())
 }
@@ -495,34 +507,34 @@ mod tests {
             "compaction_observed":true,"compacted_at":1788915540
         }}]});
         let row = crate::snapshot_rows(source.to_string().as_bytes()).unwrap().rows.remove(0);
-        assert_eq!(row.context_summary(), "남은 컨텍스트 38.0% · 압축됨");
-        assert!(row.context_detail().contains("124,000 / 한도 200,000"));
+        assert_eq!(row.context_summary(), tr("남은 컨텍스트 38.0% · 압축됨", "Context remaining 38.0% · Compacted"));
+        assert!(row.context_detail().contains(tr("124,000 / 한도 200,000", "124,000 / limit 200,000")));
         assert!(row.context_detail().contains(&crate::time::to_iso8601(1788915600)));
-        assert!(row.accessible_text().contains("남은 컨텍스트 38.0%"));
+        assert!(row.accessible_text().contains(tr("남은 컨텍스트 38.0%", "Context remaining 38.0%")));
         let restored = saved_row(&row_value(&row)).unwrap();
         assert_eq!(restored.context, row.context);
         let unknown = Row::default();
-        assert_eq!(unknown.context_summary(), "남은 컨텍스트 미확인");
-        assert!(unknown.context_detail().contains("압축 (UTC)  기록 미확인"));
+        assert_eq!(unknown.context_summary(), tr("남은 컨텍스트 미확인", "Context remaining Unknown"));
+        assert!(unknown.context_detail().contains(tr("압축 (UTC)  기록 미확인", "Compaction (UTC)  Not observed")));
         assert_eq!(saved_row(&json!({"id":"old"})).unwrap().context, unknown.context);
         let invalid = crate::context_value(&json!({"used_tokens":-1,"window_tokens":0,"observed_at":i64::MAX}));
         assert_eq!(invalid, waid::ContextUsage::default());
         let mut zero = unknown.clone();
         zero.context.used_tokens = Some(0);
         zero.context.window_tokens = Some(200000);
-        assert_eq!(zero.context_summary(), "남은 컨텍스트 100.0%");
+        assert_eq!(zero.context_summary(), tr("남은 컨텍스트 100.0%", "Context remaining 100.0%"));
     }
     #[test]
     fn context_badges_include_the_quarter_boundary_and_compaction_without_a_limit() {
         for (used, limit, compacted, highlighted, label) in [
-            (Some(149999), Some(200000), false, false, "남은 컨텍스트 25.0%"),
-            (Some(150000), Some(200000), false, true, "남은 컨텍스트 25.0%"),
-            (Some(160000), Some(200000), true, true, "남은 컨텍스트 20.0% · 압축됨"),
-            (Some(200001), Some(200000), false, true, "남은 컨텍스트 0.0%"),
-            (None, Some(200000), true, true, "남은 컨텍스트 미확인 · 압축됨"),
-            (Some(150000), None, false, false, "남은 컨텍스트 미확인"),
-            (Some(150000), Some(0), false, false, "남은 컨텍스트 미확인"),
-            (Some(32000), Some(200000), true, true, "남은 컨텍스트 84.0% · 압축됨"),
+            (Some(149999), Some(200000), false, false, tr("남은 컨텍스트 25.0%", "Context remaining 25.0%")),
+            (Some(150000), Some(200000), false, true, tr("남은 컨텍스트 25.0%", "Context remaining 25.0%")),
+            (Some(160000), Some(200000), true, true, tr("남은 컨텍스트 20.0% · 압축됨", "Context remaining 20.0% · Compacted")),
+            (Some(200001), Some(200000), false, true, tr("남은 컨텍스트 0.0%", "Context remaining 0.0%")),
+            (None, Some(200000), true, true, tr("남은 컨텍스트 미확인 · 압축됨", "Context remaining Unknown · Compacted")),
+            (Some(150000), None, false, false, tr("남은 컨텍스트 미확인", "Context remaining Unknown")),
+            (Some(150000), Some(0), false, false, tr("남은 컨텍스트 미확인", "Context remaining Unknown")),
+            (Some(32000), Some(200000), true, true, tr("남은 컨텍스트 84.0% · 압축됨", "Context remaining 84.0% · Compacted")),
         ] {
             let row = Row { context: waid::ContextUsage {
                 used_tokens: used, window_tokens: limit, compaction_observed: compacted,
@@ -772,6 +784,33 @@ mod tests {
         assert_eq!(loaded.hidden, s.hidden);
         assert_eq!(loaded.template, s.template);
         assert!(!loaded.two_columns);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn language_roundtrip_preserves_sessions_and_migrates_legacy_settings() {
+        let path = std::env::temp_dir().join(format!("waid-language-{}.json", std::process::id()));
+        let mut settings = Settings::default();
+        let row = Row { id: "language-test".into(), task: "Keep English and 한국어 verbatim".into(),
+            last_answer: "원문 answer".into(), ..Row::default() };
+        settings.close(&row).unwrap();
+        settings.pinned.insert("pinned-session".into());
+        for language in [Language::English, Language::Korean] {
+            settings.language = language;
+            settings.save(&path).unwrap();
+            let loaded = Settings::read(&path).unwrap();
+            assert_eq!(loaded.language, language);
+            assert_eq!(loaded.closed[&row.id].task, row.task);
+            assert_eq!(loaded.closed[&row.id].last_answer, row.last_answer);
+            assert_eq!(loaded.pinned, settings.pinned);
+        }
+        let mut legacy: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        legacy.as_object_mut().unwrap().remove("language");
+        fs::write(&path, legacy.to_string()).unwrap();
+        assert_eq!(Settings::read(&path).unwrap().language, Language::Korean);
+        legacy["language"] = json!("unsupported");
+        fs::write(&path, legacy.to_string()).unwrap();
+        assert_eq!(Settings::read(&path).unwrap().language, Language::Korean);
         fs::remove_file(path).unwrap();
     }
 }

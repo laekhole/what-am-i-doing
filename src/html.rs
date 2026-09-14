@@ -8,20 +8,22 @@
 //! `waid --html --eject > mine.html` 로 통째로 꺼내 자기 것으로 만들면 된다.
 
 use crate::session::{Confidence, Session, State};
+use crate::i18n::{language, Language};
 use crate::time;
 use crate::tmpl::{self, b, s, Ctx, Val};
 
 pub const DEFAULT_TEMPLATE: &str = include_str!("default.html");
 
-fn state_label(st: State) -> &'static str {
-    match st {
-        State::Waiting => "내 차례",
-        State::Working => "작업 중",
-        State::Error => "오류",
-        State::Idle => "유휴",
-        State::Done => "완료",
-        State::Unknown => "미확인",
-    }
+fn state_label(st: State, language: Language) -> &'static str {
+    let (ko, en) = match st {
+        State::Waiting => ("내 차례", "Waiting"),
+        State::Working => ("작업 중", "Working"),
+        State::Error => ("오류", "Error"),
+        State::Idle => ("유휴", "Idle"),
+        State::Done => ("완료", "Done"),
+        State::Unknown => ("미확인", "Unknown"),
+    };
+    language.text(ko, en)
 }
 
 fn state_symbol(st: State) -> &'static str {
@@ -35,7 +37,7 @@ fn state_symbol(st: State) -> &'static str {
     }
 }
 
-fn session_ctx(x: &Session, now: i64) -> Ctx {
+fn session_ctx(x: &Session, now: i64, language: Language) -> Ctx {
     let mut c = Ctx::new();
     c.insert("id".into(), s(&x.id));
     c.insert("title".into(), s(&x.title));
@@ -61,7 +63,7 @@ fn session_ctx(x: &Session, now: i64) -> Ctx {
     );
 
     c.insert("status.state".into(), s(x.state.id()));
-    c.insert("status.label".into(), s(state_label(x.state)));
+    c.insert("status.label".into(), s(state_label(x.state, language)));
     c.insert("status.symbol".into(), s(state_symbol(x.state)));
     c.insert(
         "status.since".into(),
@@ -102,8 +104,31 @@ fn session_ctx(x: &Session, now: i64) -> Ctx {
 }
 
 pub fn context(sessions: &[Session], now: i64) -> Ctx {
+    context_language(sessions, now, language())
+}
+
+fn context_language(sessions: &[Session], now: i64, language: Language) -> Ctx {
     let mut root = Ctx::new();
-    let items: Vec<Ctx> = sessions.iter().map(|x| session_ctx(x, now)).collect();
+    let items: Vec<Ctx> = sessions.iter().map(|x| session_ctx(x, now, language)).collect();
+
+    root.insert("language".into(), s(language.code()));
+    root.insert("language.ko".into(), b(language == Language::Korean));
+    root.insert("language.en".into(), b(language == Language::English));
+    for (key, ko, en) in [
+        ("sessions", "개 세션", "sessions"),
+        ("waiting", "내 차례", "Waiting"),
+        ("working", "작업 중", "Working"),
+        ("idle", "유휴", "Idle"),
+        ("error", "오류", "Error"),
+        ("no_task", "— 지시 내용 없음", "— No request recorded"),
+        ("empty", "돌고 있는 코딩 에이전트가 없습니다.", "No coding agents are running."),
+        ("doctor", "감지 경로를 확인하려면", "Check collection paths with"),
+        ("live", "◉ 실시간", "◉ live"),
+        ("stopped", "○ 정지", "○ disconnected"),
+        ("apply", "적용", "Apply"),
+    ] {
+        root.insert(format!("ui.{key}"), s(language.text(ko, en)));
+    }
 
     let count = |st: State| sessions.iter().filter(|x| x.state == st).count();
     for st in [
@@ -131,10 +156,14 @@ pub fn template(path: Option<&str>) -> Result<String, String> {
     match path {
         None => Ok(DEFAULT_TEMPLATE.to_string()),
         Some(p) => std::fs::read_to_string(p)
-            .map_err(|e| format!("템플릿 '{p}' 을 읽을 수 없습니다: {e}")),
+            .map_err(|e| crate::trf!("템플릿 '{p}' 을 읽을 수 없습니다: {e}", "Cannot read template '{p}': {e}")),
     }
 }
 
 pub fn render(sessions: &[Session], now: i64, tpl: &str) -> String {
-    tmpl::render(tpl, &context(sessions, now))
+    render_language(sessions, now, tpl, language())
+}
+
+pub fn render_language(sessions: &[Session], now: i64, tpl: &str, language: Language) -> String {
+    tmpl::render(tpl, &context_language(sessions, now, language))
 }

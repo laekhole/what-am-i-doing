@@ -3,6 +3,7 @@
 mod windows;
 #[cfg(windows)]
 pub use windows::{open_window, probe_requested, windows};
+use waid::i18n::tr;
 use crate::Row;
 use serde_json::Value;
 use std::{
@@ -148,7 +149,7 @@ fn target(row: &Row, hooks: &Value, live: &Value) -> Option<String> {
 }
 
 pub fn open(row: &Row) -> Result<(), String> {
-    let missing = "열린 창·탭과의 연결을 확인할 수 없어 상세 내용을 표시합니다.";
+    let missing = tr("열린 창·탭과의 연결을 확인할 수 없어 상세 내용을 표시합니다.", "Could not verify the linked window or tab. Showing session details.");
     if row.session_id.is_empty() || row.state == "done" {
         return Err(missing.into());
     }
@@ -160,7 +161,7 @@ pub fn open(row: &Row) -> Result<(), String> {
         return Err(missing.into());
     }
     cli(&["terminal", "switch", "--terminal", &handle, "--json"])
-        .ok_or("탭으로 이동하지 못했습니다. 상세 내용을 표시합니다.")?;
+        .ok_or(tr("탭으로 이동하지 못했습니다. 상세 내용을 표시합니다.", "Could not switch to the tab. Showing session details."))?;
     Ok(())
 }
 
@@ -172,7 +173,7 @@ pub fn validate_chatgpt_link(row: &Row, link: &str) -> Result<(), String> {
         || !row.session_id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
         || link != format!("codex://threads/{}", row.session_id)
     {
-        return Err("ChatGPT에서 복사한 현재 세션의 codex://threads/ 링크만 연결할 수 있습니다.".into());
+        return Err(tr("ChatGPT에서 복사한 현재 세션의 codex://threads/ 링크만 연결할 수 있습니다.", "Only a codex://threads/ link copied from this session in ChatGPT can be connected.").into());
     }
     Ok(())
 }
@@ -192,24 +193,24 @@ pub fn open_chatgpt_link(row: &Row, link: &str) -> Result<(), String> {
         )
     };
     if result as isize <= 32 {
-        Err("ChatGPT 세션 링크를 열지 못했습니다. 앱 설치와 링크 연결을 확인하세요.".into())
+        Err(tr("ChatGPT 세션 링크를 열지 못했습니다. 앱 설치와 링크 연결을 확인하세요.", "Could not open the ChatGPT session link. Check the app installation and link association.").into())
     } else { Ok(()) }
 }
 
 #[cfg(windows)]
 pub fn open_associated(row: &Row, target: &Value) -> Result<String, String> {
     if row.state == "done" {
-        return Err("현재 세션에 연결된 창이나 링크가 필요합니다.".into());
+        return Err(tr("현재 세션에 연결된 창이나 링크가 필요합니다.", "Connect a window or link for this session first.").into());
     }
     if target["kind"] == "chatgpt_link" {
-        open_chatgpt_link(row, target["url"].as_str().ok_or("ChatGPT 링크가 없습니다.")?)?;
-        Ok("ChatGPT에 연결한 세션 링크를 전달했습니다. 앱에서 대화를 확인하세요.".into())
+        open_chatgpt_link(row, target["url"].as_str().ok_or(tr("ChatGPT 링크가 없습니다.", "No ChatGPT link is connected."))?)?;
+        Ok(tr("ChatGPT에 연결한 세션 링크를 전달했습니다. 앱에서 대화를 확인하세요.", "Session link sent to ChatGPT. Verify the conversation in the app.").into())
     } else {
         open_window(target)?;
         Ok(if target["kind"] == "powershell" {
-            "직접 연결한 PowerShell 창으로 이동했습니다. 창 안의 세션은 직접 확인하세요."
+            tr("직접 연결한 PowerShell 창으로 이동했습니다. 창 안의 세션은 직접 확인하세요.", "Switched to the connected PowerShell window. Verify the session in that window.")
         } else {
-            "직접 연결한 앱 창으로 이동했습니다. 앱에서 원하는 대화를 선택하세요."
+            tr("직접 연결한 앱 창으로 이동했습니다. 앱에서 원하는 대화를 선택하세요.", "Switched to the connected app window. Select the conversation in the app.")
         }.into())
     }
 }
@@ -311,11 +312,11 @@ mod tests {
 #[cfg(target_os = "macos")]
 pub fn open_associated(row: &Row, target: &Value) -> Result<String, String> {
     if target["kind"] != "chatgpt_link" {
-        return Err("This saved window connection belongs to Windows. Connect a copied ChatGPT link or use a current local Orca session.".into());
+        return Err(tr("저장된 창 연결은 Windows용입니다. 복사한 ChatGPT 링크를 연결하거나 현재 로컬 Orca 세션을 사용하세요.", "This saved window connection belongs to Windows. Connect a copied ChatGPT link or use a current local Orca session.").into());
     }
-    let link = target["url"].as_str().ok_or("Missing ChatGPT link")?;
+    let link = target["url"].as_str().ok_or(tr("ChatGPT 링크가 없습니다.", "No ChatGPT link is connected."))?;
     validate_chatgpt_link(row, link)?;
     let status = Command::new("/usr/bin/open").arg(link).status().map_err(|e| e.to_string())?;
-    if !status.success() { return Err("macOS could not dispatch the ChatGPT link. Check that the app is installed.".into()); }
-    Ok("Link dispatched. Verify the conversation in ChatGPT.".into())
+    if !status.success() { return Err(tr("macOS에서 ChatGPT 링크를 전달하지 못했습니다. 앱 설치를 확인하세요.", "macOS could not dispatch the ChatGPT link. Check that the app is installed.").into()); }
+    Ok(tr("링크를 전달했습니다. ChatGPT에서 대화를 확인하세요.", "Link dispatched. Verify the conversation in ChatGPT.").into())
 }

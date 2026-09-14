@@ -11,6 +11,7 @@ use std::{
     ptr::{null, null_mut},
     time::Instant,
 };
+use waid::i18n::{set_language, tr, Language};
 use windows_sys::Win32::{
     Foundation::*,
     Graphics::{Dwm::*, Gdi::*},
@@ -25,6 +26,7 @@ use windows_sys::Win32::{
 };
 
 mod accordion;
+mod tray;
 const SEARCH: usize = 10;
 const STATUS: usize = 11;
 const AGENT: usize = 12;
@@ -57,12 +59,16 @@ const MINIMIZE: usize = 49;
 const CLOSE_WINDOW: usize = 50;
 const TWO_COLUMNS: usize = 51;
 const ASSOCIATE: usize = 60;
+const LANGUAGE: usize = 62;
+const LANGUAGE_KOREAN: usize = 107;
+const LANGUAGE_ENGLISH: usize = 108;
 const CLASS: &str = "waid.sessions.v2";
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const TRAY_ID: u32 = 1;
 const TRAY_OPEN: usize = 100;
 const TRAY_EXIT: usize = 101;
 const TRAY_LICENSE: usize = 102;
+const NIN_KEYSELECT: u32 = NIN_SELECT | 1; // shellapi.h: NINF_KEY
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
@@ -78,20 +84,20 @@ unsafe fn set_text(hwnd: HWND, s: &str) {
 }
 unsafe fn clipboard_text(hwnd: HWND) -> Result<String, String> {
     if OpenClipboard(hwnd) == 0 {
-        return Err("클립보드를 읽을 수 없습니다. 링크를 복사한 뒤 다시 시도하세요.".into());
+        return Err(tr("클립보드를 읽을 수 없습니다. 링크를 복사한 뒤 다시 시도하세요.", "Cannot read the clipboard. Copy the link and try again.").into());
     }
     let result = (|| {
         let handle = GetClipboardData(13); // CF_UNICODETEXT
         let bytes = if handle.is_null() { 0 } else { GlobalSize(handle) };
         if bytes < 2 || bytes > 4096 || bytes % 2 != 0 {
-            return Err("ChatGPT 세션 링크를 텍스트로 복사하세요.".into());
+            return Err(tr("ChatGPT 세션 링크를 텍스트로 복사하세요.", "Copy a ChatGPT session link as text.").into());
         }
         let data = GlobalLock(handle) as *const u16;
-        if data.is_null() { return Err("복사한 링크를 읽을 수 없습니다.".into()); }
+        if data.is_null() { return Err(tr("복사한 링크를 읽을 수 없습니다.", "Cannot read the copied link.").into()); }
         let text = std::slice::from_raw_parts(data, bytes / 2);
         let result = text.iter().position(|c| *c == 0)
-            .ok_or_else(|| "복사한 링크가 올바른 텍스트가 아닙니다.".to_string())
-            .and_then(|end| String::from_utf16(&text[..end]).map_err(|_| "복사한 링크가 올바른 텍스트가 아닙니다.".into()));
+            .ok_or_else(|| tr("복사한 링크가 올바른 텍스트가 아닙니다.", "The copied link is not valid text.").to_string())
+            .and_then(|end| String::from_utf16(&text[..end]).map_err(|_| tr("복사한 링크가 올바른 텍스트가 아닙니다.", "The copied link is not valid text.").into()));
         GlobalUnlock(handle);
         result.map(|text| text.trim().to_owned())
     })();
@@ -111,7 +117,18 @@ unsafe fn draw(dc: HDC, s: &str, mut rect: RECT, font: HFONT, color: u32, flags:
     SelectObject(dc, old);
 }
 
+fn context_badge(row: &Row) -> String {
+    if waid::i18n::language() == Language::Korean {
+        return row.context_summary();
+    }
+    let remaining = row.context.used_percent()
+        .map(|used| format!("{:.1}% left", (100.0 - used).max(0.0)))
+        .unwrap_or_else(|| "Context ?".into());
+    format!("{remaining}{}", if row.context.compaction_observed { " · Compacted" } else { "" })
+}
+
 struct Window {
+    tray: RefCell<tray::State>,
     taskbar_created: u32,
     date_tick: Cell<i64>,
     feed: accordion::Feed,
@@ -145,16 +162,20 @@ struct Window {
 }
 impl Window {
     fn new(updates: Updates, path: PathBuf, demo: bool) -> Self {
-        let (settings, notice) = match Settings::read(&path) {
-            Ok(s) => (s, String::new()),
+        let (settings, error) = match Settings::read(&path) {
+            Ok(s) => (s, None),
             Err(e) if path.exists() => (
                 Settings::default(),
-                format!("설정을 읽지 못해 기본값으로 열었습니다: {e}"),
+                Some(e),
             ),
-            Err(_) => (Settings::default(), String::new()),
+            Err(_) => (Settings::default(), None),
         };
+        set_language(settings.language);
+        let notice = error.map(|e| waid::trf!("설정을 읽지 못해 기본값으로 열었습니다: {e}", "Could not read settings; using defaults: {e}"))
+            .unwrap_or_default();
         let skin = Skin::parse(&settings.template).expect("bundled default template");
         Self {
+            tray: RefCell::new(tray::State::default()),
             taskbar_created: unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) },
             date_tick: Cell::new(0),
             feed: accordion::Feed::default(),
@@ -344,11 +365,12 @@ impl Window {
         let expanded = self.expanded.get();
         let two_columns = self.settings.borrow().two_columns;
         ShowWindow(self.get(accordion::FEED), if !expanded && !two_columns { SW_SHOWNA } else { SW_HIDE });
+        mv(LANGUAGE, w - 338, 10, 146, 30);
         mv(TOPMOST, w - 184, 10, 88, 30);
         mv(MINIMIZE, w - 82, 10, 30, 30);
         mv(CLOSE_WINDOW, w - 46, 10, 30, 30);
         mv(TWO_COLUMNS, w - 88, 62, 60, 24);
-        mv(OPACITY, 16, 104, 104, 32);
+        mv(OPACITY, 16, 104, 132, 32);
         let extra = if self.opacity_open.get() { 36 } else { 0 };
         ShowWindow(
             self.get(OPACITY_SLIDER),
@@ -395,7 +417,7 @@ impl Window {
             mv(ALL, w - 156, 104, 96, 32);
             mv(MORE, w - 52, 104, 36, 32);
             ShowWindow(self.get(FILTER), SW_SHOWNA);
-            mv(FILTER, 128, 104, (w - 292).min(76), 32);
+            mv(FILTER, 156, 104, (w - 320).min(76), 32);
             let menu_open = self.menu_open.get();
             let actions = [SHOW_DETAIL, PIN, CLOSE_SESSION, ASSOCIATE, EDITOR];
             for (i, id) in actions.into_iter().enumerate() {
@@ -423,9 +445,9 @@ impl Window {
         mv(AGENT, search + 186, 150 + extra, w - search - 206, 300);
         mv(PIN, 20, 196 + extra, 90, 32);
         mv(CLOSE_SESSION, 118, 196 + extra, 100, 32);
-        mv(AUX, 232, 196 + extra, 125, 32);
-        mv(HIDDEN, 366, 196 + extra, 125, 32);
-        mv(ASSOCIATE, w - 224, 196 + extra, 56, 32);
+        mv(AUX, 232, 196 + extra, 108, 32);
+        mv(HIDDEN, 348, 196 + extra, 108, 32);
+        mv(ASSOCIATE, w - 256, 196 + extra, 88, 32);
         mv(EDITOR, w - 160, 196 + extra, 140, 32);
         let top = 244 + extra;
         let bottom = h - 40;
@@ -578,19 +600,19 @@ impl Window {
             || self.settings.borrow().closed.contains_key(&row.id)
         {
             *self.notice.borrow_mut() =
-                "열린 창·탭과의 연결을 확인할 수 없어 상세 내용을 표시합니다.".into();
+                tr("열린 창·탭과의 연결을 확인할 수 없어 상세 내용을 표시합니다.", "Cannot confirm the connected window or tab; showing session details.").into();
             self.command(hwnd, SHOW_DETAIL, 0);
             return;
         }
         let (tx, rx) = std::sync::mpsc::channel();
         *self.activation.borrow_mut() = Some((row.id.clone(), rx));
-        *self.notice.borrow_mut() = "세션이 열린 창·탭을 확인하고 있습니다…".into();
+        *self.notice.borrow_mut() = tr("세션이 열린 창·탭을 확인하고 있습니다…", "Checking the session's window or tab…").into();
         InvalidateRect(hwnd, null(), 1);
         std::thread::spawn(move || {
             let result = if let Some(target) = target {
                 super::activate::open_associated(&row, &target)
             } else {
-                super::activate::open(&row).map(|()| "기존 세션 탭으로 이동했습니다.".into())
+                super::activate::open(&row).map(|()| tr("기존 세션 탭으로 이동했습니다.", "Opened the existing session tab.").into())
             };
             let _ = tx.send(result);
         });
@@ -599,7 +621,7 @@ impl Window {
         let mut settings = self.settings.borrow_mut();
         if let Some(target) = target {
             if settings.session_targets.len() >= 1024 && !settings.session_targets.contains_key(&row.id) {
-                return Err("창 연결은 최대 1024개까지 저장할 수 있습니다.".into());
+                return Err(tr("창 연결은 최대 1024개까지 저장할 수 있습니다.", "You can save up to 1,024 window connections.").into());
             }
             settings.session_targets.insert(row.id.clone(), target);
         } else {
@@ -611,7 +633,7 @@ impl Window {
     unsafe fn association_menu(&self, hwnd: HWND) {
         let Some(row) = self.selected() else { return };
         if self.demo || row.state == "done" {
-            *self.notice.borrow_mut() = "실제 세션을 선택한 뒤 창이나 링크를 연결하세요.".into();
+            *self.notice.borrow_mut() = tr("실제 세션을 선택한 뒤 창이나 링크를 연결하세요.", "Select a real session to connect a window or link.").into();
             InvalidateRect(hwnd, null(), 0);
             return;
         }
@@ -619,15 +641,15 @@ impl Window {
         let windows = super::activate::windows();
         let menu = CreatePopupMenu();
         if menu.is_null() { return; }
-        AppendMenuW(menu, MF_STRING | MF_DISABLED, 0, wide("직접 연결 · 창 안의 대화는 직접 확인하세요").as_ptr());
-        AppendMenuW(menu, MF_STRING, 1, wide("복사한 ChatGPT 세션 링크 연결").as_ptr());
-        AppendMenuW(menu, MF_STRING, 2, wide("연결 해제 · Orca 자동 연결 사용").as_ptr());
+        AppendMenuW(menu, MF_STRING | MF_DISABLED, 0, wide(tr("직접 연결 · 창 안의 대화는 직접 확인하세요", "Manual connection · Check the conversation in the window")).as_ptr());
+        AppendMenuW(menu, MF_STRING, 1, wide(tr("복사한 ChatGPT 세션 링크 연결", "Connect copied ChatGPT session link")).as_ptr());
+        AppendMenuW(menu, MF_STRING, 2, wide(tr("연결 해제 · Orca 자동 연결 사용", "Disconnect · Use automatic Orca connection")).as_ptr());
         AppendMenuW(menu, MF_SEPARATOR, 0, null());
         for (index, target) in windows.iter().enumerate() {
-            AppendMenuW(menu, MF_STRING, index + 3, wide(&target["label"].as_str().unwrap_or("앱 창").replace('&', "&&")).as_ptr());
+            AppendMenuW(menu, MF_STRING, index + 3, wide(&target["label"].as_str().unwrap_or(tr("앱 창", "App window")).replace('&', "&&")).as_ptr());
         }
         if windows.is_empty() {
-            AppendMenuW(menu, MF_STRING | MF_DISABLED, 0, wide("연결 가능한 앱·PowerShell 창이 없습니다").as_ptr());
+            AppendMenuW(menu, MF_STRING | MF_DISABLED, 0, wide(tr("연결 가능한 앱·PowerShell 창이 없습니다", "No supported app or PowerShell windows available")).as_ptr());
         }
         let mut rect = RECT::default();
         GetWindowRect(self.get(ASSOCIATE), &mut rect);
@@ -638,12 +660,12 @@ impl Window {
             1 => clipboard_text(hwnd).and_then(|url| {
                 super::activate::validate_chatgpt_link(&row, &url)?;
                 self.set_session_target(&row, Some(serde_json::json!({"kind":"chatgpt_link", "url":url})))?;
-                Ok("ChatGPT 세션 링크를 연결했습니다. 로고를 누르면 앱에 링크를 전달합니다.")
+                Ok(tr("ChatGPT 세션 링크를 연결했습니다. 로고를 누르면 앱에 링크를 전달합니다.", "ChatGPT session link connected. Click the logo to open it in the app."))
             }),
-            2 => self.set_session_target(&row, None).map(|()| "직접 연결을 해제했습니다. Orca의 정확한 세션 연결을 자동으로 확인합니다."),
+            2 => self.set_session_target(&row, None).map(|()| tr("직접 연결을 해제했습니다. Orca의 정확한 세션 연결을 자동으로 확인합니다.", "Manual connection cleared. waid will look for the exact Orca session.")),
             _ => {
                 let Some(target) = windows.get(command - 3) else { return };
-                self.set_session_target(&row, Some(target.clone())).map(|()| "앱 창을 직접 연결했습니다. 로고를 눌러 이동한 뒤 대화를 확인하세요.")
+                self.set_session_target(&row, Some(target.clone())).map(|()| tr("앱 창을 직접 연결했습니다. 로고를 눌러 이동한 뒤 대화를 확인하세요.", "App window connected. Click the logo and check the conversation."))
             }
         };
         *self.notice.borrow_mut() = result.map(str::to_owned).unwrap_or_else(|error| error);
@@ -655,17 +677,17 @@ impl Window {
         }
         let content = if let Some(row) = self.selected() {
             let evidence = match row.evidence.as_str() {
-                "before_launch" => "앱 실행 후 새 사용자 요청이 관측되지 않은 세션",
-                "awaiting_completion" => "앱 실행 후 요청을 확인했으며 아직 응답 종료 기록이 없음",
-                "process_only" => "프로세스 이름만 확인됨 · 세션 상태 미확인",
-                "stale" => "작업 기록이 20초 이상 없어 현재 상태 미확인",
-                "inferred_time" => "이벤트 시각 없음 · 파일 시각에서 추정, 현재 생존 여부 미확인",
-                "unknown" => "해석할 수 있는 상태 기록 없음",
-                _ => "트랜스크립트의 마지막 기록 · 현재 생존 여부 미확인",
+                "before_launch" => tr("앱 실행 후 새 사용자 요청이 관측되지 않은 세션", "No new user request observed since waid started"),
+                "awaiting_completion" => tr("앱 실행 후 요청을 확인했으며 아직 응답 종료 기록이 없음", "Request observed since startup; no completion recorded yet"),
+                "process_only" => tr("프로세스 이름만 확인됨 · 세션 상태 미확인", "Only the process name is known · Session status unknown"),
+                "stale" => tr("작업 기록이 20초 이상 없어 현재 상태 미확인", "No activity recorded for over 20 seconds · Current status unknown"),
+                "inferred_time" => tr("이벤트 시각 없음 · 파일 시각에서 추정, 현재 생존 여부 미확인", "No event timestamp · Inferred from file time; session activity unconfirmed"),
+                "unknown" => tr("해석할 수 있는 상태 기록 없음", "No readable status record"),
+                _ => tr("트랜스크립트의 마지막 기록 · 현재 생존 여부 미확인", "Last transcript record · Current session activity unconfirmed"),
             };
-            format!("{}\r\n\r\n{}\r\n\r\n상태  {}\r\n에이전트  {}\r\n모델  {}\r\n{}\r\n{}\r\n마지막 활동 (UTC)  {}\r\n\r\n{}\r\n\r\n작업 출처  {}\r\n대표 요청\r\n{}\r\n\r\n폴더\r\n{}",row.project(),row.task,row.status_context(),row.agent,row.model,row.context_summary(),row.context_detail().replace('\n', "\r\n"),row.since,evidence,if row.task_source=="transcript_first_prompt"{"첫 요청 (현재 요청은 읽기 범위 밖)"}else{"최근 요청 또는 사용자 라벨"},row.summary,row.cwd)
+            waid::trf!("{}\r\n\r\n{}\r\n\r\n상태  {}\r\n에이전트  {}\r\n모델  {}\r\n{}\r\n{}\r\n마지막 활동 (UTC)  {}\r\n\r\n{}\r\n\r\n마지막 답변\r\n{}\r\n\r\n작업 출처  {}\r\n대표 요청\r\n{}\r\n\r\n폴더\r\n{}", "{}\r\n\r\n{}\r\n\r\nStatus  {}\r\nAgent  {}\r\nModel  {}\r\n{}\r\n{}\r\nLast activity (UTC)  {}\r\n\r\n{}\r\n\r\nLast answer\r\n{}\r\n\r\nTask source  {}\r\nFirst prompt\r\n{}\r\n\r\nFolder\r\n{}",row.project(),row.task,row.status_context(),row.agent,row.model,row.context_summary(),row.context_detail().replace('\n', "\r\n"),row.since,evidence,row.last_answer,if row.task_source=="transcript_first_prompt"{tr("첫 요청 (현재 요청은 읽기 범위 밖)", "First prompt (current request outside the read range)")}else{tr("최근 요청 또는 사용자 라벨", "Recent request or user label")},row.summary,row.cwd)
         } else {
-            "세션을 선택하면 전체 작업 내용과 근거를 확인할 수 있습니다.\r\n\r\n'waid에서 보지 않기'는 waid 목록에서만 제외합니다. 전체 보기에서 확인하고, 해당 세션에 새 요청을 작성하면 기본 목록으로 돌아옵니다.".into()
+            tr("세션을 선택하면 전체 작업 내용과 근거를 확인할 수 있습니다.\r\n\r\n'waid에서 보지 않기'는 waid 목록에서만 제외합니다. 전체 보기에서 확인하고, 해당 세션에 새 요청을 작성하면 기본 목록으로 돌아옵니다.", "Select a session to see its full task and status evidence.\r\n\r\n'Dismiss from waid' only removes it from this list. Find it in Show all; a new request in that session restores it to the default view.").into()
         };
         if text(self.get(DETAIL)) != content {
             set_text(self.get(DETAIL), &content);
@@ -706,9 +728,9 @@ impl Window {
         set_text(
             self.get(ALL),
             if settings.show_all {
-                "기본 보기"
+                tr("기본 보기", "Recent")
             } else {
-                "전체 보기"
+                tr("전체 보기", "Show all")
             },
         );
         set_text(
@@ -717,9 +739,9 @@ impl Window {
                 .selected()
                 .is_some_and(|r| settings.closed.contains_key(&r.id))
             {
-                "되살리기"
+                tr("되살리기", "Restore")
             } else {
-                "보지 않기"
+                tr("보지 않기", "Dismiss")
             },
         );
         set_text(
@@ -728,9 +750,9 @@ impl Window {
                 .selected()
                 .is_some_and(|r| settings.pinned.contains(&r.id))
             {
-                "고정 해제"
+                tr("고정 해제", "Unpin")
             } else {
-                "고정"
+                tr("고정", "Pin")
             },
         );
         set_text(
@@ -739,9 +761,9 @@ impl Window {
                 .selected()
                 .is_some_and(|r| settings.hidden.contains(&r.id))
             {
-                "숨김 해제"
+                tr("숨김 해제", "Unhide")
             } else {
-                "숨기기"
+                tr("숨기기", "Hide")
             },
         );
         self.detail();
@@ -766,7 +788,7 @@ impl Window {
             combo,
             CB_ADDSTRING,
             0,
-            wide("모든 에이전트").as_ptr() as isize,
+            wide(tr("모든 에이전트", "All agents")).as_ptr() as isize,
         );
         for name in &names {
             send(combo, CB_ADDSTRING, 0, wide(name).as_ptr() as isize);
@@ -783,13 +805,84 @@ impl Window {
         );
         self.busy.set(false);
     }
+    unsafe fn statuses(&self) {
+        let combo = self.get(STATUS);
+        send(combo, CB_RESETCONTENT, 0, 0);
+        for label in [tr("모든 상태", "All statuses"), tr("내 차례", "Waiting"),
+            tr("작업 중", "Working"), tr("오류", "Error"), tr("유휴", "Idle"),
+            tr("목록 제외", "Dismissed"), tr("미확인", "Unknown")]
+        {
+            send(combo, CB_ADDSTRING, 0, wide(label).as_ptr() as isize);
+        }
+        let selected = ui::STATES.iter().position(|state| *state == self.settings.borrow().state)
+            .map(|index| index + 1).unwrap_or(0);
+        send(combo, CB_SETCURSEL, selected, 0);
+    }
+    unsafe fn change_language(&self, hwnd: HWND, language: Language) {
+        let previous = self.settings.borrow().language;
+        self.settings.borrow_mut().language = language;
+        let saved = self.settings.borrow().save(&self.path);
+        if let Err(error) = saved {
+            self.settings.borrow_mut().language = previous;
+            *self.notice.borrow_mut() = waid::trf!("설정 저장 실패: {error}", "Could not save settings: {error}");
+            InvalidateRect(hwnd, null(), 0);
+            return;
+        }
+        self.dirty.set(None);
+        set_language(language);
+        self.busy.set(true);
+        set_text(hwnd, tr("waid · AI 세션", "waid · AI sessions"));
+        for (id, label) in button_labels().into_iter().chain([
+            (AUX, tr("보조 포함", "Auxiliary")),
+            (HIDDEN, tr("숨김 포함", "Hidden")),
+            (TWO_COLUMNS, tr("2열", "2 cols")),
+            (OPACITY_SLIDER, tr("투명도 조절", "Adjust transparency")),
+            (LIST, tr("세션 목록", "Session list")),
+        ]) {
+            set_text(self.get(id), label);
+        }
+        send(self.get(SEARCH), EM_SETCUEBANNER, 1,
+            wide(tr("검색: 작업, 프로젝트, 모델", "Search tasks, projects, models")).as_ptr() as isize);
+        self.statuses();
+        self.localize_feed();
+        self.busy.set(false);
+        self.agents();
+        if self.demo {
+            *self.rows.borrow_mut() = demo_rows();
+        }
+        self.notice.borrow_mut().clear();
+        self.force_rebuild.set(true);
+        self.window_preferences(hwnd);
+        self.rebuild(hwnd);
+        self.layout(hwnd);
+        self.refresh_tray(hwnd);
+    }
+    unsafe fn append_languages(&self, menu: HMENU) {
+        let language = self.settings.borrow().language;
+        for (id, value, label) in [(LANGUAGE_ENGLISH, Language::English, "English"),
+            (LANGUAGE_KOREAN, Language::Korean, "한국어")]
+        {
+            AppendMenuW(menu, MF_STRING | if language == value { MF_CHECKED } else { 0 },
+                id, wide(label).as_ptr());
+        }
+    }
+    unsafe fn language_menu(&self, hwnd: HWND) {
+        let menu = CreatePopupMenu();
+        if menu.is_null() { return; }
+        self.append_languages(menu);
+        let mut rect = RECT::default();
+        GetWindowRect(self.get(LANGUAGE), &mut rect);
+        let command = TrackPopupMenu(menu, TPM_RETURNCMD, rect.left, rect.bottom, 0, hwnd, null());
+        DestroyMenu(menu);
+        if command != 0 { self.command(hwnd, command as usize, 0); }
+    }
     fn changed(&self) {
         self.dirty.set(Some(Instant::now()));
     }
     fn save(&self) {
         if self.dirty.take().is_some() {
             if let Err(e) = self.settings.borrow().save(&self.path) {
-                *self.notice.borrow_mut() = format!("설정 저장 실패: {e}");
+                *self.notice.borrow_mut() = waid::trf!("설정 저장 실패: {e}", "Could not save settings: {e}");
             }
         }
     }
@@ -811,7 +904,7 @@ impl Window {
                 .and_then(|(id, rx)| match rx.try_recv() {
                     Ok(result) => Some((id.clone(), result)),
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                        Some((id.clone(), Err("창·탭 연결 확인이 중단됐습니다.".into())))
+                        Some((id.clone(), Err(tr("창·탭 연결 확인이 중단됐습니다.", "Window or tab connection check stopped.").into())))
                     }
                     Err(std::sync::mpsc::TryRecvError::Empty) => None,
                 });
@@ -822,6 +915,7 @@ impl Window {
                 Err(message) => {
                     *self.notice.borrow_mut() = message;
                     if self.selected().is_some_and(|r| r.id == id) && !self.editing.get() {
+                        restore_window(self, hwnd);
                         self.command(hwnd, SHOW_DETAIL, 0);
                     }
                 }
@@ -845,7 +939,7 @@ impl Window {
                 }
                 if revived > 0 {
                     *self.notice.borrow_mut() =
-                        format!("새 대화 {revived}개 · 목록에 복귀했습니다");
+                        waid::trf!("새 대화 {revived}개 · 목록에 복귀했습니다", "{revived} new requests · Restored to the list");
                 }
                 if *self.rows.borrow() != rows || revived > 0 {
                     *self.rows.borrow_mut() = rows;
@@ -856,13 +950,16 @@ impl Window {
             if let Some(error) = next.error {
                 *self.core_error.borrow_mut() = error;
             }
+            self.refresh_tray(hwnd);
         }
         if second.div_euclid(60) != previous.div_euclid(60) {
             let next = self.settings.borrow().visible(&self.rows.borrow());
             if next != *self.visible.borrow() {
                 self.rebuild(hwnd);
             }
+            self.refresh_tray(hwnd);
         }
+        self.tray_tick(hwnd);
         if self
             .dirty
             .get()
@@ -882,6 +979,9 @@ impl Window {
             self.layout(hwnd);
         }
         match id {
+            LANGUAGE => self.language_menu(hwnd),
+            LANGUAGE_KOREAN => self.change_language(hwnd, Language::Korean),
+            LANGUAGE_ENGLISH => self.change_language(hwnd, Language::English),
             TWO_COLUMNS => {
                 let top = send(self.get(LIST), LB_GETTOPINDEX, 0, 0);
                 self.settings.borrow_mut().two_columns =
@@ -925,6 +1025,11 @@ impl Window {
             SHOW_DETAIL => {
                 self.expand(hwnd, true);
                 self.detail();
+                if !self.editing.get() {
+                    if let Some(row) = self.selected() {
+                        self.tray.borrow_mut().acknowledge(&row.id);
+                    }
+                }
                 SetFocus(self.get(DETAIL));
             }
             FILTER => {
@@ -937,12 +1042,12 @@ impl Window {
                     let mut settings = self.settings.borrow_mut();
                     if settings.closed.remove(&row.id).is_some() {
                         settings.hidden.remove(&row.id);
-                        *self.notice.borrow_mut() = "목록으로 되살렸습니다".into();
+                        *self.notice.borrow_mut() = tr("목록으로 되살렸습니다", "Restored to the list").into();
                     } else if let Err(e) = settings.close(&row) {
                         *self.notice.borrow_mut() = e;
                     } else {
                         *self.notice.borrow_mut() =
-                            "waid에서만 제외했습니다 · 새 요청 시 복귀 · 전체 보기에서 확인".into();
+                            tr("waid에서만 제외했습니다 · 새 요청 시 복귀 · 전체 보기에서 확인", "Dismissed from waid · New requests restore it · See Show all").into();
                     }
                     drop(settings);
                     self.changed();
@@ -1016,6 +1121,7 @@ impl Window {
             }
             _ => {}
         }
+        self.refresh_tray(hwnd);
     }
     unsafe fn window_preferences(&self, hwnd: HWND) {
         let (opacity, always_on_top) = {
@@ -1049,14 +1155,14 @@ impl Window {
         set_text(
             self.get(TOPMOST),
             if always_on_top {
-                "항상 위 ✓"
+                tr("항상 위 ✓", "On top ✓")
             } else {
-                "항상 위"
+                tr("항상 위", "On top")
             },
         );
         set_text(
             self.get(OPACITY),
-            &format!("투명도 {}%", 100 - opacity),
+            &waid::trf!("투명도 {}%", "Transparency {}%", 100 - opacity),
         );
         send(
             self.get(OPACITY_SLIDER),
@@ -1125,7 +1231,7 @@ impl Window {
             rect.left += self.px(hwnd, 6);
             rect.right -= self.px(hwnd, 6);
         }
-        draw(dc, &row.context_summary(), rect, self.body.get(),
+        draw(dc, &context_badge(row), rect, self.body.get(),
             if highlighted { skin.accent } else { skin.muted },
             DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
@@ -1212,7 +1318,7 @@ impl Window {
             draw(
                 item.hDC,
                 if row.state == "idle" {
-                    "유휴"
+                    tr("유휴", "Idle")
                 } else {
                     row.status()
                 },
@@ -1381,11 +1487,11 @@ impl Window {
         self.visuals.draw_mascot(dc, p(16), p(9), p(32));
         draw(
             dc,
-            if self.demo { "waid / 샘플" } else { "waid" },
+            if self.demo { tr("waid / 샘플", "waid / Demo") } else { "waid" },
             RECT {
                 left: p(56),
                 top: p(10),
-                right: r.right - p(188),
+                right: r.right - p(346),
                 bottom: p(40),
             },
             self.heading.get(),
@@ -1402,9 +1508,9 @@ impl Window {
         let rows = self.visible.borrow();
         let waiting = rows.iter().filter(|row| row.state == "waiting").count();
         let summary = if self.loading.get() {
-            "AI 친구들의 소식을 가져오는 중".into()
+            tr("AI 친구들의 소식을 가져오는 중", "Loading your AI sessions").into()
         } else {
-            format!("세션 {}개 · 내 차례 {}개", rows.len(), waiting)
+            waid::trf!("세션 {}개 · 내 차례 {}개", "{} sessions · {} waiting", rows.len(), waiting)
         };
         drop(rows);
         draw(
@@ -1439,7 +1545,7 @@ impl Window {
         if self.opacity_open.get() {
             draw(
                 dc,
-                "선명 ↔ 투명",
+                tr("선명 ↔ 투명", "Solid ↔ Clear"),
                 RECT {
                     left: p(16),
                     top: p(146),
@@ -1468,11 +1574,11 @@ impl Window {
             draw(
                 dc,
                 if self.loading.get() {
-                    "조금만 기다려 주세요.\nAI 친구들의 소식을 가져오고 있어요."
+                    tr("조금만 기다려 주세요.\nAI 친구들의 소식을 가져오고 있어요.", "Just a moment.\nLoading your AI sessions.")
                 } else if total == 0 {
-                    "아직 조용하네요.\nAI와 작업을 시작하면 여기에 모아드릴게요."
+                    tr("아직 조용하네요.\nAI와 작업을 시작하면 여기에 모아드릴게요.", "Nothing here yet.\nStart working with an AI agent to see sessions here.")
                 } else {
-                    "찾는 세션이 없어요.\n검색어나 필터를 바꾸거나 전체 보기를 눌러보세요."
+                    tr("찾는 세션이 없어요.\n검색어나 필터를 바꾸거나 전체 보기를 눌러보세요.", "No matching sessions.\nChange your search or filters, or choose Show all.")
                 },
                 RECT {
                     left: at.x + p(16),
@@ -1496,11 +1602,11 @@ impl Window {
             self.notice.borrow().clone()
         } else {
             if self.demo {
-                "샘플 미리보기 · 실제 AI 세션이 아니에요".into()
+                tr("샘플 미리보기 · 실제 AI 세션이 아니에요", "Demo preview · These are sample sessions").into()
             } else if self.expanded.get() {
-                "Ctrl+F 검색 · Ctrl+D 보지 않기 · Esc 간단히".into()
+                tr("Ctrl+F 검색 · Ctrl+D 보지 않기 · Esc 간단히", "Ctrl+F Search · Ctrl+D Dismiss · Esc Compact").into()
             } else {
-                "2초마다 새 소식 · 카드를 눌러 대화 펼치기".into()
+                tr("2초마다 새 소식 · 카드를 눌러 대화 펼치기", "Updates every 2 seconds · Click a card to expand").into()
             }
         };
         draw(
@@ -1521,10 +1627,10 @@ impl Window {
     fn collection_message(&self) -> String {
         let mut messages = Vec::new();
         if !self.core_error.borrow().is_empty() {
-            messages.push(format!("갱신 오류 · 마지막 기록 표시 · {}", self.core_error.borrow()));
+            messages.push(waid::trf!("갱신 오류 · 마지막 기록 표시 · {}", "Refresh failed · Showing last snapshot · {}", self.core_error.borrow()));
         }
         if !self.collection_warnings.borrow().is_empty() {
-            messages.push(format!("일부 수집 경고 · {}", self.collection_warnings.borrow().join(" · ")));
+            messages.push(waid::trf!("일부 수집 경고 · {}", "Collection warnings · {}", self.collection_warnings.borrow().join(" · ")));
         }
         messages.join(" · ")
     }
@@ -1587,14 +1693,14 @@ impl Window {
                 self.set_skin(hwnd, ui::DEFAULT);
                 self.settings.borrow_mut().template = ui::DEFAULT.into();
                 self.changed();
-                *self.notice.borrow_mut() = "기본 템플릿으로 복구했습니다.".into();
+                *self.notice.borrow_mut() = tr("기본 템플릿으로 복구했습니다.", "Default template restored.").into();
             }
             PREVIEW | APPLY => {
                 let template = text(self.get(DETAIL));
                 if self.set_skin(hwnd, &template) && id == APPLY {
                     self.settings.borrow_mut().template = template;
                     self.changed();
-                    *self.notice.borrow_mut() = "템플릿을 적용했습니다.".into();
+                    *self.notice.borrow_mut() = tr("템플릿을 적용했습니다.", "Template applied.").into();
                 }
             }
             _ => {}
@@ -1605,12 +1711,12 @@ impl Window {
         match ui::read_text(path).and_then(|text| Skin::parse(&text).map(|_| text)) {
             Ok(template) => {
                 set_text(self.get(DETAIL), &template);
-                *self.notice.borrow_mut() = "가져왔습니다. 미리보기 후 적용하세요.".into();
+                *self.notice.borrow_mut() = tr("가져왔습니다. 미리보기 후 적용하세요.", "Imported. Preview the template, then apply it.").into();
                 InvalidateRect(hwnd, null(), 1);
                 true
             }
             Err(e) => {
-                *self.notice.borrow_mut() = format!("가져오기 실패: {e}");
+                *self.notice.borrow_mut() = waid::trf!("가져오기 실패: {e}", "Import failed: {e}");
                 InvalidateRect(hwnd, null(), 1);
                 false
             }
@@ -1625,17 +1731,17 @@ impl Window {
                 .is_none_or(|s| !s.eq_ignore_ascii_case("json"))
                 || path == self.path
             {
-                return Err("별도의 .json 파일로 저장하세요.".into());
+                return Err(tr("별도의 .json 파일로 저장하세요.", "Save to a separate .json file.").into());
             }
             ui::atomic_write(path, &template).map_err(|e| e.to_string())
         });
         match result {
             Ok(()) => {
-                *self.notice.borrow_mut() = "템플릿을 내보냈습니다.".into();
+                *self.notice.borrow_mut() = tr("템플릿을 내보냈습니다.", "Template exported.").into();
                 true
             }
             Err(e) => {
-                *self.notice.borrow_mut() = format!("내보내기 실패: {e}");
+                *self.notice.borrow_mut() = waid::trf!("내보내기 실패: {e}", "Export failed: {e}");
                 false
             }
         }
@@ -1689,7 +1795,7 @@ unsafe fn add_tray_icon(hwnd: HWND) -> io::Result<()> {
         cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
         hWnd: hwnd,
         uID: TRAY_ID,
-        uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
+        uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP,
         uCallbackMessage: TRAY_MESSAGE,
         hIcon: icon,
         ..Default::default()
@@ -1698,6 +1804,8 @@ unsafe fn add_tray_icon(hwnd: HWND) -> io::Result<()> {
     if Shell_NotifyIconW(NIM_ADD, &data) == 0 && Shell_NotifyIconW(NIM_MODIFY, &data) == 0 {
         return Err(io::Error::last_os_error());
     }
+    data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+    Shell_NotifyIconW(NIM_SETVERSION, &data);
     Ok(())
 }
 
@@ -1718,14 +1826,18 @@ unsafe fn restore_window(s: &Window, hwnd: HWND) {
 }
 
 unsafe fn tray_menu(s: &Window, hwnd: HWND) {
+    s.refresh_tray(hwnd);
     let menu = CreatePopupMenu();
     if menu.is_null() {
         return;
     }
-    AppendMenuW(menu, MF_STRING, TRAY_OPEN, wide("열기").as_ptr());
-    AppendMenuW(menu, MF_STRING, TRAY_LICENSE, wide("폰트 라이선스").as_ptr());
+    let sessions = s.append_tray_menu(menu);
+    AppendMenuW(menu, MF_STRING, TRAY_OPEN, wide(tr("waid 열기", "Open waid")).as_ptr());
+    AppendMenuW(menu, MF_STRING, TRAY_LICENSE, wide(tr("폰트 라이선스", "Font license")).as_ptr());
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
-    AppendMenuW(menu, MF_STRING, TRAY_EXIT, wide("종료").as_ptr());
+    s.append_languages(menu);
+    AppendMenuW(menu, MF_SEPARATOR, 0, null());
+    AppendMenuW(menu, MF_STRING, TRAY_EXIT, wide(tr("종료", "Exit")).as_ptr());
     let mut point = POINT::default();
     GetCursorPos(&mut point);
     SetForegroundWindow(hwnd);
@@ -1741,6 +1853,7 @@ unsafe fn tray_menu(s: &Window, hwnd: HWND) {
     DestroyMenu(menu);
     match command as usize {
         TRAY_OPEN => restore_window(s, hwnd),
+        LANGUAGE_KOREAN | LANGUAGE_ENGLISH => s.command(hwnd, command as usize, 0),
         TRAY_LICENSE => {
             let result = (|| -> io::Result<()> {
                 let path = ui::data_file().with_file_name("FONT-LICENSE.txt");
@@ -1751,7 +1864,7 @@ unsafe fn tray_menu(s: &Window, hwnd: HWND) {
                     path.as_os_str().encode_wide().chain(Some(0)).collect()
                 };
                 if ShellExecuteW(hwnd, wide("open").as_ptr(), file.as_ptr(), null(), null(), SW_SHOWNORMAL) as isize <= 32 {
-                    return Err(io::Error::other("폰트 라이선스 파일을 열지 못했습니다."));
+                    return Err(io::Error::other(tr("폰트 라이선스 파일을 열지 못했습니다.", "Could not open the font license file.")));
                 }
                 Ok(())
             })();
@@ -1761,8 +1874,9 @@ unsafe fn tray_menu(s: &Window, hwnd: HWND) {
             s.save();
             DestroyWindow(hwnd);
         }
-        _ => {}
+        _ => s.tray_command(hwnd, command as usize, &sessions),
     }
+    PostMessageW(hwnd, WM_NULL, 0, 0);
 }
 
 unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -1781,8 +1895,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
     match msg {
         _ if s.taskbar_created != 0 && msg == s.taskbar_created => {
             if let Err(error) = add_tray_icon(hwnd) {
-                *s.notice.borrow_mut() = format!("트레이 아이콘 복구 실패: {error}");
+                *s.notice.borrow_mut() = waid::trf!("트레이 아이콘 복구 실패: {error}", "Could not restore the tray icon: {error}");
                 restore_window(s, hwnd);
+            } else {
+                s.tray.borrow_mut().tooltip.clear();
+                s.tray.borrow_mut().balloon_visible = false;
+                s.refresh_tray(hwnd);
             }
         }
         WM_NCCALCSIZE => return 0,
@@ -1822,11 +1940,15 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 s.layout(hwnd);
             }
         }
-        TRAY_MESSAGE => match lp as u32 {
-            WM_LBUTTONUP | WM_LBUTTONDBLCLK => {
+        TRAY_MESSAGE => match lp as u32 & 0xffff {
+            WM_LBUTTONUP | WM_LBUTTONDBLCLK | NIN_SELECT => {
                 restore_window(s, hwnd);
             }
-            WM_RBUTTONUP => tray_menu(s, hwnd),
+            WM_RBUTTONUP | WM_CONTEXTMENU => tray_menu(s, hwnd),
+            NIN_KEYSELECT => restore_window(s, hwnd),
+            NIN_BALLOONSHOW => s.tray.borrow_mut().balloon_visible = true,
+            NIN_BALLOONHIDE | NIN_BALLOONTIMEOUT => s.tray.borrow_mut().balloon_visible = false,
+            NIN_BALLOONUSERCLICK => s.open_tray_notification(hwnd),
             _ => {}
         },
         WM_HSCROLL if lp as HWND == s.get(OPACITY_SLIDER) => s.opacity_changed(hwnd),
@@ -1987,6 +2109,13 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             return s.surface.get() as isize;
         }
         WM_CLOSE => {
+            if !s.demo && !s.settings.borrow().tray_hint_seen {
+                MessageBoxW(hwnd,
+                    wide(tr("창을 닫아도 waid는 트레이에서 세션을 확인합니다.\n\n트레이 아이콘을 우클릭하면 내 차례인 세션을 열 수 있습니다.\nwaid를 완전히 끝내려면 트레이 메뉴에서 ‘종료’를 선택하세요.", "waid keeps checking sessions in the tray after you close this window.\n\nRight-click the tray icon to open waiting sessions.\nTo quit waid, choose 'Exit' in the tray menu.")).as_ptr(),
+                    wide(tr("waid는 트레이에서 계속 실행됩니다", "waid keeps running in the tray")).as_ptr(), MB_OK | MB_ICONINFORMATION);
+                s.settings.borrow_mut().tray_hint_seen = true;
+                s.changed();
+            }
             s.save();
             ShowWindow(hwnd, SW_HIDE);
         }
@@ -2003,6 +2132,34 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
     }
     0
 }
+fn button_labels() -> [(usize, &'static str); 23] {
+    [
+        (TOPMOST, tr("항상 위", "On top")),
+        (OPACITY, tr("투명도 0%", "Transparency 0%")),
+        (MINIMIZE, tr("최소화", "Minimize")),
+        (CLOSE_WINDOW, tr("닫기", "Close")),
+        (SHOW_DETAIL, tr("상세", "Details")),
+        (FILTER, tr("검색", "Search")),
+        (ALL, tr("전체 보기", "Show all")),
+        (MORE, "···"),
+        (CLOSE_SESSION, tr("보지 않기", "Dismiss")),
+        (BACK, tr("간단히", "Compact")),
+        (PIN, tr("고정", "Pin")),
+        (HIDE, tr("숨기기", "Hide")),
+        (EDITOR, tr("템플릿", "Template")),
+        (ASSOCIATE, tr("연결", "Connect")),
+        (PREVIEW, tr("미리보기", "Preview")),
+        (APPLY, tr("적용", "Apply")),
+        (RESET, tr("기본값 복구", "Reset")),
+        (IMPORT, tr("가져오기", "Import")),
+        (EXPORT, tr("내보내기", "Export")),
+        (DAY, tr("밝은 기본", "Daylight")),
+        (NIGHT, tr("어두운 기본", "Midnight")),
+        (CLOSE_EDITOR, tr("편집 닫기", "Close editor")),
+        (LANGUAGE, "English / 한국어"),
+    ]
+}
+
 unsafe fn create_window(s: &Window) -> io::Result<HWND> {
     InitCommonControlsEx(&INITCOMMONCONTROLSEX {
         dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
@@ -2035,7 +2192,7 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
                 0
             },
         class.as_ptr(),
-        wide("waid · AI 세션").as_ptr(),
+        wide(tr("waid · AI 세션", "waid · AI sessions")).as_ptr(),
         WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
         work.left + 32 * dpi / 96,
         work.top + 64 * dpi / 96,
@@ -2071,7 +2228,7 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
             s.get(SEARCH),
             EM_SETCUEBANNER,
             1,
-            wide("검색: 작업, 프로젝트, 모델").as_ptr() as isize,
+            wide(tr("검색: 작업, 프로젝트, 모델", "Search tasks, projects, models")).as_ptr() as isize,
         );
         send(s.get(SEARCH), EM_SETLIMITTEXT, 200, 0);
         s.add(
@@ -2081,22 +2238,7 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
             "",
             CBS_DROPDOWNLIST as u32 | WS_VSCROLL,
         )?;
-        for label in [
-            "모든 상태",
-            "내 차례",
-            "작업 중",
-            "오류",
-            "유휴",
-            "목록 제외",
-            "미확인",
-        ] {
-            send(
-                s.get(STATUS),
-                CB_ADDSTRING,
-                0,
-                wide(label).as_ptr() as isize,
-            );
-        }
+        s.statuses();
         s.add(
             hwnd,
             AGENT,
@@ -2104,53 +2246,30 @@ unsafe fn create_window(s: &Window) -> io::Result<HWND> {
             "",
             CBS_DROPDOWNLIST as u32 | WS_VSCROLL,
         )?;
-        for (id, label) in [
-            (TOPMOST, "항상 위"),
-            (OPACITY, "투명도 0%"),
-            (MINIMIZE, "최소화"),
-            (CLOSE_WINDOW, "닫기"),
-            (SHOW_DETAIL, "상세"),
-            (FILTER, "검색"),
-            (ALL, "전체 보기"),
-            (MORE, "···"),
-            (CLOSE_SESSION, "보지 않기"),
-            (BACK, "간단히"),
-            (PIN, "고정"),
-            (HIDE, "숨기기"),
-            (EDITOR, "템플릿"),
-            (ASSOCIATE, "연결"),
-            (PREVIEW, "미리보기"),
-            (APPLY, "적용"),
-            (RESET, "기본값 복구"),
-            (IMPORT, "가져오기"),
-            (EXPORT, "내보내기"),
-            (DAY, "밝은 기본"),
-            (NIGHT, "어두운 기본"),
-            (CLOSE_EDITOR, "편집 닫기"),
-        ] {
+        for (id, label) in button_labels() {
             s.add(hwnd, id, "BUTTON", label, BS_OWNERDRAW as u32)?;
         }
         s.add(
             hwnd,
             OPACITY_SLIDER,
             "msctls_trackbar32",
-            "투명도 조절",
+            tr("투명도 조절", "Adjust transparency"),
             TBS_HORZ | TBS_NOTICKS,
         )?;
         send(s.get(OPACITY_SLIDER), TBM_SETRANGEMAX, 1, 60);
         send(s.get(OPACITY_SLIDER), TBM_SETPAGESIZE, 0, 10);
-        s.add(hwnd, AUX, "BUTTON", "보조 포함", BS_AUTOCHECKBOX as u32)?;
-        s.add(hwnd, HIDDEN, "BUTTON", "숨김 포함", BS_AUTOCHECKBOX as u32)?;
-        s.add(hwnd, TWO_COLUMNS, "BUTTON", "2열", BS_AUTOCHECKBOX as u32)?;
+        s.add(hwnd, AUX, "BUTTON", tr("보조 포함", "Auxiliary"), BS_AUTOCHECKBOX as u32)?;
+        s.add(hwnd, HIDDEN, "BUTTON", tr("숨김 포함", "Hidden"), BS_AUTOCHECKBOX as u32)?;
+        s.add(hwnd, TWO_COLUMNS, "BUTTON", tr("2열", "2 cols"), BS_AUTOCHECKBOX as u32)?;
         s.add(
             hwnd,
             LIST,
             "SysListView32",
-            "세션 목록",
+            tr("세션 목록", "Session list"),
             LVS_ICON | LVS_AUTOARRANGE | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
         )?;
         if send(s.get(LIST), LVM_SETVIEW, LV_VIEW_TILE as usize, 0) == -1 {
-            return Err(io::Error::other("Windows 타일 목록을 열지 못했습니다."));
+            return Err(io::Error::other(tr("Windows 타일 목록을 열지 못했습니다.", "Could not create the Windows tile list.")));
         }
         send(
             s.get(LIST),
@@ -2245,9 +2364,9 @@ unsafe fn choose_template_file(owner: HWND, save: bool) -> Option<PathBuf> {
     let filter = wide("waid UI template (*.json)\0*.json\0");
     let ext = wide("json");
     let title = wide(if save {
-        "템플릿 내보내기"
+        tr("템플릿 내보내기", "Export template")
     } else {
-        "템플릿 가져오기"
+        tr("템플릿 가져오기", "Import template")
     });
     let mut options = OPENFILENAMEW {
         lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
@@ -2276,7 +2395,7 @@ unsafe fn choose_template_file(owner: HWND, save: bool) -> Option<PathBuf> {
     if result == 0 {
         let error = CommDlgExtendedError();
         if error != 0 {
-            show_error(&format!("파일 선택 창 오류: {error}"));
+            show_error(&waid::trf!("파일 선택 창 오류: {error}", "File dialog error: {error}"));
         }
         return None;
     }
@@ -2381,7 +2500,7 @@ pub fn show_error(message: &str) {
         MessageBoxW(
             null_mut(),
             wide(message).as_ptr(),
-            wide("waid 시작 실패").as_ptr(),
+            wide(tr("waid 시작 실패", "waid could not start")).as_ptr(),
             MB_OK | MB_ICONERROR,
         );
     }
@@ -2390,21 +2509,21 @@ fn demo_rows() -> Vec<Row> {
     [
         (
             "checkout",
-            "결제 화면 접근성 개선 — 키보드 이동과 오류 안내 확인",
+            tr("결제 화면 접근성 개선 — 키보드 이동과 오류 안내 확인", "Improve checkout accessibility — keyboard navigation and error messages"),
             "waiting",
             "Claude Code",
             "opus",
         ),
         (
             "api",
-            "로그인 세션 만료와 재시도 처리",
+            tr("로그인 세션 만료와 재시도 처리", "Handle login session expiry and retries"),
             "working",
             "Codex",
             "model",
         ),
         (
             "docs",
-            "설정 방법 문서를 한국어로 정리",
+            tr("설정 방법 문서를 한국어로 정리", "Write the setup guide"),
             "idle",
             "Claude Code",
             "model",
@@ -2429,9 +2548,9 @@ fn demo_rows() -> Vec<Row> {
         agent_id: if agent == "Codex" { "codex" } else { "claude" }.into(),
         agent: agent.into(),
         model: model.into(),
-        summary: "샘플 데이터 · 실제 AI 세션이 아닙니다.".into(),
-        last_answer: "키보드만으로 모든 입력란을 이동하고 오류 안내를 확인할 수 있도록 개선했습니다. 다음 작업은 원래 세션에서 이어서 요청할 수 있습니다.".into(),
-        cwd: "샘플 프로젝트".into(),
+        summary: tr("샘플 데이터 · 실제 AI 세션이 아닙니다.", "Sample data · This is not a real AI session.").into(),
+        last_answer: tr("키보드만으로 모든 입력란을 이동하고 오류 안내를 확인할 수 있도록 개선했습니다. 다음 작업은 원래 세션에서 이어서 요청할 수 있습니다.", "All fields and error messages are now accessible using the keyboard. Continue with your next request in the original session.").into(),
+        cwd: tr("샘플 프로젝트", "Sample project").into(),
         since: crate::time::to_iso8601(crate::time::now()),
         evidence: "demo".into(),
         ..Row::default()
@@ -2442,8 +2561,79 @@ fn demo_rows() -> Vec<Row> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn language_switch_updates_controls_and_preserves_session_content() {
+        // A separate test process isolates the application-wide language from parallel tests.
+        if std::env::var_os("WAID_NATIVE_LANGUAGE_CHECK").is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "native::tests::language_switch_updates_controls_and_preserves_session_content", "--nocapture"])
+                .env("WAID_NATIVE_LANGUAGE_CHECK", "1").status().unwrap();
+            assert!(status.success(), "isolated native locale check failed");
+            return;
+        }
+        let path = std::env::temp_dir().join(format!("waid-language-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = Window::new(Updates::default(), path.clone(), false);
+        state.settings.borrow_mut().state = "working".into();
+        state.settings.borrow_mut().notifications = false;
+        let mut rows = demo_rows();
+        rows[1].task = "User content · 사용자 원문".into();
+        unsafe {
+            let hwnd = create_window(&state).unwrap();
+            add_tray_icon(hwnd).unwrap();
+            publish_update(&state.updates, Ok(Snapshot { rows, ..Snapshot::default() }));
+            state.tick(hwnd);
+            for (language, details, status) in [(Language::English, "Details", "Working"),
+                (Language::Korean, "상세", "작업 중")]
+            {
+                state.change_language(hwnd, language);
+                assert_eq!(text(state.get(SHOW_DETAIL)), details);
+                assert_eq!(text(state.get(STATUS)), status);
+                assert_eq!(state.settings.borrow().state, "working");
+                assert_eq!(state.selected().unwrap().task, "User content · 사용자 원문");
+                assert!(text(state.feed.buttons.borrow()[0]).contains("User content · 사용자 원문"));
+                assert!(text(state.feed.buttons.borrow()[0]).contains(status));
+                assert!(state.tray.borrow().tooltip.contains(status));
+                let mut row = state.selected().unwrap();
+                assert_eq!(context_badge(&row), tr("남은 컨텍스트 25.0% · 압축됨", "25.0% left · Compacted"));
+                assert!(row.accessible_text().contains(&row.context_summary()));
+                row.context.window_tokens = None;
+                assert_eq!(context_badge(&row), tr("남은 컨텍스트 미확인 · 압축됨", "Context ? · Compacted"));
+                assert_eq!(Settings::read(&path).unwrap().language, language);
+                let menu = CreatePopupMenu();
+                state.append_languages(menu);
+                let checked = if language == Language::English { LANGUAGE_ENGLISH } else { LANGUAGE_KOREAN };
+                assert_ne!(GetMenuState(menu, checked as u32, MF_BYCOMMAND) & MF_CHECKED, 0);
+                DestroyMenu(menu);
+            }
+            state.editor(hwnd, true);
+            set_text(state.get(DETAIL), "unfinished template draft");
+            state.change_language(hwnd, Language::English);
+            assert_eq!(text(state.get(DETAIL)), "unfinished template draft");
+            assert_eq!(text(state.get(PREVIEW)), "Preview");
+            assert_eq!(Window::new(Updates::default(), path.clone(), false).settings.borrow().language, Language::English);
+            // A denied destination must leave the saved and displayed language unchanged.
+            use std::os::windows::fs::OpenOptionsExt;
+            let locked = std::fs::OpenOptions::new().read(true).share_mode(0).open(&path).unwrap();
+            state.changed();
+            let pending = state.dirty.get();
+            state.change_language(hwnd, Language::Korean);
+            assert_eq!(waid::i18n::language(), Language::English);
+            assert_eq!(state.settings.borrow().language, Language::English);
+            assert_eq!(text(state.get(PREVIEW)), "Preview");
+            assert_eq!(text(state.get(SHOW_DETAIL)), "Details");
+            assert_eq!(state.dirty.get(), pending);
+            assert!(state.notice.borrow().starts_with("Could not save settings:"));
+            drop(locked);
+            assert_eq!(Settings::read(&path).unwrap().language, Language::English);
+            let _ = std::fs::remove_file(path.with_extension(format!("{}.tmp", std::process::id())));
+            DestroyWindow(hwnd);
+        }
+        let _ = std::fs::remove_file(path);
+    }
     // These tests manipulate process-wide window activation and desktop Z-order.
-    static DESKTOP_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    pub(super) static DESKTOP_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[test]
     fn displayed_feed_populates_refreshes_and_removes_focused_cards() {
         let _desktop = DESKTOP_TEST.lock().unwrap_or_else(|e| e.into_inner());
@@ -2493,6 +2683,7 @@ mod tests {
             assert_ne!(IsWindowVisible(hwnd), 0);
             window_proc(hwnd, WM_CLOSE, 0, 0);
             assert_eq!(IsWindowVisible(hwnd), 0);
+            state.check_tray_updates(hwnd);
             // Simulate Explorer losing this icon, without restarting the user's shell.
             remove_tray_icon(hwnd);
             let data = NOTIFYICONDATAW {
@@ -2751,7 +2942,7 @@ mod tests {
             SendMessageW(hwnd, WM_NOTIFY, LIST, &click as *const _ as isize);
             assert!(state.expanded.get());
             assert_eq!(state.selected().unwrap().id, selection);
-            assert!(state.notice.borrow().contains("연결을 확인할 수 없어"));
+            assert!(state.notice.borrow().contains(tr("연결을 확인할 수 없어", "Cannot confirm the connected")));
             state.command(hwnd, BACK, 0);
             let (tx, rx) = std::sync::mpsc::channel();
             *state.activation.borrow_mut() = Some((selection, rx));
@@ -2868,10 +3059,10 @@ mod tests {
             let chosen = state.selected().unwrap();
             state.command(hwnd, PIN, 0);
             assert!(state.settings.borrow().pinned.contains(&chosen.id));
-            set_text(state.get(SEARCH), "로그인");
+            set_text(state.get(SEARCH), tr("로그인", "login"));
             state.command(hwnd, SEARCH, EN_CHANGE as usize);
             assert_eq!(state.visible.borrow().len(), 1);
-            assert!(text(state.get(DETAIL)).contains("로그인"));
+            assert!(text(state.get(DETAIL)).contains(tr("로그인", "login")));
             state.command(hwnd, HIDE, 0);
             assert!(state.visible.borrow().is_empty());
             send(state.get(HIDDEN), BM_SETCHECK, BST_CHECKED as usize, 0);

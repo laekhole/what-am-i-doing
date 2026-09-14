@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use waid::i18n::tr;
 use std::{
     collections::BTreeMap,
     io::{self, BufRead, BufReader, Read},
@@ -91,8 +92,8 @@ impl Row {
 
     fn context_summary(&self) -> String {
         let remaining = self.context.used_percent().map(|n| format!("{:.1}%", (100.0 - n).max(0.0)))
-            .unwrap_or_else(|| "미확인".into());
-        format!("남은 컨텍스트 {remaining}{}", if self.context.compaction_observed { " · 압축됨" } else { "" })
+            .unwrap_or_else(|| tr("미확인", "Unknown").into());
+        waid::trf!("남은 컨텍스트 {remaining}{}", "Context remaining {remaining}{}", if self.context.compaction_observed { tr(" · 압축됨", " · Compacted") } else { "" })
     }
 
     fn context_detail(&self) -> String {
@@ -103,12 +104,12 @@ impl Row {
                 out.push(c);
                 out
             })
-        }).unwrap_or_else(|| "미확인".into());
-        let stamp = |at: Option<i64>| at.map(time::to_iso8601).unwrap_or_else(|| "미확인".into());
+        }).unwrap_or_else(|| tr("미확인", "Unknown").into());
+        let stamp = |at: Option<i64>| at.map(time::to_iso8601).unwrap_or_else(|| tr("미확인", "Unknown").into());
         let compacted = if self.context.compaction_observed {
-            format!("기록 있음 · {}", stamp(self.context.compacted_at))
-        } else { "기록 미확인".into() };
-        format!("컨텍스트 토큰  {} / 한도 {}\n마지막 관측 (UTC)  {}\n압축 (UTC)  {compacted}",
+            waid::trf!("기록 있음 · {}", "Observed · {}", stamp(self.context.compacted_at))
+        } else { tr("기록 미확인", "Not observed").into() };
+        waid::trf!("컨텍스트 토큰  {} / 한도 {}\n마지막 관측 (UTC)  {}\n압축 (UTC)  {compacted}", "Context tokens  {} / limit {}\nLast observed (UTC)  {}\nCompaction (UTC)  {compacted}",
             number(self.context.used_tokens), number(self.context.window_tokens), stamp(self.context.observed_at))
     }
 
@@ -119,9 +120,9 @@ impl Row {
         if !expanded {
             if let Some(age) = time::from_iso8601(&self.since).and_then(|stamp| now.checked_sub(stamp)) {
                 match age {
-                    0..=59 => return "방금 전".into(),
-                    60..=3599 => return format!("{}분 전", age / 60),
-                    3600..=86399 => return format!("{}시간 전", age / 3600),
+                    0..=59 => return tr("방금 전", "Just now").into(),
+                    60..=3599 => return waid::trf!("{}분 전", "{}m ago", age / 60),
+                    3600..=86399 => return waid::trf!("{}시간 전", "{}h ago", age / 3600),
                     _ => {}
                 }
             }
@@ -150,31 +151,32 @@ impl Row {
     }
     fn status(&self) -> &str {
         match self.state.as_str() {
-            "waiting" => "내 차례",
-            "working" => "작업 중",
-            "idle" => "유휴",
-            "done" => "목록 제외",
-            "error" => "오류",
-            _ => "미확인",
+            "waiting" => tr("내 차례", "Waiting"),
+            "working" => tr("작업 중", "Working"),
+            "idle" => tr("유휴", "Idle"),
+            "done" => tr("목록 제외", "Dismissed"),
+            "error" => tr("오류", "Error"),
+            _ => tr("미확인", "Unknown"),
         }
     }
 
     fn status_context(&self) -> String {
         let previous = match self.logged_state.as_str() {
-            "working" => "작업 중",
-            "waiting" => "내 차례",
+            "working" => tr("작업 중", "Working"),
+            "waiting" => tr("내 차례", "Waiting"),
             _ => return self.status().into(),
         };
         if self.state == "unknown" && self.evidence == "before_launch" {
-            format!("{} · 마지막 기록: {previous}", self.status())
+            waid::trf!("{} · 마지막 기록: {previous}", "{} · Last recorded: {previous}", self.status())
         } else {
             self.status().into()
         }
     }
 
     fn accessible_text(&self) -> String {
-        format!(
+        waid::trf!(
             "프로젝트  {}\n태스크  {}\n상태  {}\n{} · {}\n{}",
+            "Project  {}\nTask  {}\nStatus  {}\n{} · {}\n{}",
             self.project(),
             self.task,
             self.status_context(),
@@ -247,7 +249,9 @@ fn start_core(exe: &Path) -> io::Result<(Core, Updates)> {
     };
     let mut command = Command::new(exe);
     command
-        .args(["--waid-core", "--json", "--watch", "--history"])
+        // ponytail: collector diagnostics keep their startup language; restart waid
+        // to change them without adding IPC or resetting live request observation.
+        .args(["--waid-core", "--json", "--watch", "--history", "--lang", waid::i18n::language().code()])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -278,12 +282,12 @@ fn start_core(exe: &Path) -> io::Result<(Core, Updates)> {
                     activity.apply(&mut snapshot.rows);
                     (Ok(snapshot), false)
                 }
-                Ok(SnapshotRead::Invalid(error)) => (Err(format!("스냅샷 건너뜀: {error}")), false),
+                Ok(SnapshotRead::Invalid(error)) => (Err(waid::trf!("스냅샷 건너뜀: {error}", "Snapshot skipped: {error}")), false),
                 Ok(SnapshotRead::End) => (
-                    Err("코어가 종료됐습니다. 앱을 다시 실행하세요.".into()),
+                    Err(tr("코어가 종료됐습니다. 앱을 다시 실행하세요.", "The collector stopped. Restart waid.").into()),
                     true,
                 ),
-                Err(e) => (Err(format!("상태를 읽지 못했습니다: {e}")), true),
+                Err(e) => (Err(waid::trf!("상태를 읽지 못했습니다: {e}", "Could not read session status: {e}")), true),
             };
             publish_update(&output, message);
             if ended {
@@ -407,17 +411,21 @@ fn field(value: &serde_json::Value, limit: usize) -> String {
 }
 
 fn main() {
+    waid::i18n::set_language(waid::i18n::Language::detect());
     match std::env::args().nth(1).as_deref() {
         Some("--waid-core") => return waid::run(std::env::args().skip(2)),
         Some("--licenses") => return print!("{FONT_LICENSE}"),
         _ => {}
+    }
+    if let Ok(settings) = ui::Settings::read(&ui::data_file()) {
+        waid::i18n::set_language(settings.language);
     }
     #[cfg(windows)]
     run_desktop();
     #[cfg(target_os = "macos")]
     macos::run();
     #[cfg(not(any(windows, target_os = "macos")))]
-    eprintln!("이 네이티브 껍데기는 현재 Windows용입니다. 다른 OS에서는 waid 코어를 사용하세요.");
+    eprintln!("{}", tr("이 네이티브 앱은 Windows와 macOS를 지원합니다. 다른 OS에서는 waid 코어를 사용하세요.", "The native app supports Windows and macOS. Use the waid CLI on other systems."));
 }
 
 #[cfg(windows)]
@@ -493,9 +501,9 @@ mod tests {
     fn collapsed_dates_age_by_minutes_and_hours_but_expanded_dates_stay_absolute() {
         let now = time::from_iso8601("2026-09-08T12:00:00Z").unwrap();
         for (age, expected) in [
-            (0, "방금 전"), (59, "방금 전"), (60, "1분 전"),
-            (28 * 60, "28분 전"), (50 * 60, "50분 전"), (3599, "59분 전"),
-            (3600, "1시간 전"), (7200, "2시간 전"), (86399, "23시간 전"),
+            (0, tr("방금 전", "Just now")), (59, tr("방금 전", "Just now")), (60, tr("1분 전", "1m ago")),
+            (28 * 60, tr("28분 전", "28m ago")), (50 * 60, tr("50분 전", "50m ago")), (3599, tr("59분 전", "59m ago")),
+            (3600, tr("1시간 전", "1h ago")), (7200, tr("2시간 전", "2h ago")), (86399, tr("23시간 전", "23h ago")),
             (86400, "26-09-07"), (-1, "26-09-08"),
         ] {
             let row = Row { since: time::to_iso8601(now - age), ..Row::default() };
@@ -503,7 +511,7 @@ mod tests {
             assert_eq!(row.date_label(true, now), row.short_date());
         }
         let row = Row { since: "2026-09-08T20:32:00+09:00".into(), ..Row::default() };
-        assert_eq!(row.date_label(false, now), "28분 전");
+        assert_eq!(row.date_label(false, now), tr("28분 전", "28m ago"));
         let row = Row { since: "—".into(), ..Row::default() };
         assert_eq!(row.date_label(false, now), "—");
     }
@@ -540,14 +548,14 @@ mod tests {
         activity.apply(&mut rows);
         assert_eq!(rows[0].id, id);
         assert_eq!(rows[0].state, "unknown");
-        assert_eq!(rows[0].status_context(), "미확인 · 마지막 기록: 작업 중");
+        assert_eq!(rows[0].status_context(), tr("미확인 · 마지막 기록: 작업 중", "Unknown · Last recorded: Working"));
         rows[0].request_marker = "request-b".into();
         rows[0].request_at = Some(110);
         rows[0].state = "waiting".into();
         rows[0].evidence = "transcript".into();
         activity.apply(&mut rows);
         assert!(rows[0].observed_since_launch);
-        assert_eq!(rows[0].status_context(), "내 차례");
+        assert_eq!(rows[0].status_context(), tr("내 차례", "Waiting"));
     }
 
     #[test]
@@ -589,9 +597,9 @@ mod tests {
         let rows = snapshot_rows(value.to_string().as_bytes()).unwrap().rows;
         assert_eq!(
             rows[0].accessible_text(),
-            "프로젝트  repo main\n태스크  ≈ 한글 작업\n상태  내 차례\nCodex · —\n남은 컨텍스트 미확인"
+            tr("프로젝트  repo main\n태스크  ≈ 한글 작업\n상태  내 차례\nCodex · —\n남은 컨텍스트 미확인", "Project  repo main\nTask  ≈ 한글 작업\nStatus  Waiting\nCodex · —\nContext remaining Unknown")
         );
-        assert_eq!(rows[1].accessible_text(), "프로젝트  —\n태스크  —\n상태  미확인\n— · —\n남은 컨텍스트 미확인");
+        assert_eq!(rows[1].accessible_text(), tr("프로젝트  —\n태스크  —\n상태  미확인\n— · —\n남은 컨텍스트 미확인", "Project  —\nTask  —\nStatus  Unknown\n— · —\nContext remaining Unknown"));
         assert_eq!(field(&serde_json::json!("가나다"), 2), "가나…");
         assert_eq!(field(&serde_json::json!(" \n "), 2), "—");
         assert_eq!(field(&serde_json::json!("\0"), 2), "—");

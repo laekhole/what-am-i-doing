@@ -2,6 +2,8 @@
 
 The Mac app uses AppKit windows, menus, session list, selectable details, clipboard and a JSON template editor. Rust continues to own collection, observed status, search, filtering, pinning, hiding, dismissal, revival, settings and template validation. There is no browser or network server in this desktop path. Windows keeps its existing native shell.
 
+The current source adds an **English / 한국어** language selector beside Templates. Controls, menus, accessibility labels and session details switch immediately, and the choice persists after quitting. Session content and custom templates stay unchanged. This localization has not yet been built or visually verified on a Mac; the existing device acceptance requirements below still apply.
+
 **Release acceptance is pending.** The build targets macOS 13.0 on Apple Silicon and Intel. Compilation and automated checks on hosted runners do not establish support on macOS 13, installation through Finder, VoiceOver usability or correct return to real agent sessions.
 
 ## Build and install a development copy

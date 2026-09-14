@@ -57,10 +57,10 @@ fn fingerprint(sessions: &[Session]) -> u64 {
 pub fn serve(port: u16, tpl: String, interval: u64, snap: Snap) -> Result<(), String> {
     let addr = format!("127.0.0.1:{port}");
     let listener = TcpListener::bind(&addr)
-        .map_err(|e| format!("{addr} 바인딩 실패: {e} — 다른 포트를 쓰려면 --port"))?;
+        .map_err(|e| crate::trf!("{addr} 바인딩 실패: {e} — 다른 포트를 쓰려면 --port", "Cannot bind {addr}: {e} — use --port to choose another port"))?;
 
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
-    eprintln!("waid → http://{addr}  (Ctrl-C 로 종료)");
+    eprintln!("{}", crate::trf!("waid → http://{addr}  (Ctrl-C 로 종료)", "waid → http://{addr}  (Ctrl-C to stop)"));
 
     let tpl = Arc::new(tpl);
     for stream in listener.incoming() {
@@ -96,7 +96,11 @@ fn handle(mut stream: TcpStream, tpl: &str, interval: u64, snap: Snap) -> std::i
     match path.split('?').next().unwrap_or("/") {
         "/" => {
             let (sessions, now) = snap();
-            let body = crate::html::render(&sessions, now, tpl);
+            let language = path.split_once('?')
+                .and_then(|(_, query)| query.split('&').find_map(|part| part.strip_prefix("lang=")))
+                .and_then(crate::i18n::Language::from_code)
+                .unwrap_or_else(crate::i18n::language);
+            let body = crate::html::render_language(&sessions, now, tpl, language);
             write_page(&mut stream, "text/html; charset=utf-8", &body)
         }
         "/snapshot.json" => {
