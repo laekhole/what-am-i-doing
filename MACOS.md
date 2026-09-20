@@ -1,5 +1,7 @@
 # Native macOS development app (v0.3.0 work)
 
+For a collaborator testing on a real Mac, start with the Korean [macOS test handoff](MACOS_HANDOFF.md): build/run commands, acceptance checks, and a result template.
+
 The Mac app uses AppKit windows, menus, session list, selectable details, clipboard and a JSON template editor. Rust continues to own collection, observed status, search, filtering, pinning, hiding, dismissal, revival, settings and template validation. There is no browser or network server in this desktop path. Windows keeps its existing native shell.
 
 The current source adds an **English / 한국어** language selector beside Templates. Controls, menus, accessibility labels and session details switch immediately, and the choice persists after quitting. Session content and custom templates stay unchanged. This localization has not yet been built or visually verified on a Mac; the existing device acceptance requirements below still apply.
