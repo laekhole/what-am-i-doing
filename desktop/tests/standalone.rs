@@ -86,7 +86,13 @@ fn renamed_executable_collects_and_contains_license_without_companion_files() {
         assert!(fixture.child.as_mut().unwrap().wait().unwrap().success());
         fixture.child = None;
         if license {
-            assert_eq!(output, include_str!("../assets/fonts/LICENSE.txt"));
+            for notice in [
+                include_str!("../../LICENSE"),
+                include_str!("../../THIRD_PARTY_NOTICES.txt"),
+                include_str!("../assets/fonts/LICENSE.txt"),
+            ] {
+                assert!(output.contains(notice), "standalone EXE must include complete license notices");
+            }
         } else {
             let snapshot: serde_json::Value = serde_json::from_str(&output).unwrap();
             assert_eq!(snapshot["schema"], 2);

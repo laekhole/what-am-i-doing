@@ -14,6 +14,28 @@ pub const NIGHT: &str = include_str!("../templates/midnight.json");
 pub const MAX_CONFIG: u64 = 128 * 1024;
 const MAX_SETTINGS: u64 = 8 * 1024 * 1024;
 
+pub fn empty_message(loading: bool, total: usize, failed: bool) -> &'static str {
+    if failed && total == 0 {
+        tr("세션을 가져오지 못했습니다.\n아래 오류를 확인하세요.", "Could not load sessions.\nSee the error below.")
+    } else if loading {
+        tr("조금만 기다려 주세요.\nAI 친구들의 소식을 가져오고 있어요.", "Just a moment.\nLoading your AI sessions.")
+    } else if total == 0 {
+        tr("아직 조용하네요.\nAI와 작업을 시작하면 여기에 모아드릴게요.", "Nothing here yet.\nStart working with an AI agent to see sessions here.")
+    } else {
+        tr("찾는 세션이 없어요.\n검색어나 필터를 바꾸거나 전체 보기를 눌러보세요.", "No matching sessions.\nChange your search or filters, or choose Show all.")
+    }
+}
+
+pub fn toggle_entry(entries: &mut BTreeSet<String>, id: &str) -> Result<(), String> {
+    if !entries.remove(id) {
+        if entries.len() >= 1024 {
+            return Err(tr("이 방식으로 최대 1,024개 항목을 정리할 수 있습니다.", "At most 1,024 entries can be organized this way.").into());
+        }
+        entries.insert(id.into());
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Skin {
     pub compact: bool,
@@ -500,6 +522,28 @@ pub fn atomic_write(path: &Path, text: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn empty_messages_distinguish_loading_no_sessions_and_filtered_sessions() {
+        assert_ne!(empty_message(true, 0, false), empty_message(false, 0, false));
+        assert_ne!(empty_message(false, 0, false), empty_message(false, 1, false));
+        assert_eq!(empty_message(true, 0, false), empty_message(true, 1, false));
+        assert_ne!(empty_message(false, 0, true), empty_message(false, 0, false));
+        assert_eq!(empty_message(false, 1, true), empty_message(false, 1, false));
+    }
+
+    #[test]
+    fn organization_limit_still_allows_removing_and_replacing_entries() {
+        let mut entries: BTreeSet<_> = (0..1024).map(|n| n.to_string()).collect();
+        assert!(toggle_entry(&mut entries, "new").is_err());
+        assert_eq!(entries.len(), 1024);
+        assert!(!entries.contains("new"));
+        toggle_entry(&mut entries, "0").unwrap();
+        toggle_entry(&mut entries, "new").unwrap();
+        assert!(!entries.contains("0"));
+        assert!(entries.contains("new"));
+        assert_eq!(entries.len(), 1024);
+    }
+
     #[test]
     fn context_survives_snapshot_and_saved_rows_without_assessments() {
         let source = json!({"schema":2,"sessions":[{"id":"context-test","context":{

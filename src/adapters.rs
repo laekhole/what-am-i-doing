@@ -175,8 +175,16 @@ const BUILTIN: &[Builtin] = &[
                 CURSOR_HEADERS,
             ),
             (
+                ".config/Cursor/User/globalStorage/state.vscdb",
+                CURSOR_DISK_KV,
+            ),
+            (
                 "Library/Application Support/Cursor/User/globalStorage/state.vscdb",
                 CURSOR_HEADERS,
+            ),
+            (
+                "Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+                CURSOR_DISK_KV,
             ),
         ],
     },
@@ -346,12 +354,12 @@ fn expand(raw: &str) -> Vec<PathBuf> {
 }
 
 fn builtins() -> Vec<Def> {
+    let homes = home_candidates();
     BUILTIN
         .iter()
         .map(|b| {
             let under_homes = |suffix: &str| -> Vec<PathBuf> {
-                home_candidates()
-                    .into_iter()
+                homes.iter()
                     .map(|h| h.join(suffix))
                     .collect()
             };

@@ -11,6 +11,8 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
+type ObservedSessions = HashMap<String, (i64, Session)>;
+
 pub fn path() -> Option<PathBuf> {
     std::env::var_os("ORCA_USER_DATA_PATH")
         .filter(|p| !p.is_empty())
@@ -141,7 +143,7 @@ fn entry(v: &Json, hooks: &Json, previous: Option<&Session>) -> Option<Session> 
     })
 }
 
-fn merge(hooks: &Json, sessions: &mut HashMap<String, Session>) -> bool {
+fn merge(hooks: &Json, sessions: &mut ObservedSessions) -> bool {
     if hooks.get("version") != Some(&Json::Num(2.0)) {
         return false;
     }
@@ -152,12 +154,13 @@ fn merge(hooks: &Json, sessions: &mut HashMap<String, Session>) -> bool {
         let Some(candidate) = entry(v, hooks, None) else {
             continue;
         };
+        let stamp = timestamp(v).unwrap(); // entry already validated the timestamp.
         let previous = sessions.get(&candidate.id);
-        if previous.is_some_and(|p| p.since > candidate.since) {
+        if previous.is_some_and(|(observed_at, _)| *observed_at >= stamp) {
             continue;
         }
-        if let Some(row) = entry(v, hooks, previous) {
-            sessions.insert(row.id.clone(), row);
+        if let Some(row) = entry(v, hooks, previous.map(|(_, row)| row)) {
+            sessions.insert(row.id.clone(), (stamp, row));
         }
     }
     true
@@ -169,7 +172,7 @@ pub fn collect(now: i64, history: bool) -> Vec<Session> {
     };
     // ponytail: retain observed sessions for this process only; durable remote history
     // needs a provider transcript source, since Orca overwrites each pane's snapshot.
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, HashMap<String, Session>>>> = OnceLock::new();
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, ObservedSessions>>> = OnceLock::new();
     let mut cache = CACHE
         .get_or_init(Default::default)
         .lock()
@@ -195,6 +198,7 @@ pub fn collect(now: i64, history: bool) -> Vec<Session> {
     }
     sessions
         .values()
+        .map(|(_, row)| row)
         .filter(|s| history || now - s.since <= 24 * 3600)
         .cloned()
         .collect()
@@ -220,20 +224,28 @@ mod tests {
             "/app/integrations",
             "one",
             "UserPromptSubmit",
-            100_000,
+            100_100,
             "current",
         );
         assert!(merge(&submit, &mut sessions));
-        let first = sessions.values().next().unwrap().clone();
+        let first = sessions.values().next().unwrap().1.clone();
         assert_eq!(first.title, "integrations");
         assert_eq!(first.request_at, Some(100));
         assert_eq!(first.state, State::Working);
         merge(
-            &hooks("/app/integrations", "one", "Stop", 101_000, "current"),
+            &hooks("/app/integrations", "one", "Stop", 100_900, "current"),
             &mut sessions,
         );
-        assert_eq!(sessions[&first.id].request_marker, first.request_marker);
-        assert_eq!(sessions[&first.id].state, State::Waiting);
+        assert_eq!(sessions[&first.id].1.request_marker, first.request_marker);
+        assert_eq!(sessions[&first.id].1.state, State::Waiting);
+        for stamp in [100_500, 100_900] {
+            merge(
+                &hooks("/app/integrations", "one", "UserPromptSubmit", stamp, "current"),
+                &mut sessions,
+            );
+            assert_eq!(sessions[&first.id].1.state, State::Waiting);
+            assert_eq!(sessions[&first.id].1.request_marker, first.request_marker);
+        }
         merge(
             &hooks(
                 "/app/integrations",
@@ -244,7 +256,7 @@ mod tests {
             ),
             &mut sessions,
         );
-        assert_eq!(sessions[&first.id].state, State::Unknown);
+        assert_eq!(sessions[&first.id].1.state, State::Unknown);
         merge(
             &hooks(
                 "/app/integrations",
@@ -255,7 +267,7 @@ mod tests {
             ),
             &mut sessions,
         );
-        assert_ne!(sessions[&first.id].request_marker, first.request_marker);
+        assert_ne!(sessions[&first.id].1.request_marker, first.request_marker);
         merge(
             &hooks("/app/AUDPlatform", "two", "Stop", 104_000, "current"),
             &mut sessions,

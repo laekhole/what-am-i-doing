@@ -14,6 +14,8 @@
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
+use std::io::Read;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use crate::i18n::tr;
 
@@ -221,42 +223,104 @@ pub fn query(file: &Path, sql: &str) -> Result<Vec<Row>, String> {
         // 편집기가 WAL 로 잡고 있으면 읽기 전용 열기도 실패할 수 있다.
         // 원본은 건드리지 않고 사본으로 한 번만 다시 시도한다.
         Err(first) => match copy_aside(file) {
-            Some(copy) => run(api, &copy, sql, OPEN_READONLY)
+            Some(copy) => run(api, &copy.file, sql, OPEN_READONLY)
                 .map_err(|second| crate::trf!("{first} (사본도 실패: {second})", "{first} (copy also failed: {second})")),
             None => Err(first),
         },
     }
 }
 
-/// DB 와 WAL·SHM 동반 파일을 임시 폴더로 복사한다. 원본은 읽기만 한다.
-fn copy_aside(file: &Path) -> Option<PathBuf> {
+struct DatabaseCopy {
+    file: PathBuf,
+}
+
+impl Drop for DatabaseCopy {
+    fn drop(&mut self) {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(PathBuf::from(format!("{}{suffix}", self.file.display())));
+        }
+        if let Some(dir) = self.file.parent() {
+            let _ = std::fs::remove_dir(dir);
+        }
+    }
+}
+
+/// Isolate concurrent readers and remove private copies on success and failure.
+fn copy_aside(file: &Path) -> Option<DatabaseCopy> {
     let size = std::fs::metadata(file).ok()?.len();
     if size > MAX_COPY_BYTES {
         return None;
     }
-    let mut hash = 0xcbf29ce484222325u64;
-    for byte in file.to_string_lossy().as_bytes() {
-        hash = (hash ^ *byte as u64).wrapping_mul(0x100000001b3);
-    }
-    let dir = std::env::temp_dir().join("waid-sqlite");
-    std::fs::create_dir_all(&dir).ok()?;
-    let base = dir.join(format!("{hash:016x}.db"));
-    std::fs::copy(file, &base).ok()?;
-    for suffix in ["-wal", "-shm"] {
-        let extra = PathBuf::from(format!("{}{suffix}", file.display()));
-        let target = PathBuf::from(format!("{}{suffix}", base.display()));
-        if extra.exists() {
-            let _ = std::fs::copy(&extra, &target);
-        } else {
-            // 지난 사본의 WAL 이 남아 있으면 낡은 내용을 되살린다.
-            let _ = std::fs::remove_file(&target);
+    static NEXT_COPY: AtomicU64 = AtomicU64::new(0);
+    let copy = loop {
+        let id = NEXT_COPY.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("waid-sqlite-{}-{id}", std::process::id()));
+        let builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        let builder = {
+            use std::os::unix::fs::DirBuilderExt;
+            let mut builder = builder;
+            builder.mode(0o700);
+            builder
+        };
+        match builder.create(&dir) {
+            Ok(()) => break DatabaseCopy { file: dir.join("source.db") },
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
         }
+    };
+    let mut remaining = MAX_COPY_BYTES;
+    for suffix in ["", "-wal", "-shm"] {
+        let source = PathBuf::from(format!("{}{suffix}", file.display()));
+        let source = match std::fs::File::open(source) {
+            Ok(source) => source,
+            Err(e) if !suffix.is_empty() && e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return None,
+        };
+        let mut target = std::fs::File::create(format!("{}{suffix}", copy.file.display())).ok()?;
+        let written = std::io::copy(&mut source.take(remaining + 1), &mut target).ok()?;
+        remaining = remaining.checked_sub(written)?;
     }
-    Some(base)
+    Some(copy)
 }
 
 #[cfg(test)]
 pub fn exec(file: &Path, sql: &str) -> Result<(), String> {
     let api = api().ok_or(tr("SQLite 라이브러리를 찾지 못했습니다", "SQLite library not found"))?;
     run(api, file, sql, 0x2 | 0x4).map(|_| ())
+}
+
+#[cfg(test)]
+mod copy_tests {
+    use super::*;
+
+    #[test]
+    fn copies_are_isolated_bounded_and_removed() {
+        let source = std::env::temp_dir().join(format!("waid-copy-test-{}.db", std::process::id()));
+        let wal = PathBuf::from(format!("{}-wal", source.display()));
+        std::fs::write(&source, b"database").unwrap();
+        std::fs::write(&wal, b"current wal").unwrap();
+        let first = copy_aside(&source).unwrap();
+        let second = copy_aside(&source).unwrap();
+        assert_ne!(first.file, second.file);
+        assert_eq!(std::fs::read(format!("{}-wal", first.file.display())).unwrap(), b"current wal");
+        let first_dir = first.file.parent().unwrap().to_path_buf();
+        drop(first);
+        assert!(!first_dir.exists());
+        assert!(second.file.exists());
+        let second_dir = second.file.parent().unwrap().to_path_buf();
+        drop(second);
+        assert!(!second_dir.exists());
+        // The bound includes the WAL, even when the main database is tiny.
+        std::fs::File::create(&wal).unwrap().set_len(MAX_COPY_BYTES).unwrap();
+        assert!(copy_aside(&source).is_none());
+        std::fs::remove_file(&wal).unwrap();
+        // An unreadable companion must not silently produce an incomplete snapshot.
+        std::fs::create_dir(&wal).unwrap();
+        assert!(copy_aside(&source).is_none());
+        std::fs::remove_dir(wal).unwrap();
+        std::fs::File::create(&source).unwrap().set_len(MAX_COPY_BYTES + 1).unwrap();
+        assert!(copy_aside(&source).is_none());
+        std::fs::remove_file(source).unwrap();
+    }
 }

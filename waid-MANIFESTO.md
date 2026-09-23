@@ -1,3 +1,5 @@
+> **Historical snapshot ? not current documentation.** See [MANIFESTO.md](MANIFESTO.md) for maintained documentation. This file preserves an earlier design; its support and implementation claims may be obsolete.
+
 # waid — 프로젝트 매니페스트 (개정 2판)
 
 > **what am I doing?**

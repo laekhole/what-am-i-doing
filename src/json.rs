@@ -67,22 +67,6 @@ impl Json {
         }
     }
 
-    /// 이 값(또는 그 하위)이 주어진 키에 대해 특정 문자열 값을 갖는지.
-    pub fn has_kv(&self, key: &str, val: &str) -> bool {
-        match self {
-            Json::Obj(m) => {
-                if let Some(Json::Str(s)) = m.get(key) {
-                    if s == val {
-                        return true;
-                    }
-                }
-                m.values().any(|v| v.has_kv(key, val))
-            }
-            Json::Arr(a) => a.iter().any(|v| v.has_kv(key, val)),
-            _ => false,
-        }
-    }
-
     /// 사람이 읽을 수 있는 텍스트를 뽑는다.
     ///
     /// content는 평문 문자열일 수도, `[{type:"text", text:"..."}]` 배열일
@@ -122,7 +106,7 @@ pub fn parse(input: &str) -> Result<Json, String> {
     let b = input.as_bytes();
     let mut p = Parser { b, i: 0 };
     p.ws();
-    let v = p.value()?;
+    let v = p.value(0)?;
     p.ws();
     if p.i != b.len() {
         return Err(format!("trailing input at byte {}", p.i));
@@ -164,10 +148,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn value(&mut self) -> Result<Json, String> {
+    fn value(&mut self, depth: usize) -> Result<Json, String> {
+        // Bound both parser recursion and the resulting tree's recursive consumers.
+        if depth >= 128 && matches!(self.peek(), Some(b'{' | b'[')) {
+            return Err(format!("nesting limit exceeded at byte {}", self.i));
+        }
         match self.peek() {
-            Some(b'{') => self.object(),
-            Some(b'[') => self.array(),
+            Some(b'{') => self.object(depth + 1),
+            Some(b'[') => self.array(depth + 1),
             Some(b'"') => Ok(Json::Str(self.string()?)),
             Some(b't') => self.lit("true", Json::Bool(true)),
             Some(b'f') => self.lit("false", Json::Bool(false)),
@@ -177,7 +165,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn object(&mut self) -> Result<Json, String> {
+    fn object(&mut self, depth: usize) -> Result<Json, String> {
         self.eat(b'{')?;
         let mut m = BTreeMap::new();
         self.ws();
@@ -191,7 +179,7 @@ impl<'a> Parser<'a> {
             self.ws();
             self.eat(b':')?;
             self.ws();
-            let v = self.value()?;
+            let v = self.value(depth)?;
             m.insert(k, v);
             self.ws();
             match self.peek() {
@@ -205,7 +193,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn array(&mut self) -> Result<Json, String> {
+    fn array(&mut self, depth: usize) -> Result<Json, String> {
         self.eat(b'[')?;
         let mut a = Vec::new();
         self.ws();
@@ -215,7 +203,7 @@ impl<'a> Parser<'a> {
         }
         loop {
             self.ws();
-            a.push(self.value()?);
+            a.push(self.value(depth)?);
             self.ws();
             match self.peek() {
                 Some(b',') => self.i += 1,
@@ -252,6 +240,7 @@ impl<'a> Parser<'a> {
                         _ => return Err(format!("bad escape at byte {}", self.i)),
                     }
                 }
+                0..=0x1f => return Err(format!("unescaped control at byte {}", self.i - 1)),
                 // UTF-8 연속 바이트를 문자 경계까지 모아서 넣는다.
                 _ => {
                     let start = self.i - 1;
@@ -272,6 +261,7 @@ impl<'a> Parser<'a> {
             return Err("truncated \\u escape".into());
         }
         let hex = std::str::from_utf8(&self.b[self.i..self.i + 4]).map_err(|_| "bad \\u")?;
+        if !hex.bytes().all(|c| c.is_ascii_hexdigit()) { return Err("bad \\u".into()); }
         let n = u32::from_str_radix(hex, 16).map_err(|_| "bad \\u")?;
         self.i += 4;
         Ok(n)
@@ -290,7 +280,7 @@ impl<'a> Parser<'a> {
                     return char::from_u32(c).ok_or_else(|| "bad surrogate pair".into());
                 }
             }
-            return Ok('\u{fffd}');
+            return Err("bad surrogate pair".into());
         }
         char::from_u32(n).ok_or_else(|| "bad code point".into())
     }
@@ -300,16 +290,42 @@ impl<'a> Parser<'a> {
         if self.peek() == Some(b'-') {
             self.i += 1;
         }
-        while let Some(c) = self.peek() {
-            if c.is_ascii_digit() || matches!(c, b'.' | b'e' | b'E' | b'+' | b'-') {
+        match self.peek() {
+            Some(b'0') => self.i += 1,
+            Some(b'1'..=b'9') => {
+                while self.peek().is_some_and(|c| c.is_ascii_digit()) {
+                    self.i += 1;
+                }
+            }
+            _ => return Err(format!("bad number at byte {start}")),
+        }
+        if self.peek() == Some(b'.') {
+            self.i += 1;
+            let digits = self.i;
+            while self.peek().is_some_and(|c| c.is_ascii_digit()) {
                 self.i += 1;
-            } else {
-                break;
+            }
+            if self.i == digits {
+                return Err(format!("bad number at byte {start}"));
+            }
+        }
+        if matches!(self.peek(), Some(b'e' | b'E')) {
+            self.i += 1;
+            if matches!(self.peek(), Some(b'+' | b'-')) {
+                self.i += 1;
+            }
+            let digits = self.i;
+            while self.peek().is_some_and(|c| c.is_ascii_digit()) {
+                self.i += 1;
+            }
+            if self.i == digits {
+                return Err(format!("bad number at byte {start}"));
             }
         }
         std::str::from_utf8(&self.b[start..self.i])
             .ok()
             .and_then(|s| s.parse::<f64>().ok())
+            .filter(|n| n.is_finite())
             .map(Json::Num)
             .ok_or_else(|| format!("bad number at byte {}", start))
     }
@@ -386,12 +402,6 @@ impl Writer {
 
     pub fn end_obj(&mut self) {
         self.close('}');
-    }
-
-    pub fn begin_arr(&mut self) {
-        self.sep();
-        self.buf.push('[');
-        self.stack.push(false);
     }
 
     pub fn end_arr(&mut self) {

@@ -144,13 +144,21 @@ pub fn parse(text: &str) -> HashMap<String, Val> {
 /// 문자열 리터럴 안의 `#`은 주석이 아니다. 색상값이 전부 `#`으로 시작하므로
 /// 이걸 틀리면 테마 색이 통째로 사라진다.
 fn strip_comment(line: &str) -> &str {
-    let b = line.as_bytes();
-    let mut in_str = false;
-    for (i, c) in b.iter().enumerate() {
-        match c {
-            b'"' => in_str = !in_str,
-            b'#' if !in_str => return &line[..i],
-            _ => {}
+    let mut quote = None;
+    let mut escaped = false;
+    for (i, c) in line.bytes().enumerate() {
+        if escaped {
+            escaped = false;
+        } else if quote == Some(b'"') && c == b'\\' {
+            escaped = true;
+        } else if quote == Some(c) {
+            quote = None;
+        } else if quote.is_none() {
+            match c {
+                b'"' | b'\'' => quote = Some(c),
+                b'#' => return &line[..i],
+                _ => {}
+            }
         }
     }
     line
@@ -230,6 +238,20 @@ fn apply(t: &mut Theme, kv: &HashMap<String, Val>) {
         }
         if let Some(Val::Str(v)) = kv.get(&format!("colors.{state}")) {
             t.colors.insert(state.to_string(), v.clone());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn comments_preserve_single_quotes_and_escaped_double_quotes() {
+        let parsed = parse("[colors]\nwaiting = '#f5a623' # comment\n");
+        assert_eq!(parsed.get("colors.waiting"), Some(&Val::Str("#f5a623".into())));
+        for literal in [r##"'a"#b'"##, r##""a\"#b""##, r##""a\\""##] {
+            assert_eq!(strip_comment(&format!("{literal} # comment")).trim(), literal);
         }
     }
 }

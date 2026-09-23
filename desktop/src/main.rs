@@ -25,7 +25,8 @@ mod visual;
 
 type Updates = Arc<Mutex<Option<Update>>>;
 const MAX_SNAPSHOT: u64 = 16 * 1024 * 1024;
-const FONT_LICENSE: &str = include_str!("../assets/fonts/LICENSE.txt");
+mod licenses;
+use licenses::LICENSES;
 
 #[derive(Debug, Default)]
 struct Snapshot {
@@ -414,7 +415,7 @@ fn main() {
     waid::i18n::set_language(waid::i18n::Language::detect());
     match std::env::args().nth(1).as_deref() {
         Some("--waid-core") => return waid::run(std::env::args().skip(2)),
-        Some("--licenses") => return print!("{FONT_LICENSE}"),
+        Some("--licenses") => return print!("{LICENSES}"),
         _ => {}
     }
     if let Ok(settings) = ui::Settings::read(&ui::data_file()) {

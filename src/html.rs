@@ -107,6 +107,34 @@ pub fn context(sessions: &[Session], now: i64) -> Ctx {
     context_language(sessions, now, language())
 }
 
+/// Derive --keys from the renderer without collecting the user's sessions.
+pub(crate) fn key_context() -> Ctx {
+    let session = Session {
+        context: crate::ContextUsage::default(),
+        prompt: None,
+        last_answer: None,
+        session_id: None,
+        summary: None,
+        request_marker: None,
+        request_at: None,
+        auxiliary: false,
+        evidence: "unknown",
+        id: String::new(),
+        legacy_id: String::new(),
+        title: String::new(),
+        agent: crate::adapters::Agent { name: "", display: "", has_reader: false },
+        llm_id: None,
+        llm_display: None,
+        task: crate::session::Task { text: None, source: "none", confidence: Confidence::None },
+        state: State::Unknown,
+        since: 0,
+        cwd: None,
+        branch: None,
+        pid: None,
+    };
+    context(&[session], 0)
+}
+
 fn context_language(sessions: &[Session], now: i64, language: Language) -> Ctx {
     let mut root = Ctx::new();
     let items: Vec<Ctx> = sessions.iter().map(|x| session_ctx(x, now, language)).collect();

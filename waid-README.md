@@ -1,3 +1,5 @@
+> **Historical snapshot ? not current documentation.** See [README.md](README.md) for maintained documentation. This file preserves an earlier design; its support and implementation claims may be obsolete.
+
 # waid — what am I doing?
 
 에이전트 다섯 개를 돌려놓고 "내가 지금 뭘 하고 있더라" 하는 그 순간을 위한 도구.

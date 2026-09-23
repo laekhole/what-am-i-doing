@@ -193,7 +193,7 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
         let main = NSMenu()
         let appMenu = NSMenu()
         appMenu.addItem(menuItem(tr("waid 열기", "Show waid"), #selector(showWindow)))
-        appMenu.addItem(menuItem(tr("폰트 라이선스", "Font license"), #selector(showLicense)))
+        appMenu.addItem(menuItem(tr("라이선스 및 고지", "Licenses and notices"), #selector(showLicense)))
         appMenu.addItem(.separator())
         appMenu.addItem(menuItem(tr("waid 숨기기", "Hide waid"), #selector(hideApp), key: "h"))
         appMenu.addItem(menuItem(tr("waid 종료", "Quit waid"), #selector(quit), key: "q"))
@@ -321,7 +321,8 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
     }
     func tableViewSelectionDidChange(_ notification: Notification) { if !rendering { updateSelection() } }
     func updateSelection() {
-        let next = selected?["detail"] as? String ?? tr("세션을 선택하면 요청, 답변, 출처를 볼 수 있습니다.", "Select a session to read its prompt, answer and source details.")
+        let empty = rows.isEmpty ? view["empty_message"] as? String : nil
+        let next = selected?["detail"] as? String ?? empty ?? tr("세션을 선택하면 요청, 답변, 출처를 볼 수 있습니다.", "Select a session to read its prompt, answer and source details.")
         if detail.string != next { detail.string = next }
         for key in ["open", "pin", "hide", "dismiss", "copy", "connect", "disconnect"] { buttons[key]?.isEnabled = selected != nil }
         buttons["open"]?.isEnabled = selected != nil && view["busy"] as? Bool != true && selected?["dismissed"] as? Bool != true
@@ -372,7 +373,19 @@ final class WaidApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableV
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showWindow(); return true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply { quit(); return .terminateCancel }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
-    @objc func showLicense() { let alert = NSAlert(); alert.messageText = tr("폰트 라이선스", "Font license"); alert.informativeText = fontLicense; alert.addButton(withTitle: tr("확인", "OK")); alert.runModal() }
+    @objc func showLicense() {
+        let alert = NSAlert()
+        alert.messageText = tr("라이선스 및 고지", "Licenses and notices")
+        let frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        let text = NSTextView(frame: frame)
+        text.isEditable = false; text.isSelectable = true; text.string = licenses
+        text.setAccessibilityLabel(alert.messageText)
+        let content = scroll(text)
+        content.frame = frame
+        alert.accessoryView = content
+        alert.addButton(withTitle: tr("확인", "OK"))
+        alert.runModal()
+    }
 
     func showEditor() {
         if editorWindow == nil {

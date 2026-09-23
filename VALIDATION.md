@@ -1,5 +1,70 @@
 # Windows 검증 기록 — 2026-09-06
 
+## 전수 점검과 공통 경로 정리 — 2026-09-23
+
+### 조사 범위
+
+기존 미커밋 문서·라이선스 변경을 보존한 작업 트리를 기준으로 조사했다. README.md와 최신 HISTORY.md를 읽었고 README.ko.md는 읽거나 수정하지 않았다. 새로운 Rust/JavaScript 의존성은 추가하지 않았다.
+
+| 범위 | 조사한 경로 | 결과 |
+|---|---|---|
+| 로그·세션 수집 | `adapters`, `json`, `transcript`, `session`, `sqlite`, `time`, `matchers` | 파서 경계, 모델 원본, Cursor 폴백, worktree 브랜치, SQLite 사본 수정 |
+| 프로세스·SSH 관찰 | `proc`, `proc/windows`, `orca`, `terminal`, `terminal.ps1`, `diag` | Orca 이벤트 순서 수정; 기존 읽기 전용 프로세스·화면 관찰 경계 유지 |
+| CLI·HTML | `lib`, `main`, `render`, `serve`, `html`, `default.html`, `theme`, `tmpl`, `i18n` | 중복 필터·키 목록 정리, 연결 복구·갱신 누락·출력 오류·HTTP 요청 제한 보완 |
+| 공통 데스크톱 | `desktop/src/main.rs`, `ui.rs`, `activate.rs` | 설정·수집 subprocess·요청 관측·복귀 검증 확인, 고정/숨김·빈 목록 안내 공통화 |
+| Windows | `native`, `native/accordion`, `native/tray`, `activate/windows`, `visual` | 오류 안내 가림·한도 초과 무응답 수정, 기존 네이티브 검사와 샘플 화면 확인 |
+| macOS | `macos.rs`, `macos/App.swift` | 빈 목록 안내·미리보기 롤백·전체 라이선스 메뉴 수정; 실제 Mac 빌드는 미실행 |
+| 빌드·배포·문서 | Cargo manifests/lockfiles, build/package scripts, NSIS, GitHub workflows, 현재·구버전 안내 | 패키지 버전 검증·공통 고지·Linux CI 보완, 과거 문서 표시 |
+
+### 수정한 문제
+
+- 과도하게 깊은 JSON이 스택을 소진할 수 있던 경로에 128단계 제한을 적용했다. 잘못된 숫자, 비유한 수, 이스케이프 없는 제어문자와 깨진 surrogate를 거부한다.
+- JSON과 SQLite가 모델 ID를 일찍 축약하거나 도구 결과에서 모델을 가져오던 차이를 공통 추출기로 해결했다. 표시명은 표시 단계에서만 정규화하고 JSON 이벤트 트리를 재복제하지 않는다.
+- Linux/macOS Cursor의 구형 DB 질의 폴백, `.git` 파일을 사용하는 worktree/submodule의 브랜치 인식, 반복 홈 디렉터리 탐색을 보완했다.
+- SQLite 폴백은 프로세스·조회별 임시 디렉터리를 사용하고 정상·실패 경로 모두 정리한다. 읽지 못한 WAL을 무시하지 않고 DB/WAL/SHM 합계 복사를 256 MiB로 제한한다.
+- Orca 원격 이벤트의 밀리초를 캐시에 보존해 같은 초의 오래된 이벤트나 동일 관측 시각의 재입력이 최신 상태·요청 마커를 덮지 않게 했다.
+- CLI와 HTML 서버가 같은 수집·필터 함수를 사용한다. `--keys`의 수동 목록과 로그 조회를 없애 `status.unknown`을 포함한 실제 렌더러 키를 출력한다. Windows doctor의 인자 수집 설명도 현행화했다.
+- 잘못된 UTF-8 색상에서 CLI가 종료되는 문제, 제어문자로 표/터미널이 변하는 문제, 너비 0과 긴 헤더 초과, Windows/macOS TTY 판별을 수정했다. 작은따옴표 및 이스케이프된 큰따옴표 안의 `#`을 테마 주석으로 잘라내지 않는다. 무시되던 `status_priority`를 CLI 표의 안정 정렬에 적용하며 JSON/HTML 수집 순서는 유지한다.
+- HTML은 HTTP 오류·실패·잘못된 문서에서 연결 중 표시를 내리고 재시도한다. SSE 끊김과 진행 중 fetch의 경쟁, 동시 갱신, branch/cwd/pid 등 표시 필드 변경 누락과 좁은 화면 카드 폭을 보완했다.
+- 로컬 HTTP 요청의 Host·GET 메서드·헤더 크기·읽기/쓰기 대기 시간을 검사한다. 루프백 바인딩만으로 임의 도메인의 요청을 허용하던 경로를 닫는다.
+- Windows 저장/복귀 안내를 수집 진단과 별도 줄로 표시하고 고정/숨김 1,024개 한도 초과를 알린다. Windows/Mac 초기 로딩·빈 목록·검색 불일치·초기 수집 실패 문구를 공통화하고, Mac 템플릿 저장 실패 시 미리보기를 보존한다.
+- 전체 라이선스 본문을 CLI·Windows·Mac에서 공유한다. Windows 패키지 태그와 EXE 버전 불일치를 출력 생성 전에 거부하고 체크섬·덮어쓰기 검사를 빌드 경로에 연결했다. Mac 번들 버전은 Cargo에서 읽는다. Linux core 및 대시보드 JavaScript 검사를 CI에 추가했다.
+
+### 검사 결과
+
+- 변경 전 기준: 코어 단위 95개 + CLI 통합 7개, Windows 데스크톱 35개 + 단일 EXE 통합 1개 통과. 환경 의존 검사 4개 ignored. Windows SDK의 기존 `rc.exe` 디렉터리를 해당 명령의 PATH에 추가해 과거 SDK 탐색 실패를 해결했으며 전역 환경은 변경하지 않았다.
+- 최종 `cargo test --release --locked`: 코어 단위 102개 + CLI 통합 7개 통과. `cargo test --manifest-path desktop/Cargo.toml --release --locked`: Windows 단위 37개 + 단일 EXE 통합 1개 통과, 환경 의존 4개 ignored. 총 147개 통과, 실패 0개이며 테스트에서 다시 호출한 언어 전환 자식 검사는 중복 집계하지 않았다.
+- 최종 `cargo build --manifest-path desktop/Cargo.toml --release --locked`, `desktop/test-package.ps1`, `node tests/dashboard.cjs`, `bash -n desktop/package-macos.sh` 통과. Windows 패키지 검사는 버전 불일치 선제 거절·정상 복사와 SHA-256·기존 산출물 덮어쓰기 거절을 확인한다. Mac은 셸 문법과 Cargo 버전 추출만 확인했다.
+- HTTP 검사는 원시 요청 9가지를 메모리 reader에서 검사하고 완결된 HTTP 요청 6가지를 실제 루프백 소켓으로 검사했다. 로컬 소켓 경로에서 중복 Host가 한 줄로 관측된 현상 때문에 malformed 헤더를 실제 소켓에서 모두 재현했다고 주장하지 않는다. 5초 I/O 제한은 API 적용 및 컴파일을 확인했으며 실제 5초 지연 재현은 미실행이다.
+- 양쪽 crate의 `cargo clippy --all-targets --locked`는 종료 코드 0이다. 기존 타입 복잡도·FFI 타입 표기·테스트 스타일 경고는 남아 있으며 lint 경고 0 상태를 주장하지 않는다. 새 dead_code 경고를 포함한 미사용 함수 3개는 제거했다.
+- `git diff --check` 통과. 기존 로컬 문서 검사기를 README.ko.md 읽기 제외 조건으로 실행해 Markdown 6개, 로컬/태그 링크 338개, 자산·UTF-8·코드펜스·Cargo/lock 버전·릴리스 노트 연결 검사를 통과했다.
+- 격리한 `WAID_DATA_DIR`와 샘플 모드로 Windows 125% 배율, 750×975 화면의 카드·펼친 본문·하단 여백을 [직접 렌더 캡처](target/audit-20260923-demo/windows-preview.png)로 확인했다. 다른 창이 찍힌 Computer Use 캡처는 배치 증거에서 제외했다. 직접 실행한 샘플만 종료했다. 오류 2줄의 동시 실제 표시와 모든 DPI·테마 조합의 육안 검사는 미실행이다.
+
+### 남은 검증과 설계 한계
+
+- macOS Swift 컴파일·전용 Rust 동작 검사·실제 AppKit 및 패키지 설치는 이 Windows 환경에서 검증하지 않았다. Linux/macOS CI 설정을 로컬에서 실제 실행한 것으로 간주하지 않는다.
+- 실제 에이전트 전체 조합, 편집기가 쓰는 중인 SQLite DB 사본의 일관성, SSH 숨은 pane 수집, 실제 세션 복귀 및 알림 배너는 이번 fixture 검사로 보장하지 않는다. 기존 환경 의존 4개 검사는 그대로 둔다.
+- `transcript.rs`와 Windows UI는 여전히 큰 모듈이다. 이벤트별 매핑 분리와 복합 grapheme 표시 폭, 전체 TOML 문법, 장기 실행의 캐시 한도는 추가 요구·측정에 따라 분리할 후속 범위다. 무조건적인 파일 분할이나 파서 교체는 하지 않았다.
+- 외부 배포·서명·설치 프로그램 실행은 하지 않았다. 구버전 문서의 내용은 보존하고 현재 안내로 연결했다. 설계 이유는 [D40](DECISIONS.md#d40--전수-점검의-공통화-범위-2026-09-23)을 참조한다.
+
+## 라이선스 고지와 한국어 README 현행화 — 2026-09-14
+
+- [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)에 Windows 앱 의존성 7개(Mac은 그중 5개), Rust 1.98.1 라이브러리·Unicode·compiler_builtins 0.1.160·libm 0.2.16 고지를 수집했다. Cargo registry와 동일 버전의 공식 rust-src/설치 문서를 대조해 라이선스 전문 24개와 파일별 저작권·허가 주석 18개를 보존했다. 원문 재대조·UTF-8·공백 검사 통과. 정확한 확인을 위해 공식 rust-src 구성요소를 설치했으며 프로젝트 의존성은 추가하지 않았다. 대상·선택 기능·Rust/Swift 도구체인 변경 시 고지 재검토가 필요하다.
+- Windows의 기존 폰트 메뉴를 `라이선스 및 고지 / Licenses and notices`로 바꾸고 프로젝트 MIT·제삼자 고지·Pretendard OFL을 동일 상수로 내장했다. 메뉴는 기존 원자적 저장 함수로 앱 데이터 폴더의 LICENSES.txt를 만들며 desktop `--licenses`도 같은 전문을 출력한다. Mac 메뉴는 기존 폰트 고지를 유지한다.
+- SDK를 명령 범위 PATH에 추가한 `cargo test --manifest-path desktop/Cargo.toml --target-dir desktop/target/context-label --release --locked --offline`: desktop **35개 + 단일 EXE 1개 통과**, 환경 의존 **4개 ignored**. 고지 머리말의 Windows 범위를 명확히 한 최종 텍스트로 `--test standalone` 재실행 **1개 통과**, 같은 인자의 `cargo build` **종료 코드 0**. 동반 파일 없는 별도 폴더의 EXE가 내장 수집기와 `--licenses`로 정상 종료하고 고지 세 원문을 완전히 출력함을 검사했다. 기존 core dead_code 경고 2개가 남는다. 트레이에서 실제 텍스트 앱을 여는 물리 클릭은 별도 검증하지 않았다.
+- [전달 EXE](target/release/waid-desktop-licenses.exe)는 최종 빌드와 SHA-256 `bf4d4d1c74cf4893e7ee1a21eedcbe36bc7878b86039f4b66918d54dd0f54bd9` 일치. 앞선 Windows 테스트 실행 차단과 달리 이번 검사·수집기/고지 실행은 통과했지만 공개 서명·다운로드 평판 검증을 뜻하지 않는다. 실제 Authenticode 서명은 적용하지 않았다. 기존 사용자 앱과 이전 전달 EXE는 보존했다.
+- 타사 로고는 visual.rs의 OpenAI·Claude·Orca `include_bytes!`, Row.logo_id의 에이전트/호스트 선택, 카드·목록 렌더링 호출로 다시 확인했다. 기존 데모 캡처에서도 Claude·OpenAI가 보이지만 이를 이번 최종 EXE 실화면 검증으로 사용하지 않는다. 타사 자산은 변경하지 않았고 권리 고지가 OSS 허가나 SignPath 승인을 대신한다고 주장하지 않는다.
+- 사용자가 명시적으로 요청한 [README.ko.md](README.ko.md)를 현재 영문 README와 동기화했다. 언어 선택·트레이 알림·SSH 화면 관찰·개인정보/제거 안내·라이선스·서명 준비와 공개 v0.2.0의 차이를 반영했다. 로컬 링크·이미지 38개, 앵커·UTF-8·코드 펜스 검사와 `git diff --check` 통과. 이전 공개 CI 수치를 최신 소스 전체의 성공으로 표현하지 않는다. macOS 최신 빌드·GUI와 실제 도구체인별 배포 검증은 미실행이다.
+
+## SignPath 기본 여섯 조건 대조 — 2026-09-14
+
+- 유지보수·Released·Documented: GitHub API에서 최신 공개 커밋일 2026-09-11, v0.2.0 공개일 2026-09-09와 단일 Windows EXE 자산·기능/설치/제약을 설명하는 릴리스 본문을 확인했다. 공개 main 루트에는 README가 있고 이번에 만든 LICENSE·SIGNING.md는 아직 없다. 최초 jq 인용 오류는 PowerShell JSON 파싱으로 바꿔 정상 조회했다.
+- OSS 코드: `cargo metadata --manifest-path desktop/Cargo.toml --locked --offline --filter-platform x86_64-pc-windows-msvc --format-version 1` 성공. 실제 Windows 그래프의 외부 crate 7개는 itoa 1.0.18, memchr 2.8.3, serde_core 1.0.229, serde_json 1.0.151, windows-link 0.2.1, windows-sys 0.61.2, zmij 1.0.23이며 로컬 라이선스 파일을 확인했다. 모두 MIT를 선택할 수 있다. MIT OR Apache-2.0 같은 두 OSS 라이선스 선택을 상용 이중 라이선스로 판정하지 않는다. waid 두 패키지도 MIT이며 Pretendard OFL 1.1 전문은 EXE에 내장한다. [MIT](https://opensource.org/license/mit)와 [OFL 1.1](https://opensource.org/license/OFL-1.1)의 OSI 승인을 대조했다.
+- 배포 고지 보완: `desktop/src/main.rs`의 `--licenses`와 트레이 메뉴는 FONT_LICENSE만 제공한다. `desktop/package.ps1`·release.yml은 EXE·체크섬·Sigstore만 배포하므로 waid 및 전이 crate 저작권/라이선스 고지를 포함하거나 동봉하는 경로가 없다. Rust 표준 라이브러리·도구체인 전체 고지와 과거 공개 바이너리 구성의 전수 검증은 수행하지 않았다.
+- 타사 자산 미확정: [visual.rs](desktop/src/visual.rs)가 OpenAI PNG·Claude ICO·Orca PNG를 EXE에 내장한다. [출처 기록](desktop/assets/README.md)은 공식 avatar/favicon 및 설치된 Orca 리소스에서 가져왔다고 밝히지만 OSI 라이선스나 SignPath에서 인정할 근거는 없다. 특히 waid MIT가 이 자산을 재라이선스하지 않는다고 명시한다. 상표 사용 조건과 OSI 라이선스는 같은 것이 아니며, 이 확인만으로 위법 또는 지원 불가를 단정하지 않는다. waid 자체 그림도 [기존 시안 기록](assets/README.txt)만으로 권리·라이선스 범위를 전부 확인할 수 없다. [신청 준비 목록](SIGNING.md)에 구체 항목을 추가했다.
+- No malware·No proprietary code: 확인한 기능과 호출 경로는 로컬 로그 읽기, 선택형 localhost 서버, 앱 데이터 저장, 기존 앱으로의 사용자 요청 복귀다. Windows DLL/API·설치된 Orca CLI 이용은 그 앱의 비공개 코드를 번들하는 것과 구분한다. 확인한 코드 의존성에서는 독점 라이브러리가 발견되지 않았지만, 이 정적 조사는 악성코드 검사나 모든 소스·바이너리의 안전 인증이 아니다. 임의 업로드·안티바이러스 검사·EXE 실행·시스템 변경을 하지 않았다.
+- 판정: 유지보수·기존 형식의 릴리스·문서화는 근거가 있다. 모든 구성요소의 OSS 조건은 타사 로고와 배포 고지가 남아 있어 완전 충족으로 체크하지 않는다. [SignPath 조건](https://signpath.org/terms.html)의 여섯 기본 구독 조건과 Foundation 인증서의 추가 평판·MFA·수동 승인 조건을 구분한다. `git diff --check` 통과; 문서 점검이므로 빌드·회귀 테스트는 재실행하지 않았다.
+
 ## 오픈소스 서명 신청과 EXE 메타데이터 준비 — 2026-09-14
 
 - GitHub API로 저장소 공개 상태와 기존 v0.2.0 단일 EXE 릴리스를 확인했다. SignPath 공식 신청 페이지와 공개된 임베드 폼 정의를 읽어 개인 유지관리자 선택, 회사명 선택사항, 필수 프로젝트·평판·연락처 정보와 동의·reCAPTCHA를 확인했다. 제출·계정 접근·MFA 상태 검사는 수행하지 않았다. 초기 프로젝트의 평판 심사 통과 여부는 미확정이다.

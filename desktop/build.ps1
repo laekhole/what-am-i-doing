@@ -24,6 +24,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Native shell tests failed.' }
     & $cargoExe build --manifest-path desktop/Cargo.toml --release --locked
     if ($LASTEXITCODE -ne 0) { throw 'Native shell build failed.' }
+    & (Join-Path $PSScriptRoot 'test-package.ps1')
     if ($Portable) {
         & (Join-Path $PSScriptRoot 'package.ps1') -Tag $Tag
     } else {

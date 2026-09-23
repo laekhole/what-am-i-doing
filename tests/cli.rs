@@ -72,6 +72,10 @@ fn language_flags_override_locale_and_validate_before_help() {
     let result = run("ko", &["--lang", "en", "--port", "no"]);
     assert_eq!(result.status.code(), Some(2));
     assert!(String::from_utf8(result.stderr).unwrap().contains("--port must be between"));
+    let result = run("en", &["--keys"]);
+    assert!(result.status.success());
+    let keys = String::from_utf8(result.stdout).unwrap();
+    assert!(keys.contains("{{status.unknown}}") && keys.contains("{{language.en}}"));
 }
 
 #[test]

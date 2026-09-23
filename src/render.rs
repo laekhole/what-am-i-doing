@@ -5,6 +5,7 @@
 
 use crate::session::{Confidence, Session, State};
 use crate::theme::{Column, Theme, Truncate};
+use std::io::IsTerminal;
 
 /// 터미널 표시 폭. 한글 한 글자는 두 칸을 먹는다.
 ///
@@ -63,19 +64,24 @@ fn take_width_rev(s: &str, max: usize) -> String {
 }
 
 pub fn fit(s: &str, max: usize, mode: Truncate) -> String {
-    if width(s) <= max {
-        return s.to_string();
+    // Logs and user themes must not inject terminal commands or split table rows.
+    let s: String = s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    if max == 0 {
+        return String::new();
+    }
+    if width(&s) <= max {
+        return s;
     }
     if max <= 1 {
         return "…".into();
     }
     match mode {
-        Truncate::End => format!("{}…", take_width(s, max - 1)),
-        Truncate::Start => format!("…{}", take_width_rev(s, max - 1)),
+        Truncate::End => format!("{}…", take_width(&s, max - 1)),
+        Truncate::Start => format!("…{}", take_width_rev(&s, max - 1)),
         Truncate::Middle => {
             let left = (max - 1) / 2;
             let right = max - 1 - left;
-            format!("{}…{}", take_width(s, left), take_width_rev(s, right))
+            format!("{}…{}", take_width(&s, left), take_width_rev(&s, right))
         }
     }
 }
@@ -104,7 +110,7 @@ impl Style {
         if std::env::var_os("NO_COLOR").is_some() {
             return Style { color: false };
         }
-        Style { color: is_tty() }
+        Style { color: std::io::stdout().is_terminal() }
     }
 
     fn hex(&self, hex: &str, s: &str) -> String {
@@ -136,7 +142,7 @@ impl Style {
 
 fn rgb(hex: &str) -> Option<(u8, u8, u8)> {
     let h = hex.trim_start_matches('#');
-    if h.len() != 6 {
+    if h.len() != 6 || !h.is_ascii() {
         return None;
     }
     Some((
@@ -144,13 +150,6 @@ fn rgb(hex: &str) -> Option<(u8, u8, u8)> {
         u8::from_str_radix(&h[2..4], 16).ok()?,
         u8::from_str_radix(&h[4..6], 16).ok()?,
     ))
-}
-
-fn is_tty() -> bool {
-    // libc 없이. `/proc/self/fd/1`이 tty를 가리키는지 본다.
-    std::fs::read_link("/proc/self/fd/1")
-        .map(|p| p.to_string_lossy().starts_with("/dev/pts") || p.to_string_lossy() == "/dev/tty")
-        .unwrap_or(false)
 }
 
 // ------------------------------------------------------------ 표
@@ -212,7 +211,10 @@ pub fn table(sessions: &[Session], theme: &Theme, st: &Style) -> String {
         return crate::i18n::tr("실행 중인 코딩 에이전트가 없습니다.\n", "No coding agents are running.\n").to_string();
     }
 
-    let rows: Vec<Vec<Cell>> = sessions
+    let mut ordered: Vec<&Session> = sessions.iter().collect();
+    ordered.sort_by_key(|s| theme.status_priority.iter()
+        .position(|state| state == s.state.id()).unwrap_or(usize::MAX));
+    let rows: Vec<Vec<Cell>> = ordered
         .iter()
         .map(|s| theme.columns.iter().map(|c| cell(s, c, theme, st)).collect())
         .collect();
@@ -233,7 +235,7 @@ pub fn table(sessions: &[Session], theme: &Theme, st: &Style) -> String {
         .columns
         .iter()
         .zip(&widths)
-        .map(|(c, w)| pad(&header(&c.key), *w))
+        .map(|(c, w)| pad(&fit(&header(&c.key), *w, c.truncate), *w))
         .collect();
     out.push_str(&st.dim(head.join("  ").trim_end()));
     out.push('\n');
@@ -263,4 +265,25 @@ fn header(key: &str) -> String {
         other => other,
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_colors_and_log_controls_are_safe() {
+        let style = Style { color: true };
+        for invalid in ["#a가bc", "#가나다", "#12345g", ""] {
+            assert_eq!(style.hex(invalid, "status"), "status");
+        }
+        assert_eq!(rgb("#f5a623"), Some((245, 166, 35)));
+        for mode in [Truncate::Start, Truncate::Middle, Truncate::End] {
+            for max in 0..30 {
+                let fitted = fit("로그\n\r\t\x1b]0;changed\x07\u{009b}31m", max, mode);
+                assert!(width(&fitted) <= max);
+                assert!(!fitted.chars().any(char::is_control));
+            }
+        }
+    }
 }

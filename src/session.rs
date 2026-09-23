@@ -102,10 +102,6 @@ pub struct Session {
 
 // ------------------------------------------------------------ 수집
 
-pub fn collect(now: i64) -> Vec<Session> {
-    collect_with_history(now, false)
-}
-
 pub fn collect_with_history(now: i64, history: bool) -> Vec<Session> {
     // 진단은 이번 수집의 사실이어야 한다. 잠겼던 파일이 풀리면 다음 스냅샷에서
     // 조용해지고, 새로 막힌 소스는 그 스냅샷에서 바로 보인다.
@@ -413,15 +409,23 @@ fn make_title(cwd: Option<&Path>, branch: Option<&str>) -> String {
 
 fn git_branch(cwd: &Path) -> Option<String> {
     for dir in cwd.ancestors().take(8) {
-        let head = dir.join(".git/HEAD");
-        if let Ok(s) = std::fs::read_to_string(&head) {
-            let s = s.trim();
-            if let Some(r) = s.strip_prefix("ref: refs/heads/") {
-                return Some(r.to_string());
-            }
-            // detached HEAD
-            return Some(s.chars().take(7).collect());
-        }
+        let git = dir.join(".git");
+        let git_dir = if git.is_file() {
+            let link = std::fs::read_to_string(&git).ok()?;
+            let target = link.trim().strip_prefix("gitdir:")?.trim();
+            if target.is_empty() { return None; }
+            dir.join(target)
+        } else if git.is_dir() {
+            git
+        } else {
+            continue;
+        };
+        // A worktree/submodule .git file points to its own HEAD, not its parent's.
+        let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+        let head = head.trim();
+        return if head.is_empty() { None }
+            else if let Some(branch) = head.strip_prefix("ref: refs/heads/") { Some(branch.into()) }
+            else { Some(head.chars().take(7).collect()) }; // detached HEAD
     }
     None
 }
@@ -603,4 +607,31 @@ pub fn to_json(sessions: &[Session], now: i64, pretty: bool) -> String {
     w.end_obj();
     w.buf.push('\n');
     w.buf
+}
+
+#[cfg(test)]
+mod branch_tests {
+    use super::*;
+
+    #[test]
+    fn branches_follow_git_files_without_inheriting_an_outer_repository() {
+        let root = std::env::temp_dir().join(format!("waid-git-{}", std::process::id()));
+        let worktree = root.join("worktree");
+        let metadata = root.join("metadata");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(worktree.join("src")).unwrap();
+        std::fs::create_dir_all(&metadata).unwrap();
+        std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/outer\n").unwrap();
+        std::fs::write(metadata.join("HEAD"), "ref: refs/heads/feature/worktree\n").unwrap();
+        assert_eq!(git_branch(&root).as_deref(), Some("outer"));
+        for target in ["../metadata".to_string(), metadata.to_string_lossy().into_owned()] {
+            std::fs::write(worktree.join(".git"), format!("gitdir: {target}\n")).unwrap();
+            assert_eq!(git_branch(&worktree.join("src")).as_deref(), Some("feature/worktree"));
+        }
+        std::fs::write(metadata.join("HEAD"), "0123456789abcdef\n").unwrap();
+        assert_eq!(git_branch(&worktree).as_deref(), Some("0123456"));
+        std::fs::write(worktree.join(".git"), "invalid\n").unwrap();
+        assert_eq!(git_branch(&worktree), None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -14,6 +14,7 @@ struct App {
     path: PathBuf,
     rows: Vec<Row>,
     updates: Updates,
+    loading: bool,
     error: String,
     warnings: Vec<String>,
     notice: String,
@@ -26,6 +27,7 @@ impl App {
     fn poll(&mut self) {
         let update = self.updates.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(update) = update {
+            self.loading = false;
             if let Some(snapshot) = update.snapshot {
                 let (revived, migrated) = self.settings.reconcile(&snapshot.rows);
                 self.rows = snapshot.rows;
@@ -76,7 +78,6 @@ impl App {
                 Skin::parse(value)?;
                 if name == "preview" { self.preview = Some(value.into()); return Ok(()); }
                 self.settings.template = value.into();
-                self.preview = None;
             }
             "cancel_preview" => { self.preview = None; return Ok(()); }
             "save" => {}
@@ -87,10 +88,7 @@ impl App {
                 match name {
                     "pin" | "hide" => {
                         let set = if name == "pin" { &mut self.settings.pinned } else { &mut self.settings.hidden };
-                        if !set.remove(id) {
-                            if set.len() >= 1024 { return Err(tr("이 방식으로 최대 1,024개 항목을 정리할 수 있습니다.", "At most 1,024 entries can be organized this way.").into()); }
-                            set.insert(id.into());
-                        }
+                        ui::toggle_entry(set, id)?;
                     }
                     "dismiss" => {
                         if self.settings.closed.remove(id).is_some() { self.settings.hidden.remove(id); }
@@ -128,6 +126,7 @@ impl App {
             self.settings = before;
             return Err(waid::trf!("설정을 저장하지 못해 변경을 되돌렸습니다: {error}", "Settings were not saved; change reverted: {error}"));
         }
+        if name == "template" { self.preview = None; }
         if name == "language" { set_language(self.settings.language); }
         self.notice.clear();
         Ok(())
@@ -160,6 +159,7 @@ impl App {
             "agent":self.settings.agent,"all":self.settings.show_all,"aux":self.settings.show_aux,
             "top":self.settings.always_on_top,"opacity":self.settings.opacity,"language":self.settings.language.code(),
             "template":self.settings.template,"skin":serde_json::from_str::<Value>(template).unwrap(),
+            "empty_message":ui::empty_message(self.loading, self.rows.len(), !self.error.is_empty()),
             "error":self.error,"notice":self.notice,"warnings":self.warnings,"busy":self.activation.is_some()})
     }
 }
@@ -184,7 +184,7 @@ pub fn run() {
         set_language(settings.language);
         let (_core, updates) = crate::start_core(&std::env::current_exe().map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
-        let mut app = App { settings, path, rows: Vec::new(), updates, error: String::new(),
+        let mut app = App { settings, path, rows: Vec::new(), updates, loading: true, error: String::new(),
             warnings: Vec::new(), notice: String::new(), preview: None, activation: None,
             response: CString::default() };
         unsafe { waid_app_run(&mut app as *mut App as *mut c_void, callback); }
@@ -213,7 +213,7 @@ mod tests {
         let mut app = App { settings: Settings::default(), path: dir.join("settings.json"),
             rows: vec![Row { id:"one".into(), session_id:"session-one".into(), agent_id:"codex".into(),
                 task:"find me".into(), request_marker:"r2:first".into(), ..Row::default() }],
-            updates: Updates::default(), error:String::new(), warnings:vec![], notice:String::new(),
+            updates: Updates::default(), loading:true, error:String::new(), warnings:vec![], notice:String::new(),
             preview:None, activation:None, response:CString::default() };
         app.action(&json!({"action":"language","value":"en"})).unwrap();
         assert_eq!(app.view()["language"], "en");
@@ -250,7 +250,13 @@ mod tests {
         assert!(Settings::read(&app.path).unwrap().closed.is_empty());
         crate::publish_update(&app.updates, Err("collector failure".into())); app.poll();
         assert_eq!(app.rows.len(), 1); assert_eq!(app.error, "collector failure");
+        assert!(!app.loading);
+        assert_eq!(app.view()["empty_message"], ui::empty_message(false, 1, true));
         app.path = dir.clone(); // Saving over a directory must fail and roll back.
+        app.action(&json!({"action":"preview","value":ui::DEFAULT})).unwrap();
+        assert!(app.action(&json!({"action":"template","value":ui::DEFAULT})).is_err());
+        assert_eq!(app.preview.as_deref(), Some(ui::DEFAULT));
+        assert_eq!(app.settings.template, ui::NIGHT);
         assert!(app.action(&json!({"action":"language","value":"en"})).is_err());
         assert_eq!(app.settings.language, Language::Korean);
         assert!(app.action(&json!({"action":"search","value":"lost"})).is_err());

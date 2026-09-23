@@ -26,6 +26,34 @@
 ```
 
 ## 프롬프트별 작업 기록
+
+### 2026-09-23 14:03 +09:00 — 전수 점검 및 누적 변경 커밋·푸시
+
+- 요청: 프로젝트 전수 점검으로 수정한 변경 사항을 커밋하고 원격 저장소에 푸시하기.
+- 상태: 부분 완료 — 변경 목록과 원격 상태 확인 완료, 커밋·원격 반영 진행 중.
+- 변경·이유: 전수 점검 코드·검사·빌드 개선과 기존 미커밋 사용자 가이드·스크린샷·라이선스 고지를 함께 버전 관리한다. 원격에 먼저 추가된 Mac 테스트 인계 문서도 보존해 통합한다. 이번 요청에서 제품 코드는 추가 수정하지 않는다.
+- 관련 파일: [전수 점검 기록](VALIDATION.md#전수-점검과-공통-경로-정리--2026-09-23), [README.md](README.md), [사용자 가이드](docs/USER_GUIDE.md), [라이선스 고지](THIRD_PARTY_NOTICES.txt), [HISTORY.md](HISTORY.md). 원격 선행 커밋은 `b10a240`이다.
+- 검증: `git fetch origin`으로 원격이 1개 커밋 앞선 것을 확인했고 `git diff --check` 통과. 직전 요청의 147개 검사·release 빌드·패키지 검증 결과를 재사용하며 코드 변경이 없으므로 재실행하지 않는다. 원격 통합 후 변경 범위와 푸시 결과를 확인한다.
+- 남은 일: 커밋·푸시 완료와 로컬/원격 HEAD 일치 확인. 기존 Mac/Linux 실환경 미검증 범위는 유지한다.
+
+### 2026-09-23 09:05 +09:00 — 프로젝트 전수 점검과 오류·중복 경로 정리
+
+- 요청: 프로젝트 전반을 조사해 리팩토링하고 파편화된 구현과 오류를 수정하기.
+- 상태: 완료 — 전 영역 정적 조사·확인된 결함 수정과 Windows/코어 자동 검사 완료. Mac/Linux 실환경 검증은 별도 미검증으로 남긴다.
+- 변경·이유: 공용 JSON 입력 검증, JSON/SQLite 모델 추출·임시 사본, Cursor/worktree/Orca 수집 오류를 수정했다. CLI/HTML 수집과 키 목록, Windows/Mac 고정·숨김과 빈 화면 안내 및 라이선스 원문을 공통화했다. HTML 연결·갱신·HTTP 요청 경계, CLI 색상·터미널 출력, Windows 오류 안내와 Mac 저장 실패 미리보기를 보완했다. 패키지 버전·체크섬 검사를 연결하고 Linux/대시보드 CI와 구버전 문서 안내를 추가했다. 기존 미커밋 변경은 보존했으며 새 의존성은 없다. [D40](DECISIONS.md#d40--전수-점검의-공통화-범위-2026-09-23)에 공통화 범위를 기록했다.
+- 관련 파일: [코어](src/), [회귀 검사](tests/), [데스크톱](desktop/src/), [Windows 빌드](desktop/build.ps1), [빌드 리소스](desktop/build.rs), [Windows 패키징](desktop/package.ps1), [패키지 검사](desktop/test-package.ps1), [Mac 패키징](desktop/package-macos.sh), [CI](.github/workflows/check.yml), [README.md](README.md), [과거 README](waid-README.md), [과거 매니페스트](waid-MANIFESTO.md), [과거 결정](waid-DECISIONS.md), [DECISIONS.md](DECISIONS.md), [VALIDATION.md](VALIDATION.md), [HISTORY.md](HISTORY.md).
+- 검증: 최종 코어 102+CLI 7, Windows 37+단일 EXE 1로 총 147개 통과, 실패 0개, 환경 의존 4개 ignored. release 빌드·Node 대시보드·Windows 패키지 버전/체크섬·Mac 셸 문법·샘플 화면·문서 링크 338개 및 `git diff --check` 통과. 양쪽 Clippy는 종료 0이나 기존 스타일 경고가 남는다. 상세 결과와 확인 범위는 [전수 점검 기록](VALIDATION.md#전수-점검과-공통-경로-정리--2026-09-23)에 기록했다.
+- 남은 일: macOS/Linux 실제 실행, 다양한 DPI·테마·실제 에이전트/DB/복귀/알림 조합 검증. 큰 이벤트/UI 모듈 분리와 장기 캐시 한도는 측정과 후속 요구에 따라 진행할 범위로 기록했다. 커밋·푸시·배포는 수행하지 않았다.
+
+### 2026-09-21 13:38 +09:00 — 해커톤 지원서 문항 답변 작성
+
+- 요청: 현재 waid 프로젝트를 바탕으로 해커톤 지원 사유를 50~2,000자 분량으로 작성하기.
+- 상태: 완료 — 프로젝트 사실과 검증 범위를 반영한 제출용 한국어 답변을 작성했다.
+- 변경·이유: 제품 코드와 기능은 변경하지 않았다. 여러 Claude Code·Codex 세션을 한눈에 파악하기 어렵다는 문제, Claude Code와 GPT Codex를 활용한 Rust 코어·Windows 단일 EXE·CLI 개발, 로컬 로그 기반 상태 표시와 실제 테스트·배포 결과, 해커톤에서 발전시키려는 방향을 중심으로 답변을 재구성했다. 현재 대화나 작성 요청 자체는 지원 사유의 소재에서 제외했다.
+- 관련 파일: [HISTORY.md](HISTORY.md). 답변은 최종 응답으로 제공하며 별도 프로젝트 파일에는 저장하지 않았다.
+- 검증: README.md와 최신 HISTORY.md를 읽고 제품 기능·지원 에이전트·릴리스·검증 범위를 대조했다. 수정한 제출용 원고가 50~2,000자 범위에 들어가는지 확인했다. 제품 빌드·테스트는 문서 작성 요청이므로 실행하지 않았다.
+- 남은 일: 없음.
+
 ### 2026-09-20 15:24 +09:00 — Mac 테스트 인계 문서 커밋·푸시
 
 - 요청: 앞서 작성한 Mac 실기 테스트 인계 문서를 커밋하고 원격에 푸시하기.
@@ -44,6 +72,96 @@
 - 검증: README·최근 기록·Mac 안내·실제 패키징 스크립트·CI 명령과 절차를 대조했다. 문서 로컬 링크 및 `git diff --check` 확인. 문서만 변경했으며 Windows 환경에서 Mac 빌드·테스트·실기를 실행하지 않았다. 기존 검증 근거는 [VALIDATION.md](VALIDATION.md)를 참고한다.
 - 남은 일: 문서 커밋·원격 반영 후 Mac 협업자가 실제 테스트 결과 제출. 이번 요청에서는 커밋·푸시·타인에게 메시지 전송을 수행하지 않았다.
 
+### 2026-09-17 13:05 +09:00 — README 첫 화면 재작성과 전체 안내의 docs 이동
+
+- 요청: 전체 검토(star 1,000개 목표 가능성 평가) 후 README.md·README.ko.md를 검토 결과대로 갱신하기.
+- 상태: 완료 — 문서·스크린샷만 변경했으며 커밋·푸시·릴리스·저장소 설정 변경은 하지 않았다.
+- 변경·이유: 기존 README는 5,600단어에 스크린샷이 없고 면책 문구가 첫 화면을 차지해 처음 방문자가 제품을 파악하기 어려웠다. 기존 README 전문을 [docs/USER_GUIDE.md](docs/USER_GUIDE.md)·[docs/USER_GUIDE.ko.md](docs/USER_GUIDE.ko.md)로 옮기고(제목·상대 링크만 조정, 내용 보존), README는 한 줄 설명·스크린샷·다운로드·지원 에이전트 표·개인정보·로드맵·CLI·빌드·문서 목록으로 줄였다. 공개 v0.2.0 EXE가 한국어 UI인 점과 Authenticode 미서명은 설치 절에 그대로 명시했다. 다른 문서의 README 앵커 링크 6개는 사용자 가이드 앵커로 바꿨다. 영어 스크린샷은 `waid-desktop-licenses.exe --demo`를 `WAID_DATA_DIR`의 임시 설정(language=en)으로 띄워 PrintWindow로 캡처했고(`assets/screenshots/*-en.png`), 한국어 화면은 기존 샘플 캡처를 재사용했다(`sessions-ko.png`).
+- 관련 파일: [README.md](README.md), [README.ko.md](README.ko.md), [docs/USER_GUIDE.md](docs/USER_GUIDE.md), [docs/USER_GUIDE.ko.md](docs/USER_GUIDE.ko.md), `assets/screenshots/`, [DECISIONS.md](DECISIONS.md), [MANIFESTO.md](MANIFESTO.md), [PRODUCT.md](PRODUCT.md), [SIGNING.md](SIGNING.md).
+- 검증: `cargo test --release --locked` 코어 통과(CLI 7개 포함). 데스크톱 테스트는 로컬에 rc.exe가 없어 빌드 단계에서 실패해 미실행이다(프로젝트 결함이 아닌 로컬 툴체인 문제). README·README.ko·사용자 가이드·SIGNING·PRODUCT·MANIFESTO·DECISIONS의 로컬 링크와 앵커를 스크립트로 전수 확인해 누락 0건. `.tools/check-release-docs.py`는 태그 고정 링크(`blob/v0.2.0/README.md#…`)를 작업 트리 기준으로 검사해 실패했으므로, 태그가 이미 존재하면 `git show <tag>:<path>`로 그 태그의 내용을 기준으로 검사하도록 수정했다(.tools는 gitignore 대상이라 커밋에 포함되지 않는다). 그 과정에서 드러난 기존 HISTORY 항목의 잘못된 경로 `desktop/assets/waid-mascot.png`를 `assets/waid-mascot.png`로 고쳤다. 수정 후 검사 통과(7개 파일, 338개 링크), `git diff --check` 통과. 데모 스크린샷은 캡처 후 육안 확인했고 데모 프로세스는 종료했다.
+- 남은 일: 영어 UI가 포함된 새 릴리스(v0.2.1) 배포, GitHub 저장소 설명·토픽 입력, CONTRIBUTING.md 추가, 루트의 waid-*.md 구버전 문서 정리, Linux CI 추가. 검토에서 나온 코드 항목(JSON 파서 재귀 깊이 제한, transcript.rs 이벤트 매칭 분리, 코어 주석 영문화)은 별도 작업이다.
+
+### 2026-09-15 15:54 +09:00 — 모두의 창업 BM 요건 확인과 수익화 가설 구상
+
+- 요청: BM이 없으면 지원할 수 없는지 공식 요건부터 확인하고, 필요하다면 waid에 맞는 수익모델을 구상하기.
+- 상태: 완료 — 2차 공고와 멘토기관 신청 안내서 대조, 초기 BM 후보 비교 완료. 실제 접수·고객 검증은 미실행이다.
+- 변경·이유: 제품·사업정책 변경 없음. 공고의 신청 자격·제외 조건에 완성되거나 매출로 검증된 BM 보유 요건은 없지만, 2차 신청 가이드의 필수 Q3 아래 Q3-2에 수익 창출 계획이 있고 Q4-1에 사업화 계획이 있음을 확인했다. 따라서 수익모델 미확정과 계획 미작성은 다르게 판단해야 한다고 정정했다. 현재 무료 기능을 유지하는 안을 전제로 waidaway 유료 확장, 기업 맞춤 연동·도입 및 유지보수, 팀용 상태 공유를 미검증 후보로 비교하고 기존 로드맵과 가까운 개인용 확장 가설을 우선 검증하는 방향을 제안했다. 기능·가격·매출·전환율을 확정하거나 고객 수요가 입증됐다고 주장하지 않았다.
+- 관련 파일: [HISTORY.md](HISTORY.md). 제품 근거는 [README.md](README.md), [PRODUCT.md](PRODUCT.md), [LAUNCH.md](LAUNCH.md). 외부 근거는 [중기부 2차 공고](https://www.mss.go.kr/site/smba/ex/bbs/View.do?bcIdx=1070586&cbIdx=310&parentSeq=1070586), [경희대 2차 모집·신청 안내서](https://com.khu.ac.kr/startup_kor/user/bbs/BMSR00052/view.do?boardId=549749&menuNo=15200048), [Bruno 요금·지원 구성](https://www.usebruno.com/pricing)이다.
+- 검증: 기업마당 공식 HWPX 원문의 신청 자격·제외 조건·제출 방법·단계별 평가·후속 창업 요건을 읽었다. 경희대 신청 가이드 3쪽 및 2기 분석 자료 26·28·40쪽을 로컬 렌더링해 수익화 문항, 기관 평가와 단계별 고도화 안내를 시각 확인했다. 공식 플랫폼은 본문 조회 실패·HTTP 429로 실제 로그인 후 공란 제출 검증을 확인하지 못했으며, 필수 항목의 해석은 멘토기관 안내서 기준이다. Bruno 공식 가격 페이지로 무료 OSS와 유료 확장·지원 조합의 사례를 확인했다. `git diff --check -- HISTORY.md` 통과. 제품 코드 변경이 없어 빌드·제품 테스트는 미실행이다.
+- 남은 일: 실제 신청 시 최신 입력 화면과 선택 멘토기관 지표 확인, 선택할 BM 가설·검증 계획 구체화, 대상 고객의 반복 사용·구매 의사 검증. 외부 연락·신청·결제·제품 확장은 수행하지 않았다.
+
+### 2026-09-15 14:21 +09:00 — waid 수익모델 부재와 창업 지원 추천 재검토
+
+- 요청: 현재 프로젝트에 수익모델이 없다는 지적을 반영해 사업성과 모두의 창업 지원 추천을 재검토하기.
+- 상태: 완료 — 기존 권고의 근거 부족을 인정하고 사업화 판단을 정정했다.
+- 변경·이유: 제품·사업계획 변경 없음. 현재 문서에 유료 제공 가치·구매자·가격 모델이 정의되지 않았고 초기 홍보 목표도 사용·재사용 검증 단계임을 확인했다. 작동하는 제품과 신청 자격만으로 사업화 지원을 적극 권한 판단을 수정하고, 팀 요금제 등 미검증 확장안을 수익모델로 단정하지 않았다. 영구적인 수익화 불가능을 증명한 것은 아니며 현재의 구매 근거 부족으로 한정했다.
+- 관련 파일: [HISTORY.md](HISTORY.md). 검토 근거는 [README.md](README.md), [PRODUCT.md](PRODUCT.md), [LAUNCH.md](LAUNCH.md)와 직전 공고 조사 결과다.
+- 검증: 최근 이력과 기존 README 검토 결과를 확인하고 README·PRODUCT·LAUNCH에서 수익·유료·가격·사업모델 관련 문구를 검색했다. `git diff --check -- HISTORY.md` 통과. 고객 인터뷰·판매 실험·시장 경쟁 조사·제품 테스트는 수행하지 않았다.
+- 남은 일: 실제 사업화를 추진하려면 반복 사용과 구체적인 구매 의사를 확인해야 한다. 이번 답변에서 제품 확장·유료화·신청을 실행하지 않았다.
+
+### 2026-09-15 14:20 +09:00 — 모두의 창업 2차 지원 적합성 검토
+
+- 요청: 모두의 창업 프로젝트 지원에 대한 의견을 현재 waid의 준비 상태와 연결해 검토하고, 후속 확인 답변을 반영해 지원 경로를 설명하기.
+- 상태: 완료 — 최신 공고와 제품 문서를 대조해 조건부 지원 권고를 정리했다. 개인 신청 자격은 미확정이다.
+- 변경·이유: 제품·신청서 변경 없음. 작동하는 Windows 제품과 여러 코딩 에이전트의 세션 통합·로컬 처리를 강점으로, 유료 고객·반복 사용·차별성 검증을 보완점으로 판단했다. 일반/기술트랙을 제안하고 2차 마감(2026-09-17 16:00), 공고일 기준 예비창업자 또는 업력 7년 이내 이종창업 희망자 조건, 단계별 선발 구조를 확인했다. 초기 확인 질문의 3년 구분은 1차 기준이므로 2차 기준으로 정정 안내했다.
+- 관련 파일: [HISTORY.md](HISTORY.md). 제품 근거는 [README.md](README.md)와 최근 작업 기록이며, [중기부 2차 공고](https://www.mss.go.kr/site/smba/ex/bbs/View.do?bcIdx=1070586&cbIdx=310&parentSeq=1070586)와 [기업마당 공고·첨부](https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=PBLN_000000000125611)를 대조했다.
+- 검증: 중기부 공고·추진계획 및 기업마당의 공식 HWPX 첨부 원문을 확인했다. PDF 자동 열람과 로컬 PDF 추출은 실패했으나 표준 라이브러리로 HWPX 본문을 읽어 마감 시각·신청 자격·후속 사업자등록 조건을 확인했다. `git diff --check -- HISTORY.md` 통과. 이력 문서만 변경해 빌드·제품 테스트는 미실행이다.
+- 추가 검토: 예비창업자 경로는 현재 상태뿐 아니라 공고일인 2026-08-20 당시 사업자등록 유무를 기준으로 판단한다는 점을 설명했다. 기존 공고 조사 근거를 재사용했으며 최종 자격 충족을 단정하지 않았다.
+- 남은 일: 실제 지원 시 공고일 기준 예비창업자 요건·중복수혜 등 자격과 참여 일정을 확인하고, 고객 근거·수익모델 가설·데모를 준비해야 한다. 신청·외부 전송은 수행하지 않았다.
+
+### 2026-09-15 14:16 +09:00 — 장염 대처 프로그램 초기 구상
+
+- 요청: 장염 대처 프로그램을 만든다면 어떤 방향과 기능으로 시작할지 제안하기.
+- 상태: 완료 — 초기 제품 구상 제안. 구현은 수행하지 않았다.
+- 변경·이유: 제품 코드 변경 없음. 성인용 모바일 웹에서 위험 신호 확인, 수분 보충 안내, 간단한 증상 기록, 진료용 요약을 제공하는 최소 범위를 제안했다. 의료 안내는 공개 지침과 의료진 검토를 바탕으로 정하고 기록은 기기에 저장하는 방향이다.
+- 관련 파일: [HISTORY.md](HISTORY.md). 기존 프로젝트 맥락은 [README.md](README.md)와 최근 작업 기록을 확인했다.
+- 검증: NIDDK의 바이러스성 위장염 증상·진료 필요 신호 및 치료 안내를 조회했고 `git diff --check -- HISTORY.md`를 통과했다. 제안 단계이므로 빌드·앱 테스트·임상 검증은 수행하지 않았다.
+- 남은 일: 실제 개발 시 대상 사용자·문진 기준 확정, 의료진의 안내 문구 검토, 화면 구현과 위험 신호 분기 검증이 필요하다.
+
+### 2026-09-14 18:48 +09:00 — 한국어 README 현행화
+
+- 요청: 한국어 README도 최신 기능과 안내로 갱신됐는지 확인하고 현행화하기.
+- 상태: 완료 — 한국어 문서 동기화·문서 검사 완료.
+- 변경·이유: 앞선 작업에서는 저장소 지침에 따라 한국어 README를 읽지 않았음을 알리고, 이번 명시 요청으로 읽기·수정 범위를 적용했다. 영문 문서의 한국어/영어 전환, 트레이·답변 알림, SSH 화면 관찰, 제거·라이선스·서명 준비 안내와 실제 공개 v0.2.0의 차이를 반영했다. 과거 공개 CI 결과의 날짜·검증 범위를 양쪽 문서에서 명확히 했다.
+- 관련 파일: [README.ko.md](README.ko.md), [README.md](README.md), [검증 기록](VALIDATION.md#라이선스-고지와-한국어-readme-현행화--2026-09-14), [HISTORY.md](HISTORY.md).
+- 검증: 한국어 문서의 로컬 링크·이미지 38개, 앵커·UTF-8·코드 펜스와 `git diff --check` 통과. 제품 검사는 함께 진행한 라이선스 고지 요청의 기록과 구분한다.
+- 남은 일: 이번 문서 현행화에는 없음. 문서 반영이 새 릴리스·실제 서명·Mac 최신 실기 검증을 대신하지 않는다. 다른 요청의 변경과 기록을 보존했으며 이번 요청에서 커밋·푸시·게시하지 않았다.
+
+### 2026-09-14 18:48 +09:00 — EXE 라이선스 고지와 타사 로고 재확인
+
+- 요청: 앱에 라이선스 고지를 추가하고 실제 타사 로고 포함 여부를 확인하기.
+- 상태: 완료 — Windows 고지 구현·단일 EXE 빌드·출력 검사와 로고 사용 경로 확인 완료.
+- 변경·이유: 프로젝트 MIT·의존성/표준 라이브러리 고지·폰트 OFL을 EXE에 내장하고 기존 트레이 메뉴와 `--licenses`로 제공했다. 별도 다운로드·동반 파일이 필요하지 않으며 새 의존성·새 메뉴 체계를 추가하지 않았다. 실제 내장된 OpenAI·Claude·Orca 로고가 카드/목록의 에이전트·호스트 표시에 쓰임을 확인했다. 구조와 갱신 제약은 [D39](DECISIONS.md#d39--단일-exe-라이선스-고지-2026-09-14)에 기록했다.
+- 관련 파일: [고지 원문](THIRD_PARTY_NOTICES.txt), [고지 내장·CLI](desktop/src/main.rs), [Windows 메뉴](desktop/src/native.rs), [단일 EXE 검사](desktop/tests/standalone.rs), [README](README.md), [서명 준비](SIGNING.md), [설계](DECISIONS.md), [검증](VALIDATION.md#라이선스-고지와-한국어-readme-현행화--2026-09-14), [새 EXE](target/release/waid-desktop-licenses.exe), [HISTORY.md](HISTORY.md).
+- 검증: 라이선스 전문 24개·파일별 주석 18개 원문 대조. desktop 35개·단일 EXE 1개 통과, 환경 의존 4개 ignored. 최종 고지 문구로 단일 EXE 검사 1개 재통과·release 빌드 성공·전달본 해시 일치·`git diff --check` 통과. 본문 갱신에 대응해 기존 통합 검사를 보강했으며 GUI에서 텍스트 앱을 여는 물리 클릭과 Mac 빌드는 미검증이다. 정확한 명령·범위는 검증 기록을 참고한다.
+- 남은 일: 새 EXE 적용과 공개 릴리스 반영. 실제 서명·평판·타사 로고의 이용 조건 확인은 별도이며 이번 고지가 이를 해결했다고 주장하지 않는다. Rust/의존성 변경 시 고지도 갱신해야 한다. 기존 사용자 앱·설정·이전 EXE·다른 요청의 변경을 보존했고 로고 수정·서명·커밋·푸시·릴리스 게시를 하지 않았다.
+
+### 2026-09-14 18:47 +09:00 — humanizer 적용 GeekNews·Reddit 홍보 템플릿
+
+- 요청: humanizer 지침을 적용해 GeekNews와 Reddit에 사용할 waid 홍보 템플릿 작성.
+- 상태: 완료 — 한국어·영어 원고 작성과 문서 검증 완료. 실제 게시는 수행하지 않았다.
+- 변경·이유: 기존 LAUNCH.md를 재사용해 GeekNews 제목·링크·한국어 본문과 Reddit 제목·영어 본문을 정리했다. humanizer 3.0.0 원문을 읽고 과장·장식·반복과 확인되지 않은 개인 경험을 덜어냈으며, 제작자 소개와 구체적인 피드백 요청을 담았다. 공개 v0.2.0의 한국어 UI와 최신 소스의 언어 전환·트레이 요약·알림을 구분하고, 로그 기반 상태·연동별 제한·Mac 개발 단계·Windows 서명 제한을 본문에 반영했다. 동시 작성된 홍보 계획이 파일 교체 과정에서 빠진 것을 확인해 기록된 패치에서 복원하고 계획 본문의 전체 보존을 검사했다. 스킬 설치나 제품 코드 변경은 없다.
+- 관련 파일: [홍보 계획·템플릿](LAUNCH.md), [HISTORY.md](HISTORY.md). 사실 대조는 [README](README.md)와 [v0.2.0 안내](releases/v0.2.0.md)를 사용했다. 제품의 기존 미검증 범위는 [VALIDATION.md](VALIDATION.md)를 참고한다.
+- 검증: humanizer 원문·공개 GitHub 릴리스·Show GN 운영자 안내·Reddit 공식 스팸 안내와 원고를 대조했다. Markdown 링크의 URL 문법 또는 로컬 대상 존재 검사, 두 원고의 긴 대시·장식용 굵은 글씨 검사, `git diff --check -- LAUNCH.md HISTORY.md` 통과. 문서만 수정해 빌드·앱 실행·회귀 테스트는 수행하지 않았다. 특정 subreddit의 게시 허용 여부는 미확인이다.
+- 남은 일: 템플릿 작성에는 없음. 실제 게시 시 커뮤니티 규칙·flair와 배포 버전을 확인하고, 영문 화면을 첨부하면 소스 빌드 화면임을 표시한다. 다른 요청의 문서 변경은 보존했으며 커밋·푸시·배포·게시하지 않았다.
+
+### 2026-09-14 18:41 +09:00 — waid 초기 홍보 계획 수립
+
+- 요청: 프로젝트 성격과 현재 준비 상태에 맞는 홍보 계획 수립.
+- 상태: 완료 — 대상·메시지·채널·4주 일정·측정 기준을 문서화했다. 실제 배포·촬영·모집·게시는 미실행.
+- 변경·이유: 기존 LAUNCH.md의 소개 초안을 보존하고 Windows의 Claude Code·Codex 다중 세션 사용자를 대상으로 한 초기 계획을 추가했다. 유료 홍보비 0원·주 4~6시간을 가정하고 사용 확인 10명·7일 뒤 재사용 확인 5명을 제안 목표로 구분했다. 공개 EXE와 새 기능의 차이, 실제 Windows 실행 차단을 반영해 실행 확인·소규모 테스트·Show GN·개선·Reddit 순서로 구성했다. 채널 규칙, 30초 데모, 개인정보 없는 피드백과 다운로드/사용자 수 구분도 포함했다. 제품 코드·설정 변경 없음.
+- 관련 파일: [홍보 계획·소개 초안](LAUNCH.md), [HISTORY.md). 현재 제품 범위와 미완료 검증은 [README](README.md), [VALIDATION](VALIDATION.md), [SIGNING](SIGNING.md)을 참조한다.
+- 검증: README·최근 HISTORY·기존 소개 초안·제품 범위·릴리스 설명 대조. 공개 GitHub API로 최신 v0.2.0 확인, GeekNews·Reddit·HN 공식 지침 조회. Reddit 개별 규칙 본문은 조회되지 않아 게시 허용을 확정하지 않고 게시 전 확인 항목으로 남겼다. LAUNCH의 로컬 링크 3개 존재 검사와 `git diff --check` 통과. 문서 변경만 수행해 빌드·제품 테스트는 미실행이며 목표 달성·영상 완성·실사용 효과를 검증한 것은 아니다.
+- 남은 일: 계획 수립에는 없음. 실행하려면 소개 내용과 일치하는 새 배포본의 다운로드·실행 확인, 데모 제작, 테스트 모집·채널별 게시·사용 결과 수집이 필요하다. 다른 요청에서 진행 중인 수정사항을 보존했다.
+
+### 2026-09-14 18:14 +09:00 — SignPath 기본 여섯 조건 충족 여부 점검
+
+- 요청: SignPath의 악성코드 배제·전체 OSS 라이선스·독점 구성요소 배제·유지보수·기존 배포·기능 문서화 조건에 waid가 부합하는지 확인.
+- 상태: 완료 — 조건 대조와 미확인/보완 항목 식별 완료. 모든 조건 충족이나 인증서 승인 완료를 의미하지 않는다.
+- 변경·이유: 제품 코드·릴리스 변경 없음. 현재 Windows Cargo 의존성은 모두 MIT 선택이 가능하고 Pretendard는 OFL이지만, 실제 내장된 타사 로고의 OSS 근거와 배포용 저작권·라이선스 고지가 남아 있음을 신청 준비 목록에 추가했다. 유지보수·기존 EXE 릴리스·기능 문서화는 공개 근거로 확인했다. 기본 구독 조건과 무료 Foundation 인증서의 추가 평판 심사를 구분했다.
+- 관련 파일: [신청 준비 목록](SIGNING.md), [상세 대조](VALIDATION.md#signpath-기본-여섯-조건-대조--2026-09-14), [HISTORY.md](HISTORY.md). 조사 대상은 Cargo 메타데이터·로컬 라이선스·자산 출처·리소스 내장·패키징 및 공개 GitHub 이력이다.
+- 검증: Windows 대상 `cargo metadata --locked --offline` 성공, 실제 외부 crate 7개와 라이선스 전문 확인. 공개 v0.2.0 EXE/설명·최근 커밋·main 파일 목록, OSI와 SignPath 공식 조건 대조. `git diff --check` 통과. 악성코드 검사·공개 바이너리 전수 분석·빌드·앱 실행·회귀 테스트는 수행하지 않았으며 정적 코드 점검을 안전 인증으로 주장하지 않는다.
+- 남은 일: OpenAI·Claude·Orca 내장 로고의 조건 확인 또는 기존 일반 기호·이름으로 대체, 자체 그림 권리 범위 확인, waid·의존성·도구체인 고지의 배포 반영 및 공개 문서 반영. 이후 실제 신청·추가 심사·서명·Windows 실행 검증이 필요하다. 타사 로고를 임의 변경하거나 외부 신청·업로드·커밋·푸시하지 않았다.
 ### 2026-09-14 18:13 +09:00 — 누적 변경 커밋·푸시
 
 - 요청: 현재 변경 사항을 커밋하고 원격 저장소에 푸시하기.
@@ -184,7 +302,7 @@
 - 요청: PowerShell에서 SSH로 접속해 실행한 코딩 에이전트가 waid에 표시되는지 확인.
 - 상태: 완료 — 현재 문서·수집 코드 기준 지원 범위 확인.
 - 변경·이유: 제품 코드·설정 변경 없음. 일반 PowerShell SSH는 원격 프로세스·로그를 자동 수집하지 않으므로 기본적으로 표시되지 않는다. Orca SSH는 로컬에 미러링된 유효한 v2 훅을 통해 Codex·Claude 세션을 수집하는 별도 경로임을 확인했다.
-- 관련 파일: [HISTORY.md](HISTORY.md). 조사 근거: [사용 안내](README.md#troubleshooting-missing-sessions), [세션 수집](src/session.rs), [Windows 프로세스 수집](src/proc/windows.rs), [Orca 훅 수집](src/orca.rs), [로그 경로](src/adapters.rs).
+- 관련 파일: [HISTORY.md](HISTORY.md). 조사 근거: [사용 안내](docs/USER_GUIDE.md#troubleshooting-missing-sessions), [세션 수집](src/session.rs), [Windows 프로세스 수집](src/proc/windows.rs), [Orca 훅 수집](src/orca.rs), [로그 경로](src/adapters.rs).
 - 검증: README·최신 기록과 로컬 로그/프로세스 및 Orca 훅 수집 경로를 대조했다. `git diff --check -- HISTORY.md` 통과. 코드 변경이 없어 빌드·테스트는 실행하지 않았으며 사용자의 실제 PowerShell SSH 세션은 조사하지 않았다.
 - 남은 일: 지원 범위 답변에는 없음. 일반 SSH 세션 표시에는 별도 원격 로그 전달·수집 연동이 필요하며 이번 요청에서 구현하지 않았다.
 
@@ -220,7 +338,7 @@
 - 요청: 사용자가 수정한 물음표 로고의 크기를 확인하고 필요한 변환 후 앱 로고·아이콘·설정 등 사용 위치에 적용하기.
 - 상태: 완료 — 필요한 크기 변환·참조 적용·Windows 테스트·새 EXE 빌드 완료. 2026-09-10 08:47 +09:00 검증 기록 갱신.
 - 변경·이유: 새 앱 타일과 마스코트는 1254px 정사각형으로 원본을 보존했다. 기존 변환 스크립트로 이전 그림이 남아 있던 256px 앱 PNG와 누락된 9개 크기의 ICO를 갱신했다. 화면 확인에서 큰 마스코트를 Windows 아이콘으로 바로 로딩할 때 거친 외곽선이 보여, 기존 bicubic 축소 코드를 재사용해 상단용 96px 투명 PNG를 만들고 참조를 바꿨다. 앱의 32 논리 픽셀 표시 크기는 유지했다. README·Mac 패키징은 이미 교체된 원본 경로를 참조한다. 자산 안내의 이전 치수와 사용 위치를 바로잡았다. 이전 요청의 소스 수정과 사용자 old/ 보관본은 유지했다.
-- 관련 파일: [아이콘 변환](assets/build-icons.ps1), [Windows 이미지 로딩](desktop/src/visual.rs), [상단 마스코트](desktop/assets/waid-mascot.png), [Windows 앱 이미지](desktop/assets/waid.png), [Windows 아이콘](assets/waid.ico), [원본 크기·적용 안내](assets/README.txt), [내장 자산 안내](desktop/assets/README.md), [검증 기록](VALIDATION.md), [HISTORY.md](HISTORY.md). 사용자 제공 원본은 assets/waid-*.png. 새 실행 파일은 [waid-desktop-question-logo.exe](desktop/target/context-label/release/waid-desktop-question-logo.exe).
+- 관련 파일: [아이콘 변환](assets/build-icons.ps1), [Windows 이미지 로딩](desktop/src/visual.rs), [상단 마스코트](assets/waid-mascot.png), [Windows 앱 이미지](desktop/assets/waid.png), [Windows 아이콘](assets/waid.ico), [원본 크기·적용 안내](assets/README.txt), [내장 자산 안내](desktop/assets/README.md), [검증 기록](VALIDATION.md), [HISTORY.md](HISTORY.md). 사용자 제공 원본은 assets/waid-*.png. 새 실행 파일은 [waid-desktop-question-logo.exe](desktop/target/context-label/release/waid-desktop-question-logo.exe).
 - 검증: Windows 데스크톱 30개 통과·환경 의존 3개 ignored, 96px 파생본 적용 후 네이티브 디코딩·창/설정 검사 재통과. PNG/ICO의 크기·투명도·구조와 최종 EXE의 아이콘 리소스 9개 일치, release 빌드·내장 라이선스 실행·`git diff --check` 통과. 초기 샘플 상단 물음표는 직접 확인했지만 최종 캡처는 다른 이미지 창에 가려진 한계가 있다. 상세 명령·범위는 [검증 기록](VALIDATION.md)에 남겼다.
 - 남은 일: 요청한 파일 적용은 없음. 실제 사용은 새 EXE 실행이 필요하다. 설치된 앱 갱신·아이콘 캐시, Mac 실행/패키징·공개 배포와 최종 화면 재확인은 미실행.
 

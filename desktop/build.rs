@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[path = "src/licenses.rs"]
+mod licenses;
 
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").unwrap() == "macos" {
@@ -15,11 +17,15 @@ fn build_macos() {
     let out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let resources = out.join("Resources.swift");
     let mut source = String::new();
-    for (name, path) in [("daylight", "templates/daylight.json"), ("midnight", "templates/midnight.json"), ("fontLicense", "assets/fonts/LICENSE.txt")] {
+    for (name, path) in [("daylight", "templates/daylight.json"), ("midnight", "templates/midnight.json")] {
         println!("cargo:rerun-if-changed={path}");
         let text = std::fs::read_to_string(path).unwrap();
         source.push_str(&format!("let {name} = ###\"\"\"\n{text}\n\"\"\"###\n"));
     }
+    for path in ["src/licenses.rs", "../LICENSE", "../THIRD_PARTY_NOTICES.txt", "assets/fonts/LICENSE.txt"] {
+        println!("cargo:rerun-if-changed={path}");
+    }
+    source.push_str(&format!("let licenses = ###\"\"\"\n{}\n\"\"\"###\n", licenses::LICENSES));
     std::fs::write(&resources, source).unwrap();
     let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap().as_str() {
         "aarch64" => "arm64", "x86_64" => "x86_64", other => panic!("unsupported Mac architecture: {other}"),

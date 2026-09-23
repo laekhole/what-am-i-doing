@@ -426,8 +426,8 @@ impl Window {
                 mv(id, 16 + i as i32 * (width + 6), 146 + extra, width, 32);
             }
             let top = if menu_open { 190 } else { 148 } + extra;
-            mv(LIST, 13, top, w - 26, h - top - 36);
-            mv(accordion::FEED, 13, top, w - 26, h - top - 36);
+            mv(LIST, 13, top, w - 26, h - top - 64);
+            mv(accordion::FEED, 13, top, w - 26, h - top - 64);
             self.layout_feed(hwnd);
             ShowWindow(self.get(LIST), if two_columns { SW_SHOWNA } else { SW_HIDE });
             self.fit_list();
@@ -450,7 +450,7 @@ impl Window {
         mv(ASSOCIATE, w - 256, 196 + extra, 88, 32);
         mv(EDITOR, w - 160, 196 + extra, 140, 32);
         let top = 244 + extra;
-        let bottom = h - 40;
+        let bottom = h - 64;
         if w >= 1000 {
             let left = (w * 56 / 100).max(450);
             mv(LIST, 20, top, left - 32, bottom - top);
@@ -1089,10 +1089,8 @@ impl Window {
                     } else {
                         &mut s.hidden
                     };
-                    if !set.remove(&row.id) {
-                        if set.len() < 1024 {
-                            set.insert(row.id);
-                        }
+                    if let Err(error) = ui::toggle_entry(set, &row.id) {
+                        *self.notice.borrow_mut() = error;
                     }
                     drop(s);
                     self.changed();
@@ -1573,13 +1571,7 @@ impl Window {
             ShowWindow(list, SW_HIDE);
             draw(
                 dc,
-                if self.loading.get() {
-                    tr("조금만 기다려 주세요.\nAI 친구들의 소식을 가져오고 있어요.", "Just a moment.\nLoading your AI sessions.")
-                } else if total == 0 {
-                    tr("아직 조용하네요.\nAI와 작업을 시작하면 여기에 모아드릴게요.", "Nothing here yet.\nStart working with an AI agent to see sessions here.")
-                } else {
-                    tr("찾는 세션이 없어요.\n검색어나 필터를 바꾸거나 전체 보기를 눌러보세요.", "No matching sessions.\nChange your search or filters, or choose Show all.")
-                },
+                ui::empty_message(self.loading.get(), total, !self.core_error.borrow().is_empty()),
                 RECT {
                     left: at.x + p(16),
                     right: at.x + rect.right - rect.left - p(16),
@@ -1595,10 +1587,7 @@ impl Window {
                 self.fit_list();
             }
         }
-        let collection_message = self.collection_message();
-        let message = if !collection_message.is_empty() {
-            collection_message
-        } else if !self.notice.borrow().is_empty() {
+        let message = if !self.notice.borrow().is_empty() {
             self.notice.borrow().clone()
         } else {
             if self.demo {
@@ -1609,6 +1598,20 @@ impl Window {
                 tr("2초마다 새 소식 · 카드를 눌러 대화 펼치기", "Updates every 2 seconds · Click a card to expand").into()
             }
         };
+        // Collection diagnostics must not hide a failed save or session-return notice.
+        draw(
+            dc,
+            &self.collection_message(),
+            RECT {
+                left: p(20),
+                top: r.bottom - p(58),
+                right: r.right - p(20),
+                bottom: r.bottom - p(34),
+            },
+            self.body.get(),
+            skin.muted,
+            DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER,
+        );
         draw(
             dc,
             &message,
@@ -1833,7 +1836,7 @@ unsafe fn tray_menu(s: &Window, hwnd: HWND) {
     }
     let sessions = s.append_tray_menu(menu);
     AppendMenuW(menu, MF_STRING, TRAY_OPEN, wide(tr("waid 열기", "Open waid")).as_ptr());
-    AppendMenuW(menu, MF_STRING, TRAY_LICENSE, wide(tr("폰트 라이선스", "Font license")).as_ptr());
+    AppendMenuW(menu, MF_STRING, TRAY_LICENSE, wide(tr("라이선스 및 고지", "Licenses and notices")).as_ptr());
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     s.append_languages(menu);
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
@@ -1856,15 +1859,14 @@ unsafe fn tray_menu(s: &Window, hwnd: HWND) {
         LANGUAGE_KOREAN | LANGUAGE_ENGLISH => s.command(hwnd, command as usize, 0),
         TRAY_LICENSE => {
             let result = (|| -> io::Result<()> {
-                let path = ui::data_file().with_file_name("FONT-LICENSE.txt");
-                std::fs::create_dir_all(path.parent().unwrap())?;
-                std::fs::write(&path, super::FONT_LICENSE)?;
+                let path = ui::data_file().with_file_name("LICENSES.txt");
+                ui::atomic_write(&path, super::LICENSES)?;
                 let file: Vec<u16> = {
                     use std::os::windows::ffi::OsStrExt;
                     path.as_os_str().encode_wide().chain(Some(0)).collect()
                 };
                 if ShellExecuteW(hwnd, wide("open").as_ptr(), file.as_ptr(), null(), null(), SW_SHOWNORMAL) as isize <= 32 {
-                    return Err(io::Error::other(tr("폰트 라이선스 파일을 열지 못했습니다.", "Could not open the font license file.")));
+                    return Err(io::Error::other(tr("라이선스 고지 파일을 열지 못했습니다.", "Could not open the license notices file.")));
                 }
                 Ok(())
             })();
@@ -2900,6 +2902,13 @@ mod tests {
             publish_update(&state.updates, Ok(Snapshot { rows: demo_rows(), ..Snapshot::default() }));
             state.tick(hwnd);
             assert_eq!(send(state.get(LIST), LB_GETCOUNT, 0, 0), 3);
+            state.settings.borrow_mut().pinned = (0..1024).map(|n| format!("limit-{n}")).collect();
+            let selected = state.selected().unwrap().id;
+            state.command(hwnd, PIN, 0);
+            assert!(!state.settings.borrow().pinned.contains(&selected));
+            assert!(state.notice.borrow().contains("1,024"));
+            state.settings.borrow_mut().pinned.clear();
+            state.notice.borrow_mut().clear();
             let mut list_bounds = RECT::default();
             GetClientRect(state.get(LIST), &mut list_bounds);
             let tile = |index| {

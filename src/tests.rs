@@ -51,6 +51,24 @@ fn rejects_malformed() {
     assert!(json::parse(r#"{"a":}"#).is_err());
     assert!(json::parse(r#"{"a":1"#).is_err());
     assert!(json::parse(r#"{"a":1} trailing"#).is_err());
+    for invalid in ["+1", "01", "-01", ".1", "1.", "1e", "1e+", "1e999",
+        "\"raw\nline\"", "\"raw\ttext\"", "\"\u{0}\"", r#""\ud800\u0041""#,
+        r#""\ud800""#, r#""\udc00""#, r#""\u+123""#] {
+        assert!(json::parse(invalid).is_err(), "accepted {invalid:?}");
+    }
+    for valid in ["0", "-0", "1.25", "-1.25e+2", "1E-2", "1e100", r#""\u0000\n\t""#] {
+        assert!(json::parse(valid).is_ok(), "rejected {valid:?}");
+    }
+}
+
+#[test]
+fn json_nesting_is_bounded_for_arrays_and_objects() {
+    for (open, close) in [("[", "]"), (r#"{"a":"#, "}")] {
+        let nested = |depth| format!("{}0{}", open.repeat(depth), close.repeat(depth));
+        assert!(json::parse(&nested(128)).is_ok());
+        assert!(json::parse(&nested(129)).is_err());
+        assert!(json::parse(&nested(10_000)).is_err());
+    }
 }
 
 #[test]
@@ -446,6 +464,19 @@ fn populated_default_template_keeps_all_five_fields() {
     assert!(english.contains("<html lang=\"en\">") && english.contains("Waiting"));
     assert!(english.contains("작업 &lt;검증&gt;") && !english.contains("작업 <검증>"));
     assert!(!english.contains("내 차례") && !english.contains("{{"));
+    let mut theme = theme::Theme::default();
+    theme.columns.retain(|column| column.key == "title");
+    theme.status_priority = vec!["error".into(), "waiting".into()];
+    let states = [State::Idle, State::Waiting, State::Error, State::Working, State::Waiting];
+    let sessions: Vec<_> = states.iter().enumerate().map(|(i, state)| {
+        let mut row = session.clone();
+        row.title = format!("row-{i}");
+        row.state = *state;
+        row
+    }).collect();
+    let table = render::table(&sessions, &theme, &render::Style { color: false });
+    assert_eq!(table.lines().skip(1).collect::<Vec<_>>(), ["row-2", "row-1", "row-4", "row-0", "row-3"]);
+    assert_eq!(sessions.iter().map(|s| s.state).collect::<Vec<_>>(), states);
     session.task.text = None;
     session.llm_id = None;
     session.llm_display = None;
@@ -567,6 +598,13 @@ fn builtin_table_is_intact_after_refactor() {
     assert!(adapters::by_name("cursor").unwrap().has_reader);
     assert!(adapters::by_name("cline").unwrap().has_reader);
     assert!(!adapters::queries("cursor").is_empty());
+    for query in adapters::queries("cursor") {
+        if query.sql.contains("composerHeaders") {
+            assert!(adapters::queries("cursor").iter().any(|fallback|
+                fallback.file == query.file && fallback.sql.contains("from cursorDiskKV where")),
+                "missing legacy schema fallback for {}", query.file.display());
+        }
+    }
     assert!(!adapters::json_source("cline").0.is_empty());
 }
 
@@ -1492,7 +1530,7 @@ fn json_file_becomes_one_session() {
     // 대표 요청은 첫 요청, 작업은 최근 요청이다 — JSONL 과 같은 규칙이다.
     assert_eq!(t.first_prompt.as_deref(), Some("첫 요청"));
     assert_eq!(t.current_prompt.as_deref(), Some("두 번째 요청"));
-    assert_eq!(t.model.as_deref(), Some("sonnet-5"));
+    assert_eq!(t.model.as_deref(), Some("claude-sonnet-5"));
     assert_eq!(t.cwd, Some(std::path::PathBuf::from("/work")));
     // 파일 이름이 고정된 형식은 상위 폴더가 세션 식별자다.
     assert_eq!(
@@ -1560,18 +1598,20 @@ fn json_model_uses_latest_event_metadata_not_tool_payloads() {
         r#"{"model":"root-old","messages":[
           {"role":"assistant","content":"old","model":"event-old"},
           {"role":"user","content":"task"},
-          {"role":"assistant","content":"done","model":"event-latest"},
+          {"role":"assistant","content":"done","model":"claude-sonnet-4-6-20260101"},
           {"type":"response_item","payload":{"type":"function_call_output","output":{"model":"tool-fake"}}}
         ]}"#,
     )
     .unwrap();
-    assert_eq!(
-        crate::transcript::read_json(&path, 1)
-            .unwrap()
-            .model
-            .as_deref(),
-        Some("event-latest")
-    );
+    let transcript = crate::transcript::read_json(&path, 1).unwrap();
+    assert_eq!(transcript.model.as_deref(), Some("claude-sonnet-4-6-20260101"));
+    let row = vec![("id".into(), "model-test".into()),
+        ("blob".into(), std::fs::read_to_string(&path).unwrap())];
+    let stored = crate::transcript::row_transcript(&path, &row, 1).unwrap();
+    assert_eq!(stored.model, transcript.model);
+    let session = crate::session::from_pair(None, crate::adapters::by_name("claude").unwrap(), &stored, 1);
+    assert_eq!(session.llm_id, transcript.model);
+    assert_eq!(session.llm_display.as_deref(), Some("sonnet-4.6"));
     let _ = std::fs::remove_file(path);
 }
 

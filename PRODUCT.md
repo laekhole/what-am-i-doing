@@ -1,6 +1,6 @@
 # 제품 범위와 진행 상태
 
-2026-09-09 버전 정의는 [README.md의 로드맵](README.md#version-roadmap)을 따릅니다. **v0.2.0은 Windows 사용 가능 단계, v0.3.0은 macOS 지원, v0.4.0은 Android·waidaway LAN, v0.5.0은 iOS·iPadOS, v1.0.0은 안정화 완료**입니다. 현재는 Windows의 핵심 세션 관리 경험을 Mac에 제공하기 위한 작업을 진행합니다. 아래 구현 결과는 Windows 기준이며 Mac UI·실기 검증 완료를 뜻하지 않습니다.
+2026-09-09 버전 정의는 [README.md의 로드맵](docs/USER_GUIDE.md#version-roadmap)을 따릅니다. **v0.2.0은 Windows 사용 가능 단계, v0.3.0은 macOS 지원, v0.4.0은 Android·waidaway LAN, v0.5.0은 iOS·iPadOS, v1.0.0은 안정화 완료**입니다. 현재는 Windows의 핵심 세션 관리 경험을 Mac에 제공하기 위한 작업을 진행합니다. 아래 구현 결과는 Windows 기준이며 Mac UI·실기 검증 완료를 뜻하지 않습니다.
 
 'waid에서 보지 않기'는 waid 기본 목록에서만 제외하며 원본 대화·로그·프로세스는 유지합니다. 전체 보기에서 제외한 세션을 확인하고 직접 되살릴 수 있으며, 해당 세션의 새 사용자 요청을 식별하면 자동 복귀합니다. 단순히 세션을 다시 여는 것만으로 복귀하지 않습니다.
 

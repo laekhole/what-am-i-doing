@@ -8,6 +8,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $file = Get-Item -LiteralPath (Join-Path $BinaryDirectory 'waid-desktop.exe')
 if ($file.PSIsContainer -or $file.Length -eq 0) { throw 'Missing desktop executable.' }
+$info = [Diagnostics.FileVersionInfo]::GetVersionInfo($file.FullName)
+if ($info.ProductName -cne 'waid' -or $info.ProductVersion -cne $Tag.Substring(1)) {
+    throw 'Release tag does not match the desktop executable version.'
+}
 $name = "waid-$Tag-windows-x64.exe"
 $exe = Join-Path $OutputDirectory $name
 $sums = Join-Path $OutputDirectory 'SHA256SUMS.txt'

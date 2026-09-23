@@ -8,6 +8,9 @@ output="${1:-desktop/target/macos-bundle}"
 if [[ -e "$output" ]]; then echo "Output already exists: $output" >&2; exit 1; fi
 export MACOSX_DEPLOYMENT_TARGET=13.0
 cargo build --manifest-path desktop/Cargo.toml --release --locked
+package_id="$(cargo pkgid --manifest-path desktop/Cargo.toml --locked)"
+version="${package_id##*@}"
+version="${version%%[-+]*}"
 app="$output/waid.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp desktop/target/release/waid-desktop "$app/Contents/MacOS/waid"
@@ -20,7 +23,7 @@ for size in 16 32 128 256 512; do
     sips -z "$doubled" "$doubled" assets/waid-app-icon.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/waid.icns"
-cat > "$app/Contents/Info.plist" <<'PLIST'
+cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -30,8 +33,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>waid</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>waid</string>
-<key>CFBundleShortVersionString</key><string>0.3.0</string>
-<key>CFBundleVersion</key><string>0.3.0</string>
+<key>CFBundleShortVersionString</key><string>$version</string>
+<key>CFBundleVersion</key><string>$version</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>

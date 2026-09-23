@@ -96,7 +96,7 @@
 
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--card-min)), 1fr));
     gap: var(--gap);
   }
 
@@ -294,25 +294,46 @@
     if (!window.EventSource) return;
 
     var es = new EventSource("/events");
-    es.onopen = function () { if (live) live.className = "on"; };
+    var refreshing = false, pending = false, retry;
+    es.onopen = refresh;
     es.onerror = function () { if (live) live.className = "off"; };
+    es.onmessage = refresh;
 
-    es.onmessage = function () {
+    function refresh() {
+      if (refreshing) { pending = true; return; }
+      refreshing = true;
       // 서버가 다시 렌더한 페이지를 받아 루트만 갈아끼운다.
       // 템플릿 로직이 서버 한 곳에만 있으므로 클라이언트에 중복이 없다.
       fetch("/" + location.search, { cache: "no-store" })
-        .then(function (r) { return r.text(); })
+        .then(function (r) {
+          if (!r.ok) throw new Error("Dashboard refresh failed");
+          return r.text();
+        })
         .then(function (html) {
           var next = new DOMParser()
             .parseFromString(html, "text/html")
             .querySelector("[data-waid-root]");
           var cur = document.querySelector("[data-waid-root]");
-          if (next && cur) cur.replaceChildren.apply(cur, next.childNodes);
+          if (!next || !cur) throw new Error("Dashboard root missing");
+          cur.replaceChildren.apply(cur, next.childNodes);
           live = document.getElementById("live");
-          if (live) live.className = "on";
+          if (live) live.className = es.readyState === 1 ? "on" : "off";
+          clearTimeout(retry);
+          retry = undefined;
         })
-        .catch(function () {});
-    };
+        .catch(function () {
+          if (live) live.className = "off";
+          // An unchanged snapshot produces no new SSE tick, so retry the failed fetch.
+          if (!retry) retry = setTimeout(function () {
+            retry = undefined;
+            if (es.readyState === 1) refresh();
+          }, 2000);
+        })
+        .finally(function () {
+          refreshing = false;
+          if (pending) { pending = false; refresh(); }
+        });
+    }
   })();
 </script>
 </body>

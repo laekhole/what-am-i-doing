@@ -1101,9 +1101,9 @@ fn request_marker_version(version: &str, parts: &[&str]) -> String {
 
 /// JSON 문서를 이벤트 목록으로 편다. 배열이면 그대로, 객체면 대화 배열을
 /// 찾고, 없으면 객체 하나짜리 목록이다. 그다음은 JSONL 과 같은 추출기를 쓴다.
-fn json_events(v: Json) -> Vec<Json> {
+fn json_events(v: &Json) -> &[Json] {
     if let Some(items) = v.as_array() {
-        return items.to_vec();
+        return items;
     }
     for key in [
         "messages",
@@ -1117,11 +1117,17 @@ fn json_events(v: Json) -> Vec<Json> {
     ] {
         if let Some(items) = v.get(key).and_then(Json::as_array) {
             if !items.is_empty() {
-                return items.to_vec();
+                return items;
             }
         }
     }
-    vec![v]
+    std::slice::from_ref(v)
+}
+
+fn document_model(doc: &Json, events: &[Json]) -> Option<String> {
+    let keys = &["model", "model_id", "modelName"];
+    events.iter().rev().find_map(|event| envelope_field(event, keys))
+        .or_else(|| envelope_field(doc, keys))
 }
 
 fn file_identity(path: &Path) -> Option<String> {
@@ -1195,20 +1201,10 @@ pub fn read_json(path: &Path, mtime: i64) -> Option<Transcript> {
             "folder",
         ])
         .and_then(|s| local_path(&s));
-    let document_model = ["model", "model_id", "modelName"]
-        .iter()
-        .find_map(|key| doc.get(key).and_then(Json::as_str))
-        .filter(|model| !model.is_empty())
-        .map(str::to_string);
     let stamp = time_value(&doc);
 
-    let events = json_events(doc);
-    let model = events
-        .iter()
-        .rev()
-        .find_map(|event| envelope_field(event, &["model", "model_id", "modelName"]))
-        .or(document_model)
-        .map(|model| normalize_model(&model));
+    let events = json_events(&doc);
+    let model = document_model(&doc, events);
     let requests: Vec<_> = events
         .iter()
         .filter_map(|event| first_user_text(event).map(|text| (event, text)))
@@ -1328,7 +1324,7 @@ pub(crate) fn row_transcript(
             .filter(|v| !v.trim().is_empty())
     };
 
-    let events = blob.clone().map(json_events).unwrap_or_default();
+    let events = blob.as_ref().map(json_events).unwrap_or_default();
     let requests: Vec<_> = events
         .iter()
         .filter_map(|event| first_user_text(event).map(|text| (event, text)))
@@ -1416,7 +1412,8 @@ pub(crate) fn row_transcript(
         inferred_time: last_event_at.is_none(),
         cwd: field("project", &["cwd", "workspaceDirectory", "folder"])
             .and_then(|p| local_path(&p)),
-        model: field("model", &["model", "model_id", "modelName"]).map(|m| normalize_model(&m)),
+        model: crate::sqlite::get(row, "model").map(str::to_string)
+            .or_else(|| blob.as_ref().and_then(|doc| document_model(doc, events))),
         event_state: None,
     })
 }

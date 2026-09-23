@@ -1,3 +1,5 @@
+> **Historical snapshot ? not current documentation.** See [DECISIONS.md](DECISIONS.md) for maintained documentation. This file preserves an earlier design; its support and implementation claims may be obsolete.
+
 # 결정 로그
 
 매니페스트가 "무엇을 만드는가"라면, 이 파일은 "왜 그렇게 정했는가"다.

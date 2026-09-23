@@ -220,21 +220,10 @@ pub fn run(args: impl Iterator<Item = String>) {
                 std::process::exit(1);
             }
         };
-        let agent = args.agent.clone();
-        let waiting_only = args.waiting_only;
-        let history = args.history;
-        let snap = std::sync::Arc::new(move || {
-            let now = time::now();
-            let mut s = session::collect_with_history(now, history);
-            if let Some(n) = &agent {
-                s.retain(|x| x.agent.name == n);
-            }
-            if waiting_only {
-                s.retain(|x| x.state == session::State::Waiting);
-            }
-            (s, now)
-        });
-        if let Err(e) = serve::serve(args.port, tpl, args.interval, snap) {
+        let port = args.port;
+        let interval = args.interval;
+        let snap = std::sync::Arc::new(move || snapshot(&args));
+        if let Err(e) = serve::serve(port, tpl, interval, snap) {
             eprintln!("waid: {e}");
             std::process::exit(1);
         }
@@ -278,38 +267,16 @@ pub fn run(args: impl Iterator<Item = String>) {
 /// 템플릿에서 쓸 수 있는 키. 문서를 따로 두면 코드와 어긋나므로
 /// 실제 컨텍스트를 만들어서 그대로 나열한다.
 fn print_keys() {
-    let now = time::now();
-    let sessions = session::collect(now);
-    let ctx = html::context(&sessions, now);
-
-    println!("{}", crate::trf!("전역 키 ({}개 세션 기준)\n", "Global keys ({} sessions)\n", sessions.len()));
-    let mut list: Vec<&String> = ctx.keys().filter(|k| *k != "sessions").collect();
-    list.sort();
-    for k in list {
-        println!("  {{{{{k}}}}}");
+    let ctx = html::key_context();
+    println!("{}", tr("전역 키\n", "Global keys\n"));
+    for key in ctx.keys().filter(|key| *key != "sessions") {
+        println!("  {{{{{key}}}}}");
     }
-
     println!("{}", tr("\n{{#each sessions}} 안에서 쓸 수 있는 키\n", "\nKeys inside {{#each sessions}}\n"));
-    let sample = html::context(&sessions, now);
-    if let Some(tmpl::Val::List(items)) = sample.get("sessions") {
-        if let Some(first) = items.first() {
-            let mut ks: Vec<&String> = first.keys().collect();
-            ks.sort();
-            for k in ks {
-                println!("  {{{{{k}}}}}");
-            }
-            return;
+    if let Some(tmpl::Val::List(items)) = ctx.get("sessions") {
+        for key in items[0].keys() {
+            println!("  {{{{{key}}}}}");
         }
-    }
-    // 세션이 하나도 없으면 빈 세션으로 형태만 보여준다.
-    for k in [
-        "id", "title", "agent.name", "agent.display", "llm.present", "llm.display",
-        "task.present", "task.text", "task.source", "task.inferred", "task.explicit",
-        "status.state", "status.label", "status.symbol", "status.since",
-        "status.waiting", "status.working", "status.idle", "status.done", "status.error",
-        "cwd", "branch", "branch.present", "pid", "alive",
-    ] {
-        println!("  {{{{{k}}}}}");
     }
 }
 
@@ -320,7 +287,7 @@ fn doctor() {
     let procfs = std::path::Path::new("/proc/self/cmdline").exists();
     println!(
         "{} {}", tr("프로세스 열거  ", "Processes     "),
-        if cfg!(windows) { tr("Windows Tool Help API (첫 조회부터 수집, cwd·인자 없음)", "Windows Tool Help API (collected on first scan; no cwd/arguments)") }
+        if cfg!(windows) { tr("Windows Tool Help API (첫 조회부터 수집, 지원 프로세스 인자 조회, cwd 없음)", "Windows Tool Help API (collected on first scan; arguments queried for supported processes, no cwd)") }
         else if procfs { tr("/proc (정확: cwd 확보 가능)", "/proc (cwd available)") } else { tr("ps 폴백 (cwd 없음)", "ps fallback (no cwd)") }
     );
 

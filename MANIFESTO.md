@@ -1,6 +1,6 @@
 # waid — 프로젝트 매니페스트 (개정 3판)
 
-> 현재 버전 정의는 [README.md의 로드맵](README.md#version-roadmap)이 우선합니다. v0.2.0은 Windows 사용 가능 단계, v0.3.0은 macOS, v0.4.0은 Android·waidaway LAN, v0.5.0은 iOS·iPadOS, v1.0.0은 안정화 완료입니다. 아래 과거 UI·스키마 수치는 당시 설계 기록이며 현재 기능을 제한하지 않습니다.
+> 현재 버전 정의는 [README.md의 로드맵](docs/USER_GUIDE.md#version-roadmap)이 우선합니다. v0.2.0은 Windows 사용 가능 단계, v0.3.0은 macOS, v0.4.0은 Android·waidaway LAN, v0.5.0은 iOS·iPadOS, v1.0.0은 안정화 완료입니다. 아래 과거 UI·스키마 수치는 당시 설계 기록이며 현재 기능을 제한하지 않습니다.
 
 > **what am I doing?**
 > 에이전트 다섯 개를 돌려놓고 "내가 지금 뭘 하고 있더라" 하는 그 순간을 위한 도구.
