@@ -110,7 +110,8 @@ fn entry(v: &Json, hooks: &Json, previous: Option<&Session>) -> Option<Session> 
     };
     Some(Session {
         context: crate::ContextUsage::default(),
-        legacy_id: crate::session::short_id(&[&id]),
+        hash: crate::session::source_hash(&[&id]),
+        short_id: String::new(),
         id,
         session_id: Some(session_id.into()),
         title: title.into(),
@@ -283,5 +284,34 @@ mod tests {
             &mut sessions
         ));
         assert_eq!(sessions.len(), 2);
+    }
+
+    #[test]
+    fn previous_observations_match_full_ids_even_when_display_ids_collide() {
+        let hooks = |session: &str, event: &str, stamp: i64| {
+            json::parse(&format!(r#"{{"version":2,"entries":{{"pane":{{
+                "source":"codex","connectionId":"ssh","paneKey":"tab:leaf","tabId":"tab",
+                "worktreeId":"repo::/app/api","launchTokenHash":"t","hookEventName":"{event}",
+                "evidenceObservedAt":{stamp},"providerSession":{{"key":"session_id","id":"{session}"}},
+                "payload":{{"prompt":"same request"}}
+            }}}},"authorityCommitments":{{"tab:leaf":{{"connectionId":"ssh","paneKey":"tab:leaf",
+                "tabId":"tab","worktreeId":"repo::/app/api","launchTokenHash":"t"}}}}}}"#)).unwrap()
+        };
+        let mut sessions = HashMap::new();
+        merge(&hooks("one", "UserPromptSubmit", 100_000), &mut sessions);
+        merge(&hooks("two", "UserPromptSubmit", 101_000), &mut sessions);
+        // Force the worst display collision onto the cached previous observations.
+        for (_, row) in sessions.values_mut() {
+            row.hash = 7;
+            row.short_id = "0000".into();
+        }
+        merge(&hooks("one", "Stop", 102_000), &mut sessions);
+        let row = |id: &str| &sessions.values().find(|(_, r)| r.session_id.as_deref() == Some(id)).unwrap().1;
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(row("one").state, State::Waiting);
+        // "one" continued its own request; "two" kept its own state and request.
+        assert_eq!(row("one").request_marker.as_deref(), Some("orca-request:100000:same request"));
+        assert_eq!(row("two").state, State::Working);
+        assert_eq!(row("two").request_marker.as_deref(), Some("orca-request:101000:same request"));
     }
 }

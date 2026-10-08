@@ -68,6 +68,8 @@ struct Row {
     agent_id: String,
     host: String,
     legacy_id: String,
+    /// Display-only; changes between snapshots. Keys use `id`.
+    short_id: String,
     logged_state: String,
     observed_since_launch: bool,
     request_marker: String,
@@ -139,6 +141,13 @@ impl Row {
         }
     }
     fn project(&self) -> &str {
+        // The core reports the display id it appended to a repeated title.
+        if !self.short_id.is_empty() {
+            return self.title.strip_suffix(self.short_id.as_str())
+                .and_then(|project| project.strip_suffix('·'))
+                .unwrap_or(&self.title);
+        }
+        // Schema 1 and rows saved before short_id: recognize the old 4–8 digit suffix.
         self.title
             .rsplit_once('·')
             .filter(|(_, suffix)| {
@@ -353,6 +362,7 @@ fn snapshot_rows(bytes: &[u8]) -> io::Result<Snapshot> {
             Row {
                 context: context_value(&s["context"]),
                 legacy_id: s["legacy_id"].as_str().unwrap_or("").to_string(),
+                short_id: s["short_id"].as_str().unwrap_or("").chars().take(40).collect(),
                 logged_state: String::new(),
                 observed_since_launch: false,
                 last_answer: field(&s["last_answer"], 4000),
@@ -535,6 +545,51 @@ mod tests {
         assert_eq!(row.project(), "project·release");
         row.title = "project·3383".into();
         assert_eq!(row.project(), "project·3383");
+    }
+
+    #[test]
+    fn project_labels_strip_exactly_the_reported_display_id() {
+        let mut row = Row { id: "session:5:codexA".into(), legacy_id: "adee487a".into(), ..Row::default() };
+        for short_id in ["a3f2", "adee487ad", "adee487adfe4900e-2"] {
+            row.short_id = short_id.into();
+            row.title = format!("what-am-i-doing·{short_id}");
+            assert_eq!(row.project(), "what-am-i-doing");
+        }
+        // Unrepeated titles carry no suffix: a look-alike name is left whole.
+        row.short_id = "a3f2".into();
+        for title in ["project·3383", "project·adee", "project"] {
+            row.title = title.into();
+            assert_eq!(row.project(), title);
+        }
+    }
+
+    #[test]
+    fn rows_with_colliding_display_ids_are_tracked_by_full_id() {
+        // Worst case for display: the same title, legacy id and display id.
+        let row = |id: &str, marker: &str, at| Row {
+            id: id.into(), legacy_id: "adee487a".into(), short_id: "adee487a".into(),
+            title: "same-project·adee487a".into(), request_marker: marker.into(), request_at: Some(at),
+            state: "waiting".into(), evidence: "transcript".into(), ..Row::default()
+        };
+        let mut activity = Activity { started_at: 100, requests: BTreeMap::new() };
+        for _ in 0..2 {
+            let mut rows = vec![row("session:a", "a1", 110), row("session:b", "b1", 90)];
+            activity.apply(&mut rows);
+            // Each row keeps its own request history across ticks.
+            assert_eq!((rows[0].state.as_str(), rows[1].state.as_str()), ("waiting", "unknown"));
+            assert_eq!(rows[1].evidence, "before_launch");
+        }
+        assert_eq!(activity.requests.len(), 2);
+        assert_eq!(activity.requests["session:a"].0, "a1");
+        assert_eq!(activity.requests["session:b"].0, "b1");
+
+        let rows = [row("session:a", "a1", 110), row("session:b", "b1", 110)];
+        let mut settings = ui::Settings::default();
+        settings.pinned.insert(rows[0].id.clone());
+        settings.close(&rows[1]).unwrap();
+        let shown = settings.visible(&rows);
+        assert_eq!(shown.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["session:a"]);
+        assert_eq!(shown[0].project(), "same-project");
     }
 
     #[test]

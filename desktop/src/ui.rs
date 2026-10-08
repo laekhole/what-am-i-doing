@@ -684,6 +684,21 @@ mod tests {
     }
 
     #[test]
+    fn saved_rows_keep_their_display_id_and_older_rows_fall_back() {
+        let row = Row { id:"session:a".into(), legacy_id:"adee487a".into(), short_id:"adee487ad".into(),
+            title:"api·adee487ad".into(), ..Row::default() };
+        let restored = saved_row(&row_value(&row)).unwrap();
+        assert_eq!((restored.short_id.as_str(), restored.project()), ("adee487ad", "api"));
+        // Settings written before short_id existed still hide their old suffix.
+        let mut old = row_value(&row);
+        old.as_object_mut().unwrap().remove("short_id");
+        old["title"] = json!("api·adee");
+        let restored = saved_row(&old).unwrap();
+        assert!(restored.short_id.is_empty());
+        assert_eq!(restored.project(), "api");
+    }
+
+    #[test]
     fn skins_validate_and_are_distinct() {
         let a = Skin::parse(DEFAULT).unwrap();
         let b = Skin::parse(NIGHT).unwrap();
@@ -861,7 +876,7 @@ mod tests {
 
 fn row_value(row: &Row) -> Value {
     let cut = |s: &str, n: usize| s.chars().take(n).collect::<String>();
-    json!({"context":{"used_tokens":row.context.used_tokens,"window_tokens":row.context.window_tokens,"observed_at":row.context.observed_at,"compaction_observed":row.context.compaction_observed,"compacted_at":row.context.compacted_at},"last_answer":cut(&row.last_answer,1000),"session_id":row.session_id,"agent_id":row.agent_id,"host":row.host,"id":row.id,"legacy_id":row.legacy_id,"logged_state":row.logged_state,"request_marker":row.request_marker,"request_at":row.request_at,"title":row.title,"agent":row.agent,"model":row.model,"state":row.state,"since":row.since,"evidence":row.evidence,"task_source":row.task_source,"auxiliary":row.auxiliary,"task":cut(&row.task,4000),"summary":cut(&row.summary,200),"cwd":cut(&row.cwd,512)})
+    json!({"context":{"used_tokens":row.context.used_tokens,"window_tokens":row.context.window_tokens,"observed_at":row.context.observed_at,"compaction_observed":row.context.compaction_observed,"compacted_at":row.context.compacted_at},"last_answer":cut(&row.last_answer,1000),"session_id":row.session_id,"agent_id":row.agent_id,"host":row.host,"id":row.id,"legacy_id":row.legacy_id,"short_id":row.short_id,"logged_state":row.logged_state,"request_marker":row.request_marker,"request_at":row.request_at,"title":row.title,"agent":row.agent,"model":row.model,"state":row.state,"since":row.since,"evidence":row.evidence,"task_source":row.task_source,"auxiliary":row.auxiliary,"task":cut(&row.task,4000),"summary":cut(&row.summary,200),"cwd":cut(&row.cwd,512)})
 }
 fn saved_row(v: &Value) -> Option<Row> {
     let id = v["id"]
@@ -871,6 +886,7 @@ fn saved_row(v: &Value) -> Option<Row> {
     Some(Row {
         context: crate::context_value(&v["context"]),
         legacy_id: v["legacy_id"].as_str().unwrap_or("").to_string(),
+        short_id: v["short_id"].as_str().unwrap_or("").chars().take(40).collect(),
         logged_state: v["logged_state"].as_str().unwrap_or("").to_string(),
         observed_since_launch: false,
         request_at: v["request_at"].as_i64(),

@@ -112,7 +112,8 @@ fn observation(value: &Json, now: i64) -> Option<Session> {
         request_at: None,
         auxiliary: false,
         evidence: "terminal_screen",
-        legacy_id: crate::session::short_id(&[&id]),
+        hash: crate::session::source_hash(&[&id]),
+        short_id: String::new(),
         id,
         title: crate::trf!(
             "{} · 화면 관찰", "{} · Screen observation",

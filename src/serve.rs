@@ -23,12 +23,14 @@ type Snap = Arc<dyn Fn() -> (Vec<Session>, i64) + Send + Sync>;
 /// 전체 JSON 을 해싱하면 안 된다 — `captured_at` 이 매초 바뀌므로 아무것도
 /// 변하지 않았는데도 매 틱마다 갱신을 쏘게 된다. 사용자가 보는 화면이
 /// 달라질 때만 신호를 보내는 것이 목적이다.
-fn fingerprint(sessions: &[Session]) -> u64 {
+pub(crate) fn fingerprint(sessions: &[Session]) -> u64 {
     let mut hash = DefaultHasher::new();
     for x in sessions {
         // Keep every field exposed by html::session_ctx, including custom templates.
+        // Rows are told apart by the full id; short_id and title are only displayed values.
         (
             &x.id,
+            &x.short_id,
             &x.title,
             (x.agent.name, x.agent.display),
             (&x.llm_display, &x.llm_id),
@@ -259,7 +261,7 @@ mod tests {
             context: crate::ContextUsage::default(), prompt: None, last_answer: None,
             session_id: None, summary: None, request_marker: None, request_at: None,
             auxiliary: false, evidence: "unknown", id: "session".into(),
-            legacy_id: "old".into(), title: "project".into(),
+            hash: 0, short_id: "a3f2".into(), title: "project".into(),
             agent: crate::adapters::Agent { name: "codex", display: "Codex", has_reader: true },
             llm_id: None, llm_display: None,
             task: Task { text: Some("task".into()), source: "none", confidence: Confidence::None },
@@ -267,6 +269,7 @@ mod tests {
         };
         let original = fingerprint(std::slice::from_ref(&session));
         let changes: &[fn(&mut Session)] = &[
+            |s| s.short_id = "a3f2c".into(),
             |s| s.agent.display = "Agent",
             |s| s.llm_id = Some("model".into()),
             |s| s.task.source = "env",

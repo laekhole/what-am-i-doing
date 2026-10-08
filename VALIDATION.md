@@ -1,5 +1,58 @@
 # Windows 검증 기록 — 2026-09-06
 
+## short_id 충돌 대응 — 2026-10-01
+
+설계는 [D41](DECISIONS.md#d41--세션-식별과-표시-id-분리-git식-축약-2026-10-01)에 있다.
+
+### 실행 방식
+
+이 PC의 Windows 애플리케이션 제어가 새로 빌드한 서명 없는 테스트 EXE를 차단한다(os error 4551, Code Integrity 3033·3077). EXE를 실행하지 않도록 코어 테스트를 `wasm32-wasip1`으로 빌드해 Node 24 내장 WASI에서 실행했다. 실행기는 Git에서 제외된 로컬 도구 `.tools/wasi-test/run.cjs`이다.
+
+- wasm32의 패닉은 프로세스를 중단하므로 테스트마다 별도 인스턴스로 실행해 결과를 따로 모았다.
+- wasi-libc에 없는 `dlopen`·`dlsym`은 링크 시 가져오기로 남기고 NULL을 돌려준다. 코드의 기존 "SQLite 사용 불가" 경로를 탄다.
+- Node WASI가 Windows에서 `fd_readdir`를 지원하지 않아(ENOSYS) 실행기가 호스트 디렉터리 목록을 대신 제공한다. 실제 CLI 모듈 확인에 필요했다.
+- 데스크톱 크레이트는 의존성 빌드 스크립트를 새로 컴파일·실행해야 해서 WASI 빌드가 차단된다. 기존 빌드 스크립트 산출물을 재사용하는 Windows 대상 release 빌드와 테스트 컴파일(`cargo test --no-run`)만 했다. `rc.exe`는 Windows SDK 경로를 해당 명령에만 추가했다.
+
+### 결과
+
+| 범위 | 변경 전 | 변경 후 |
+|---|---|---|
+| 코어 단위 테스트 (WASI 대상으로 컴파일되는 것) | 98개 중 70 통과, 28 환경 실패 | 104개 중 76 통과(기존 70 + 신규 6), 28 환경 실패 |
+| CLI 통합 테스트 | 7개 모두 환경 실패 | 동일 |
+| 데스크톱 테스트 | — | Windows 대상 43개 + 단일 EXE 1개 컴파일, 실행 안 함 |
+| `node tests/dashboard.cjs` | — | 통과 |
+
+- 환경 실패 35개는 변경 전후 목록이 같다. `std::env::temp_dir()` 미지원 33개, 소켓 1개, 프로세스 생성 1개다. 이 중 5개가 `from_pair`·`to_json`·제목을 거치지만 단언이 상태·이름이나 부분 문자열(`"title":"project"`)이어서 새 `short_id` 필드와 충돌하지 않음을 코드로 확인했다. 실행 검증은 아니다.
+- Windows 전용 코어 테스트 4개(터미널 화면 관찰 1, Windows 프로세스 3)는 WASI 대상에 포함되지 않는다.
+- 기존 테스트 5개를 고쳤다. 구조체 필드 갱신 3개(그중 지문 테스트에는 `short_id` 변경 사례 추가), 해시 함수 이름 변경 1개, 의도된 단언 변경 1개다. 단언 변경은 `full_source_ids_survive_legacy_short_id_collisions`로, 32비트가 겹친 두 세션의 접미사가 `adee487a-1`·`-2` 번호에서 64비트 해시를 더 쓴 `adee487ad`·`adee487a7`로 바뀐다.
+
+### 강제 충돌 검사
+
+| 검사 | 확인한 것 |
+|---|---|
+| `display_ids_grow_only_where_hashes_collide` | 주입한 해시에서 겹친 두 세션만 6자리, 나머지는 4자리. 서로 접두어가 아님 |
+| `one_digit_ids_force_collisions_and_stay_unique_and_minimal` | 최소 1자리로 600개를 충돌시켜도 모두 유일하고 한 자리 줄이면 겹치는 최소 길이 |
+| `identical_hashes_are_numbered_by_full_id_in_any_order` | 64비트 전체가 같으면 입력 순서와 무관하게 `id` 순서로 `-1`·`-2` |
+| `ids_shrink_back_to_a_prefix_once_the_colliding_partner_is_gone` | 상대가 사라지면 4자리로 줄고 이전 id의 접두어 |
+| `colliding_display_ids_never_merge_rows_or_hide_sse_changes` | 제목·해시가 같아도 행은 `id`로만 병합, JSON·HTML 표시 구분, 같은 스냅샷은 같은 지문, 상태를 맞바꾸면 지문 변경. 표시값이 모두 같아도 `id`로 구분 |
+| `previous_observations_match_full_ids_even_when_display_ids_collide` | Orca 이전 관측을 해시·`short_id`가 같게 오염시켜도 각 세션의 요청과 상태 유지 |
+| 데스크톱 3개 (컴파일만) | 요청 추적·고정·종결이 `id` 기준, 접미사는 보고된 `short_id`만 제거, 저장 행 왕복과 이전 설정 폴백 |
+
+실제 CLI 모듈(`waid.wasm --json --history --agent codex`)에 8자리 `legacy_id`가 `adee487a`로 같은 Codex 세션 둘과 다른 프로젝트 세션 하나를 주었다. 출력은 `same-project·adee487ad`, `same-project·adee487a7`, `other-project`(`short_id` `515a`, 접미사 없음)였고 `id`는 원본 세션 ID를 그대로 유지했다. 표 출력도 같았다.
+
+### 바이너리 크기
+
+같은 툴체인(rustc 1.98.1)으로 이번에 변경 전후를 빌드했다. 크기만 측정했고 실행하지 않았다.
+
+| 파일 | 변경 전 | 변경 후 | 차이 |
+|---|---|---|---|
+| `target/release/waid.exe` | 538,624 B | 541,696 B | +3,072 B (+0.57%) |
+| `desktop/target/release/waid-desktop.exe` | 4,728,320 B | 4,733,952 B | +5,632 B (+0.12%) |
+
+### 미검증
+
+데스크톱 테스트 실행, WASI 환경 실패 35개, Windows 전용 코어 테스트 4개는 네이티브 실행(CI 또는 실행이 허용된 PC)이 필요하다. `clippy-driver.exe`도 같은 정책으로 실행되지 않아 Clippy는 돌리지 못했다.
+
 ## 전수 점검과 공통 경로 정리 — 2026-09-23
 
 ### 조사 범위

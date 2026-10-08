@@ -7,13 +7,15 @@ use crate::matchers::{self, Agent};
 use crate::proc::{self, Process};
 use crate::time;
 use crate::transcript::{self, Transcript};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// 마지막 이벤트 이후 이 시간 안이면 "지금 일하는 중"으로 본다.
 pub const WORKING_WITHIN: i64 = 20;
 /// 이미 끝난 세션을 목록에 남겨두는 시간.
 pub const KEEP_DONE_FOR: i64 = 600;
+/// Shortest display id, in hex digits. D41 explains the length and why ids shrink back.
+pub const SHORT_ID_LEN: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -86,8 +88,12 @@ pub struct Session {
     pub request_at: Option<i64>,
     pub auxiliary: bool,
     pub evidence: &'static str,
+    /// Lossless source identity: the only key for tracking, merging and saved settings.
     pub id: String,
-    pub legacy_id: String,
+    /// 64-bit hash of the source identity. Derives display and legacy ids; never a key.
+    pub hash: u64,
+    /// Display-only id, unique within one snapshot. Set by `dedupe_titles`.
+    pub short_id: String,
     pub title: String,
     pub agent: Agent,
     pub llm_id: Option<String>,
@@ -163,6 +169,12 @@ pub fn collect_with_history(now: i64, history: bool) -> Vec<Session> {
     sessions.extend(crate::orca::collect(now, history));
     #[cfg(windows)]
     sessions.extend(terminal_sessions);
+    finish(sessions)
+}
+
+/// One snapshot's final rows. Rows merge only on the full `id`: sessions whose display
+/// ids collide stay separate, and their labels are computed from this snapshot alone.
+pub(crate) fn finish(mut sessions: Vec<Session>) -> Vec<Session> {
     let mut seen = HashSet::new();
     sessions.retain(|s| seen.insert(s.id.clone()));
     dedupe_titles(&mut sessions);
@@ -171,6 +183,7 @@ pub fn collect_with_history(now: i64, history: bool) -> Vec<Session> {
             .rank()
             .cmp(&b.state.rank())
             .then(a.title.cmp(&b.title))
+            .then_with(|| a.id.cmp(&b.id))
     });
     sessions
 }
@@ -206,7 +219,7 @@ pub(crate) fn from_pair(p: Option<&Process>, agent: Agent, t: &Transcript, now: 
                 .into_owned(),
         ),
     };
-    let legacy_id = short_id(&[agent.name, &identity]);
+    let hash = source_hash(&[agent.name, &identity]);
     Session {
         context: t.context.clone(),
         prompt: t.current_prompt.clone().or_else(|| t.first_prompt.clone()),
@@ -226,7 +239,8 @@ pub(crate) fn from_pair(p: Option<&Process>, agent: Agent, t: &Transcript, now: 
             "unknown"
         },
         id: source_id(kind, agent.name, &identity),
-        legacy_id,
+        hash,
+        short_id: String::new(),
         title: make_title(cwd.as_deref(), branch.as_deref()),
         agent,
         llm_display: t.model.as_deref().map(transcript::normalize_model),
@@ -257,7 +271,8 @@ fn from_process_only(p: &Process, agent: Agent, _now: i64) -> Session {
         auxiliary: false,
         evidence: "process_only",
         id: source_id("process", agent.name, &pid),
-        legacy_id: short_id(&[agent.name, &pid]),
+        hash: source_hash(&[agent.name, &pid]),
+        short_id: String::new(),
         title: make_title(p.cwd.as_deref(), branch.as_deref()),
         agent,
         llm_id: None,
@@ -430,58 +445,80 @@ fn git_branch(cwd: &Path) -> Option<String> {
     None
 }
 
-/// 같은 저장소에서 여러 세션이 돌면 제목이 겹친다. 짧은 id를 덧붙인다.
+/// 같은 저장소에서 여러 세션이 돌면 제목이 겹친다. 표시 id 를 정하고, 겹친 제목에만
+/// 덧붙인다. 표시 id 는 스냅샷 안에서 유일하므로 덧붙인 제목끼리는 겹치지 않는다.
 pub(crate) fn dedupe_titles(sessions: &mut [Session]) {
-    let mut seen: Vec<String> = Vec::new();
-    let mut dup: HashSet<String> = HashSet::new();
-    for s in sessions.iter() {
-        if seen.contains(&s.title) {
-            dup.insert(s.title.clone());
+    assign_short_ids(sessions, SHORT_ID_LEN);
+    suffix_repeated_titles(sessions);
+}
+
+/// Git-style abbreviation over one snapshot: each session shows the shortest prefix of
+/// its hash, at least `min_len` digits, that no other session's hash starts with. Only
+/// colliding sessions grow, and only as far as they must. Ids are recomputed for every
+/// snapshot, so they shrink back once a partner is gone (D41). Equal 64-bit hashes
+/// cannot be told apart by any prefix; they are numbered in order of their full `id`.
+pub(crate) fn assign_short_ids(sessions: &mut [Session], min_len: usize) {
+    let min_len = min_len.clamp(1, 16);
+    let hex: Vec<String> = sessions.iter().map(|s| hash_hex(s.hash)).collect();
+    // In sorted order, a hash shares its longest prefix with one of its neighbours.
+    let mut order: Vec<usize> = (0..sessions.len()).collect();
+    order.sort_by(|&a, &b| hex[a].cmp(&hex[b]).then_with(|| sessions[a].id.cmp(&sessions[b].id)));
+    let mut len = vec![min_len; sessions.len()];
+    let mut rank = vec![0; sessions.len()];
+    for pair in order.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let shared = hex[a].bytes().zip(hex[b].bytes()).take_while(|(x, y)| x == y).count();
+        if shared == 16 {
+            rank[a] = rank[a].max(1);
+            rank[b] = rank[a] + 1;
         }
-        seen.push(s.title.clone());
+        len[a] = len[a].max(shared + 1).min(16);
+        len[b] = len[b].max(shared + 1).min(16);
     }
-
-    // 4자리로 시작하되, 그래도 겹치면 늘린다. 접미사를 붙이는 목적이
-    // 구분인데 접미사가 겹치면 아무 일도 하지 않은 것과 같다.
-    let mut len = 4usize;
-    loop {
-        let candidates: Vec<String> = sessions
-            .iter()
-            .map(|s| {
-                if dup.contains(&s.title) {
-                    format!("{}·{}", s.title, &s.legacy_id[..len.min(s.legacy_id.len())])
-                } else {
-                    s.title.clone()
-                }
-            })
-            .collect();
-
-        let unique: HashSet<&String> = candidates.iter().collect();
-        if unique.len() == candidates.len() || len >= 8 {
-            let titles = if unique.len() == candidates.len() { candidates } else {
-                // ponytail: rare 32-bit display collisions; rank full IDs within
-                // each duplicate group. Use grouped sorting if these grow common.
-                candidates.iter().enumerate().map(|(i, title)| {
-                let mut peers: Vec<&str> = candidates.iter().enumerate()
-                    .filter(|(_, other)| *other == title)
-                    .map(|(j, _)| sessions[j].id.as_str()).collect();
-                if peers.len() < 2 { return title.clone(); }
-                peers.sort_unstable();
-                let rank = peers.iter().position(|id| *id == sessions[i].id).unwrap() + 1;
-                format!("{title}-{rank}")
-                }).collect()
-            };
-            for (s, t) in sessions.iter_mut().zip(titles) {
-                s.title = t;
-            }
-            return;
-        }
-        len += 2;
+    for (i, s) in sessions.iter_mut().enumerate() {
+        s.short_id = match rank[i] {
+            0 => hex[i][..len[i]].to_string(),
+            n => format!("{}-{n}", hex[i]),
+        };
     }
 }
 
-/// FNV-1a. 암호학적 용도가 아니라 화면에 4~8자를 띄우기 위한 것.
-/// 세션 식별자.
+/// Appends `·short_id` to every title that is not unique. A base title can already look
+/// like `name·id`; whatever it then collides with is suffixed in the next round.
+pub(crate) fn suffix_repeated_titles(sessions: &mut [Session]) {
+    let mut suffixed = vec![false; sessions.len()];
+    loop {
+        let titles: Vec<String> = sessions
+            .iter()
+            .zip(&suffixed)
+            .map(|(s, &on)| if on { format!("{}·{}", s.title, s.short_id) } else { s.title.clone() })
+            .collect();
+        let repeated: Vec<bool> = {
+            let mut count: HashMap<&str, usize> = HashMap::new();
+            for title in &titles {
+                *count.entry(title.as_str()).or_default() += 1;
+            }
+            titles.iter().map(|t| count[t.as_str()] > 1).collect()
+        };
+        let mut grew = false;
+        for (on, clash) in suffixed.iter_mut().zip(repeated) {
+            if clash && !*on {
+                *on = true;
+                grew = true;
+            }
+        }
+        // Suffixed titles end in distinct short ids, so this ends within len() rounds.
+        if !grew {
+            for (s, title) in sessions.iter_mut().zip(titles) {
+                s.title = title;
+            }
+            return;
+        }
+    }
+}
+
+/// 세션 출처의 64비트 해시. 표시 id 와 이전 8자리 id 의 재료일 뿐 키가 아니다 —
+/// 키는 무손실 `id` 다. 암호학적 용도도 아니다.
 ///
 /// FNV-1a 만으로는 부족하다. 마지막 몇 바이트만 다른 입력(`claude`+`794` vs
 /// `claude`+`798`)은 해시의 상위 비트가 거의 같아서, 앞자리를 잘라 쓰면
@@ -490,7 +527,7 @@ pub(crate) fn dedupe_titles(sessions: &mut [Session]) {
 ///
 /// 그래서 FNV 뒤에 최종 믹싱(murmur3 의 fmix64)을 한 번 돌린다. 앞자리든
 /// 뒷자리든 어디를 잘라 써도 안전해진다.
-pub(crate) fn short_id(parts: &[&str]) -> String {
+pub(crate) fn source_hash(parts: &[&str]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for p in parts {
         for b in p.as_bytes() {
@@ -502,8 +539,21 @@ pub(crate) fn short_id(parts: &[&str]) -> String {
     h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
     h ^= h >> 33;
     h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
-    h ^= h >> 33;
-    format!("{:08x}", h as u32)
+    h ^ (h >> 33)
+}
+
+/// All 64 bits as hex, low word first: the first eight digits are the legacy id, so
+/// display ids of up to eight digits match the suffixes earlier versions showed.
+pub(crate) fn hash_hex(hash: u64) -> String {
+    format!("{:016x}", hash.rotate_left(32))
+}
+
+impl Session {
+    /// Schema 1's eight-digit id (the low 32 bits of `hash`), kept for settings
+    /// migration. It can collide, so it is never a key.
+    pub fn legacy_id(&self) -> String {
+        format!("{:08x}", self.hash as u32)
+    }
 }
 
 /// Lossless source identity. The agent length makes the encoding unambiguous
@@ -523,9 +573,10 @@ pub fn to_json(sessions: &[Session], now: i64, pretty: bool) -> String {
     for s in sessions {
         w.begin_obj();
         w.field_str("id", &s.id);
-        w.field_str("legacy_id", &s.legacy_id);
+        w.field_str("legacy_id", &s.legacy_id());
         w.field_opt_str("session_id", s.session_id.as_deref());
         w.field_str("title", &s.title);
+        w.field_str("short_id", &s.short_id);
 
         w.field_obj("agent");
         w.field_str("name", s.agent.name);

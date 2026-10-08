@@ -40,6 +40,7 @@ fn state_symbol(st: State) -> &'static str {
 fn session_ctx(x: &Session, now: i64, language: Language) -> Ctx {
     let mut c = Ctx::new();
     c.insert("id".into(), s(&x.id));
+    c.insert("short_id".into(), s(&x.short_id));
     c.insert("title".into(), s(&x.title));
 
     c.insert("agent.name".into(), s(x.agent.name));
@@ -120,7 +121,8 @@ pub(crate) fn key_context() -> Ctx {
         auxiliary: false,
         evidence: "unknown",
         id: String::new(),
-        legacy_id: String::new(),
+        hash: 0,
+        short_id: String::new(),
         title: String::new(),
         agent: crate::adapters::Agent { name: "", display: "", has_reader: false },
         llm_id: None,

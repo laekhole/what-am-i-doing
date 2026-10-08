@@ -428,7 +428,8 @@ fn populated_default_template_keeps_all_five_fields() {
         auxiliary: false,
         evidence: "unknown",
         id: "test0001".into(),
-        legacy_id: "test0001".into(),
+        hash: 0,
+        short_id: String::new(),
         title: "Windows MVP".into(),
         agent: crate::adapters::Agent {
             name: "codex",
@@ -616,7 +617,7 @@ fn short_id_avalanches_on_trailing_bytes() {
     // FNV-1a 의 상위 비트를 쓰면 794/796/798 이 전부 같은 4자리를 받는다.
     let ids: Vec<String> = ["794", "796", "798", "800", "802"]
         .iter()
-        .map(|pid| crate::session::short_id(&["claude", pid]))
+        .map(|pid| crate::session::hash_hex(crate::session::source_hash(&["claude", pid])))
         .collect();
     let prefixes: std::collections::HashSet<&str> = ids.iter().map(|i| &i[..4]).collect();
     assert_eq!(prefixes.len(), ids.len(), "앞 4자리가 충돌한다: {ids:?}");
@@ -647,8 +648,8 @@ fn full_source_ids_survive_legacy_short_id_collisions() {
     ]
     .map(|id| crate::session::from_pair(None, agent, &make(id), 1))
     .to_vec();
-    assert_eq!(sessions[0].legacy_id, "adee487a");
-    assert_eq!(sessions[0].legacy_id, sessions[1].legacy_id);
+    assert_eq!(sessions[0].legacy_id(), "adee487a");
+    assert_eq!(sessions[0].legacy_id(), sessions[1].legacy_id());
     assert_ne!(sessions[0].id, sessions[1].id);
     let mut seen = std::collections::HashSet::new();
     sessions.retain(|session| seen.insert(session.id.clone()));
@@ -656,10 +657,13 @@ fn full_source_ids_survive_legacy_short_id_collisions() {
     for session in &mut sessions { session.title = "same-project".into(); }
     crate::session::dedupe_titles(&mut sessions);
     assert_ne!(sessions[0].title, sessions[1].title);
-    assert!(sessions.iter().all(|s| s.title.starts_with("same-project·adee487a-")));
+    // The 64-bit hashes still differ after the shared 32 bits: grow into them, no numbering.
+    assert_eq!(sessions[0].title, "same-project·adee487ad");
+    assert_eq!(sessions[1].title, "same-project·adee487a7");
     let json = crate::session::to_json(&sessions, 1, false);
     assert!(json.contains("\"schema\":2"));
     assert_eq!(json.matches("\"legacy_id\":\"adee487a\"").count(), 2);
+    assert!(json.contains("\"short_id\":\"adee487ad\"") && json.contains("\"short_id\":\"adee487a7\""));
 }
 
 #[test]
@@ -683,7 +687,9 @@ fn dedupe_extends_suffix_until_titles_are_unique() {
         auxiliary: false,
         evidence: "unknown",
         id: id.to_string(),
-        legacy_id: id.to_string(),
+        // The low word renders first, so these ids are the injected display digits.
+        hash: u64::from_str_radix(id, 16).unwrap(),
+        short_id: String::new(),
         title: "api".into(),
         agent,
         llm_id: None,
@@ -711,6 +717,166 @@ fn dedupe_extends_suffix_until_titles_are_unique() {
         "구분되지 않았다: {:?}",
         sessions.iter().map(|s| &s.title).collect::<Vec<_>>()
     );
+}
+
+/// A session whose 64-bit hash the test chooses, written as its 16 display digits.
+fn hashed(id: &str, title: &str, digits: &str) -> crate::session::Session {
+    use crate::session::{Confidence, State, Task};
+    crate::session::Session {
+        context: crate::ContextUsage::default(),
+        prompt: None,
+        last_answer: None,
+        session_id: None,
+        summary: None,
+        request_marker: None,
+        request_at: None,
+        auxiliary: false,
+        evidence: "transcript",
+        id: id.into(),
+        hash: u64::from_str_radix(digits, 16).unwrap().rotate_left(32),
+        short_id: String::new(),
+        title: title.into(),
+        agent: crate::adapters::by_name("codex").unwrap(),
+        llm_id: None,
+        llm_display: None,
+        task: Task { text: Some("same request".into()), source: "transcript_latest_prompt", confidence: Confidence::Inferred },
+        state: State::Waiting,
+        since: 100,
+        cwd: None,
+        branch: None,
+        pid: None,
+    }
+}
+
+fn short_ids(sessions: &[crate::session::Session]) -> Vec<&str> {
+    sessions.iter().map(|s| s.short_id.as_str()).collect()
+}
+
+#[test]
+fn display_ids_grow_only_where_hashes_collide() {
+    use crate::session::{assign_short_ids, hash_hex, suffix_repeated_titles, SHORT_ID_LEN};
+    let mut sessions = vec![
+        hashed("a", "api", "a3f2c0de00000001"),
+        hashed("b", "web", "a3f2c1ff00000002"), // shares five digits with "a"
+        hashed("c", "api", "b71c000000000003"),
+        hashed("d", "cli", "a3f3000000000004"), // shares three; four digits already differ
+    ];
+    assign_short_ids(&mut sessions, SHORT_ID_LEN);
+    assert_eq!(short_ids(&sessions), ["a3f2c0", "a3f2c1", "b71c", "a3f3"]);
+    // Prefix-free like git abbreviations: no id starts another session's hash.
+    for (i, s) in sessions.iter().enumerate() {
+        for (j, other) in sessions.iter().enumerate() {
+            assert!(i == j || !hash_hex(other.hash).starts_with(&s.short_id));
+        }
+    }
+    // A session has one display id; repeated titles reuse it, unrepeated ones stay bare.
+    suffix_repeated_titles(&mut sessions);
+    let titles: Vec<&str> = sessions.iter().map(|s| s.title.as_str()).collect();
+    assert_eq!(titles, ["api·a3f2c0", "web", "api·b71c", "cli"]);
+}
+
+#[test]
+fn one_digit_ids_force_collisions_and_stay_unique_and_minimal() {
+    use crate::session::{assign_short_ids, hash_hex, source_hash};
+    let mut sessions = vec![
+        hashed("a", "p", "0123000000000000"),
+        hashed("b", "p", "0fff000000000000"),
+        hashed("c", "p", "1abc000000000000"),
+        hashed("d", "p", "f000000000000000"),
+    ];
+    assign_short_ids(&mut sessions, 1);
+    assert_eq!(short_ids(&sessions), ["01", "0f", "1", "f"]);
+
+    // 600 real hashes over one-digit ids collide constantly. Each id must still be
+    // unshared, and one digit shorter must be shared: no longer than needed.
+    let mut many: Vec<_> = (0..600)
+        .map(|n| {
+            let mut s = hashed(&format!("session:{n}"), "p", "0000000000000000");
+            s.hash = source_hash(&["codex", &n.to_string()]);
+            s
+        })
+        .collect();
+    assign_short_ids(&mut many, 1);
+    let hexes: Vec<String> = many.iter().map(|s| hash_hex(s.hash)).collect();
+    for (i, s) in many.iter().enumerate() {
+        let shared = |prefix: &str| hexes.iter().enumerate().any(|(j, h)| j != i && h.starts_with(prefix));
+        assert!(!shared(&s.short_id), "{} is ambiguous", s.short_id);
+        if s.short_id.len() > 1 {
+            assert!(shared(&s.short_id[..s.short_id.len() - 1]), "{} is longer than needed", s.short_id);
+        }
+    }
+    assert!(many.iter().any(|s| s.short_id.len() >= 3), "600 ids cannot fit in two digits");
+}
+
+#[test]
+fn identical_hashes_are_numbered_by_full_id_in_any_order() {
+    use crate::session::assign_short_ids;
+    let same = "adee487adfe4900e";
+    let rows = vec![
+        hashed("session:z", "api", same),
+        hashed("session:y", "api", same),
+        hashed("session:x", "web", "adee487a765931e0"),
+    ];
+    let mut forward = rows.clone();
+    assign_short_ids(&mut forward, 4);
+    assert_eq!(short_ids(&forward), ["adee487adfe4900e-2", "adee487adfe4900e-1", "adee487a7"]);
+    let mut backward: Vec<_> = rows.into_iter().rev().collect();
+    assign_short_ids(&mut backward, 4);
+    for row in &forward {
+        assert_eq!(backward.iter().find(|b| b.id == row.id).unwrap().short_id, row.short_id);
+    }
+}
+
+#[test]
+fn ids_shrink_back_to_a_prefix_once_the_colliding_partner_is_gone() {
+    use crate::session::finish;
+    let a = hashed("session:a", "api", "a3f2c0de00000001");
+    let b = hashed("session:b", "api", "a3f2c1ff00000002");
+    let together = finish(vec![a.clone(), b]);
+    let grown = &together.iter().find(|s| s.id == a.id).unwrap().short_id;
+    assert_eq!(grown, "a3f2c0");
+    let alone = finish(vec![a.clone()]);
+    assert_eq!((alone[0].short_id.as_str(), alone[0].title.as_str()), ("a3f2", "api"));
+    assert!(grown.starts_with(&alone[0].short_id), "the shorter id still resolves by prefix");
+}
+
+#[test]
+fn colliding_display_ids_never_merge_rows_or_hide_sse_changes() {
+    use crate::serve::fingerprint;
+    use crate::session::{finish, State};
+    // Worst case: the same title and the same full 64-bit hash.
+    let same = "a3f2c0de12345678";
+    let mut a = hashed("session:a", "api", same);
+    let mut b = hashed("session:b", "api", same);
+    b.state = State::Working;
+    let rows = finish(vec![a.clone(), b.clone(), a.clone()]);
+    // Merged only on the full id: the duplicate of `a` goes, `b` stays its own row.
+    assert_eq!(rows.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["session:a", "session:b"]);
+    let titles: Vec<&str> = rows.iter().map(|s| s.title.as_str()).collect();
+    assert_eq!(titles, ["api·a3f2c0de12345678-1", "api·a3f2c0de12345678-2"]);
+    let json = crate::session::to_json(&rows, 100, false);
+    assert!(json.contains("\"id\":\"session:a\"") && json.contains("\"short_id\":\"a3f2c0de12345678-2\""));
+    let html = crate::html::render_language(&rows, 100, "{{#each sessions}}[{{short_id}}]{{/each}}", crate::i18n::Language::English);
+    assert_eq!(html, "[a3f2c0de12345678-1][a3f2c0de12345678-2]");
+
+    // The same snapshot collected in another order: same labels, no spurious SSE tick.
+    assert_eq!(fingerprint(&rows), fingerprint(&finish(vec![b.clone(), a.clone()])));
+    // Moving states between the colliding rows is a change.
+    a.state = State::Working;
+    b.state = State::Waiting;
+    assert_ne!(fingerprint(&rows), fingerprint(&finish(vec![a, b])));
+
+    // Even rows whose displayed values are all identical stay apart: the fingerprint
+    // follows the full id, so moving a state between them still signals a refresh.
+    let twin = |id: &str, state| {
+        let mut s = hashed(id, "api", same);
+        s.short_id = "a3f2".into();
+        s.state = state;
+        s
+    };
+    let before = [twin("session:a", State::Waiting), twin("session:b", State::Working)];
+    let after = [twin("session:b", State::Waiting), twin("session:a", State::Working)];
+    assert_ne!(fingerprint(&before), fingerprint(&after));
 }
 
 // ------------------------------------------------------- 경계 넘기 (§5.1, v0.4)
