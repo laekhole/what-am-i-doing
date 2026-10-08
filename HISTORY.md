@@ -27,6 +27,15 @@
 
 ## 프롬프트별 작업 기록
 
+### 2026-10-08 13:03 +09:00 — C: 드라이브 저장소 커밋·푸시
+
+- 요청: C: 드라이브 작업 저장소의 기존 변경과 미푸시 커밋을 저장하고 원격에 푸시하기. 사용자가 자동 설치 플러그인 캐시를 제외하도록 지정했다.
+- 상태: 부분 완료 — whatamidoing(laekhole/what-am-i-doing)의 기존 변경 커밋 a5e2ef8은 origin/main에 푸시했으며 원격 SHA가 일치한다. 드라이브의 다른 저장소 일부는 원격 또는 쓰기 권한이 없다.
+- 변경·이유: 기존 소스·문서 15개 파일의 변경을 그대로 커밋했다. 이번 요청에서 제품 코드는 추가로 수정하지 않았으며 이 작업 기록만 추가했다. 이 기록은 별도 문서 커밋으로 저장하고 동일 origin/main에 푸시한다. 세션 식별·표시 id 설계는 [D41](DECISIONS.md#d41--세션-식별과-표시-id-분리-git식-축약-2026-10-01), 이전 변경의 상세는 아래 2026-10-01 기록을 따른다.
+- 관련 파일: [HISTORY.md](HISTORY.md). 기존 커밋 a5e2ef8: 소스·데스크톱·사용자 가이드·CLI·설계·검증·게시 계획 문서 15개.
+- 검증: 네이티브 cargo test --release --locked에서 코어 단위 108개 통과, CLI 7개 중 6개 통과·1개 실패. 실패한 partial_json_collection_warns_preserves_rows_and_recovers는 개별 재실행에서 통과했으나 전체 실행의 최초 실패도 기록한다. 데스크톱 단위 40개와 단일 EXE 검사 1개 통과, 명시적 환경 테스트 4개는 ignored. node tests/dashboard.cjs와 git diff --check 통과. GitHub API에서 로그인 계정의 저장소 소유권과 push 권한을 확인하고 실제 푸시 후 ls-remote SHA를 대조했다.
+- 남은 일: partial_json_collection_warns_preserves_rows_and_recovers가 전체 실행에서 실패한 원인은 미확인이며 이번 저장 요청에서 조사·수정하지 않았다. C:/waid-demo의 landing-page·notes-lookup·todo-app은 원격이 없고, C:/PTEP/pdf2pptx의 로컬 backup/c-drive-20261008 커밋 112f9de는 현재 로그인 계정에 원격 쓰기 권한이 없어 푸시하지 못했다.
+
 ### 2026-10-01 14:50 +09:00 — short_id 충돌 대응: 식별·표시 분리와 git식 축약
 
 - 요청: 내부 구분 키에서 short_id를 배제하고 표시 전용으로 남기기(표시 외 사용처 전수 보고·수정), 표시 id가 겹치면 겹치는 것만 구분될 때까지 늘리는 git 축약 방식 적용. 기본 길이와 상대 소멸 시 축소 여부 결정·근거, 외부 크레이트 0개 유지, 기존 테스트 통과, 강제 충돌 테스트 추가, 테스트 수·바이너리 크기 보고. EXE가 Windows 보안에 막히므로 EXE가 아닌 방식으로 실행하라는 추가 지시.
