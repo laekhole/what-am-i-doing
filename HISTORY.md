@@ -27,6 +27,15 @@
 
 ## 프롬프트별 작업 기록
 
+### 2026-10-13 18:10 +09:00 — MSIX 작업 main 병합과 Partner Center 가입 후 절차
+
+- 요청: `msix/store-package` 브랜치를 main에 병합하고, Partner Center 가입 후 해야 할 일 안내.
+- 상태: 완료 — 병합·푸시와 절차 안내 완료. 가입과 제출은 사용자 진행 대기.
+- 변경·이유: main을 브랜치 `5595e0c`까지 fast-forward 병합해 푸시했다. 가입 → 이름 예약 → ID 전달 → 제출물 작성 → 제출 → 게시 후 작업 순서와, main이 GitHub v0.2.0 이후 변경을 포함하는데 버전이 0.2.0으로 같다는 주의점을 Store 문서에 추가했다. 원격 브랜치 `msix/store-package`는 삭제하지 않았다.
+- 관련 파일: [Store 배포 문서](docs/MICROSOFT_STORE.md), [HISTORY.md](HISTORY.md).
+- 검증: `git ls-remote`로 origin/main이 `5595e0c`임을 확인. main 푸시로 실행된 Core and Windows checks(38371208566), Windows MSIX package(38371208546), macOS checks(38371208544) 모두 success. Partner Center 화면 구성과 메뉴 이름은 이번에 직접 확인하지 않았다.
+- 남은 일: 사용자 Partner Center 가입·이름 예약 후 ID 값 반영, 첫 제출 전 버전 결정.
+
 ### 2026-10-13 17:45 +09:00 — MSIX 패키징·설치 테스트·Store 제출 자료 준비
 
 - 요청: MSIX 배포 절차 중 패키징(2), MSIX 환경 동작 확인(3), Store 제출 준비(4) 진행. 진행 중 MSIX 아이콘이 waid 캐릭터가 아닌 이유와 타사 사용 여부 질문.
