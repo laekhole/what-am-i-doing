@@ -1,5 +1,35 @@
 # waid 홍보 계획 · GeekNews · Reddit 템플릿
 
+## 2026-10-13 GitHub README 공개 반영
+
+- 상태: **GitHub 반영 완료**, 2026-10-13 13:50 +09:00 확인. [공개 README](https://github.com/laekhole/what-am-i-doing#readme)에 대표 이미지, 샘플 화면 2장, 한국어 사례, 상세 사용법과 클론·도구 요청 접기 영역을 넣었다. 기존 영문 설치·빌드·참고 문서는 보존했다.
+- 최종 대표 문구: **내가 뭐하고 있었지?** 사용자의 후속 지시에 따라 표지 이미지, HTML 제목·본문·메타 설명, 게시용 텍스트, README 대체 텍스트와 소개 문단을 맞췄다. 원본 로고와 마스코트는 보존했다.
+- 공개 파일: [대표 이미지](https://github.com/laekhole/what-am-i-doing/blob/main/assets/promo/geeknews-cover.png), [HTML 원본](https://github.com/laekhole/what-am-i-doing/blob/main/docs/geeknews-preview.html), [게시용 원고](https://github.com/laekhole/what-am-i-doing/blob/main/docs/geeknews-post.txt). GitHub의 HTML 링크는 소스 보기이며, 디자인과 CSS 애니메이션은 저장소를 클론한 뒤 로컬에서 열어 볼 수 있다. 별도 사이트 호스팅은 설정하지 않았다.
+- 변경 커밋: `55a9ff0` (`docs: bring waid visual walkthrough into README`). GitHub API에서 README·커버·HTML·텍스트의 blob SHA가 로컬과 일치하고 공개 README의 새 문구·커버·접기 영역 2개가 포함됨을 확인했다.
+- GeekNews: 원고와 이미지가 공개 저장소에서 접근 가능해졌으나 **게시 자체는 여전히 미완료**다. 중복 확인과 Turnstile 사람 확인·최종 등록이 남아 있다.
+
+## 2026-10-13 그림이 있는 소개자료와 상세 사용법
+
+- 현재 원고: [이미지 포함 미리보기](docs/geeknews-preview.html), [GeekNews 붙여넣기용 원고](docs/geeknews-post.txt). 제목은 `waid - Orca·Codex·Claude Code의 작업과 답변을 한눈에 보는 Windows 앱`으로 갱신했다. 아래 이전 준비 기록보다 이 원고를 우선한다.
+- 대표 이미지: [내가 뭐하고 있었지?](assets/promo/geeknews-cover.png). 기존 파란 마스코트를 참조해 built-in image_gen으로 만든 홍보 일러스트다. 후속 요청에 따라 waid의 뜻을 살린 문구로 교체했다. 원본 로고는 보존했다. [생성 프롬프트·자산 설명](assets/promo/README.txt)에 생성 경로와 실제 프롬프트를 기록했다.
+- 미리보기 구성: 대표 이미지, 움직이는 기존 마스코트, 실제 앱 샘플 화면 2장, 결제 화면·로그인 API·설치 문서 작업 사례, 다운로드부터 답변 펼치기·세션 정리까지의 사용법, 클론·맞춤화·새 도구 요청 안내. 마스코트의 움직임은 소개자료의 장식이며 앱 기능이 아니다. 영어 화면은 최신 소스 빌드, 두 화면의 내용은 샘플 데이터라고 명시했다.
+- 지원·기여 문구: 사용자가 지정한 현재 지원 대상을 **Orca, Codex, Claude Code 세 가지**로 소개한다. Orca 안에서 실행하는 Codex·Claude Code도 설명하며, 임의 터미널 탭이나 SSH 세션으로 모두 복귀한다고 약속하지 않는다. MIT 저장소를 클론해 자기 작업 방식에 맞게 고칠 수 있고, 원하는 도구를 댓글·이슈로 요청하면 로그 형식을 확인해 연동을 추가한다는 문구를 넣었다.
+- 사용 사례의 범위: 샘플 화면의 세 작업을 따라가는 구체적 예시다. 실제 사용자의 후기나 시간 절약 성과를 새로 만들어 넣지 않았다. 1열 카드 헤더 펼침, 처음의 미확인 상태, 새 요청·답변 관측, 필터 해제와 전체 보기, Orca 복귀 조건을 사용자 가이드 및 v0.2.0 태그 소스와 대조했다.
+- GeekNews 적용: [공식 이용법](https://news.hada.io/guidelines)은 본문 이미지 삽입을 지원하지 않는다. 따라서 붙여넣기용 원고에는 공개된 원본 앱 화면·마스코트 링크를 넣었다. 새 커버와 HTML도 후속 README 반영 요청에서 공개 저장소에 올렸으며 결과는 상단 기록을 따른다. 미리보기는 외부 리소스 요청 없이 저장소 안의 이미지·글꼴을 사용한다.
+- 게시 상태: 여전히 **미게시**. 앞서 확인한 Turnstile 사람 확인 단계는 남아 있다. 이번 보강에서는 사용자 브라우저를 제어하거나 GeekNews 등록을 다시 시도하지 않았다.
+
+## 2026-10-13 백그라운드 게시 준비와 퇴고 결과
+
+- 상태: **미게시 — 글 등록에 Cloudflare Turnstile 사람 확인 필요**. 사용자가 지정한 계정정보로 HTTPS 로그인에 성공했고 `/write`에서 정상 작성 폼을 확인했다. 이전 가입 후 일주일 제한은 더 이상 표시되지 않는다. 작성 폼은 사람 확인 위젯과 비활성화된 등록 버튼을 제공하므로 제출하지 않았다. 사용 중인 브라우저를 열거나 제어하지 않았다.
+- 당시 준비 원고: [제목·유형·URL·본문](docs/geeknews-post.txt). 이 파일은 후속 요청으로 보강했으며 현재 내용은 상단 기록을 따른다. 당시 제목은 `waid - 여러 Claude Code·Codex 세션을 한눈에 보는 Windows 앱`, 유형은 **Show**, URL은 원본 GitHub 저장소였다. 아래 9월 원고는 이전 기록으로 보존한다.
+- 퇴고: 요청한 [writing-deslop](https://github.com/laekhole/writing-deslop/blob/main/SKILL.md)를 기존 GitHub 인증으로 읽고 적용했다. 반복되는 기능 설명과 포괄적인 의견 요청을 줄였고, 실제 로그에 기록된 답변과 사용자가 선택하는 숨기기를 분명히 했다. 기능·버전·서명 제약·링크를 별도로 대조하고 다른 에이전트가 원문과 수정안을 검토했다. 짧은 원고이므로 지표 스크립트는 실행하지 않았으며 문체 점수는 산출하지 않았다.
+- 사실 확인: GitHub API의 최신 릴리스는 [v0.2.0](https://github.com/laekhole/what-am-i-doing/releases/tag/v0.2.0), 발행 시각은 2026-09-09 04:17:38 UTC다. Windows EXE 4,564,992바이트와 SHA-256·Sigstore 파일 목록을 확인했다. 한국어 배포본과 소스 전용 영어 화면·알림 기능을 구분했다. 공개 EXE를 이번에 다운로드하거나 실행하지 않았다.
+- 이미지: 기존 [한국어 샘플 화면](assets/screenshots/sessions-ko.png)을 확인했고 샘플 프로젝트임이 표시되어 있다. [GeekNews 이용법](https://news.hada.io/guidelines)에 따라 본문에는 이미지 삽입 대신 링크를 넣었다. 새 이미지나 영상은 만들지 않았다.
+- 중복 확인 범위: 웹 검색에서 `waid`, `what-am-i-doing`의 GeekNews 결과는 나오지 않았다. 사이트 내부 검색의 초기 HTML에는 검색 결과가 없어 중복 없음으로 확정하지 않았다. 실제 게시 전 내부 검색 결과 또는 계정의 기존 글을 다시 확인해야 한다.
+- 계정정보: 지정한 파일을 메모리에서 읽어 GeekNews 로그인에만 사용했다. 비밀번호와 세션 쿠키를 출력하거나 별도 파일로 저장하지 않았고 원본 계정정보 파일은 Git 제외 목록에 추가했다. 임시 HTTP 점검 스크립트는 기존 Git 제외 경로 `.tools/geeknews/`에 있다.
+- 게시 URL·시각: 없음. 등록 POST를 보내지 않았으며 검토 대기 상태도 아니다.
+- 남은 일: 사용자가 가능한 때 [글 등록](https://news.hada.io/write)에서 Show를 선택하고 위 원고를 입력한 뒤 사람 확인과 등록을 완료해야 한다. 게시 이후 URL·시각·실제 노출 상태를 기록한다. 자동 재시도나 댓글 응대는 예약하지 않았다.
+
 ## 2026-10-01 Show GN 게시 진행 결과
 
 - 확인 시각: 2026-10-01 14:34 +09:00.
@@ -81,7 +111,7 @@ https://github.com/laekhole/what-am-i-doing
 
 | 채널 | 상태 | 게시 시각 | 게시 URL / 후속 결과 |
 |---|---|---|---|
-| Show GN | 미게시·가입 후 일주일 제한 | — | 2026-10-01 등록 화면에서 제한 확인. 게시 URL 없음. 2026-10-08 가입 완료 시각 이후 재확인 |
+| Show GN | 미게시·사람 확인 필요 | — | 2026-10-13 HTTPS 로그인·정상 작성 폼 확인. Turnstile 필수로 미제출. 최신 원고는 [별도 파일](docs/geeknews-post.txt) |
 | 기존 SNS | 미게시·계정 미지정 | — | 사용자가 채널 지정 후 진행 |
 | Reddit | 보류 | — | 영어 공개 배포본·게시 규칙 확인 필요 |
 | Show HN | 후순위 | — | 제작자 직접 작성 원고 필요 |
