@@ -1,0 +1,73 @@
+name: Windows MSIX package
+
+on:
+  push:
+    branches: [main, 'msix/**']
+    paths:
+      - 'desktop/**'
+      - 'src/**'
+      - 'Cargo.*'
+      - '.github/workflows/msix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: msix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  msix:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Windows SDK and MSVC
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          if ($LASTEXITCODE -ne 0) { throw 'Rust setup failed.' }
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { throw 'Rust selection failed.' }
+
+      - name: Build desktop EXE
+        run: |
+          cargo build --manifest-path desktop/Cargo.toml --release --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Native shell build failed.' }
+
+      - name: Package Store upload and test-signed MSIX
+        run: |
+          $metadata = cargo metadata --manifest-path desktop/Cargo.toml --no-deps --format-version 1 --locked | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
+          $tag = 'v' + ($metadata.packages | Where-Object name -eq 'waid-desktop').version
+          ./desktop/package-msix.ps1 -Tag $tag -OutputDirectory desktop/target/release/msix/store
+          ./desktop/package-msix.ps1 -Tag $tag -OutputDirectory desktop/target/release/msix/test -TestSign
+
+      - name: Upload Store package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: waid-msix-store-unsigned
+          path: desktop/target/release/msix/store/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload test-signed package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: waid-msix-test-signed
+          path: desktop/target/release/msix/test/*
+          if-no-files-found: error
+          retention-days: 7
