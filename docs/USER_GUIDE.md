@@ -4,7 +4,7 @@ This is the full reference for waid. For a short overview, screenshots and downl
 
 A native desktop app that shows the **current task, project, agent/model, and last observed status** of multiple coding AI sessions in one place. It reads existing coding-agent logs and does not send commands to agents.
 
-**v0.2.0 is the Windows milestone, with stabilization ongoing.** Both Rust packages are version `0.2.0`. The native macOS app is development work toward v0.3.0; Android, iOS/iPadOS and waidaway LAN access are planned. See the [v0.2.0 release notes](../releases/v0.2.0.md) for changes from v0.1.0 and upgrade instructions.
+**v0.2.0 is the Windows milestone, with stabilization ongoing.** Both Rust packages are version `0.2.1` in the current source, for the next Windows release. The native macOS app is development work toward v0.3.0; Android, iOS/iPadOS and waidaway LAN access are planned. See the [v0.2.0 release notes](../releases/v0.2.0.md) for changes from v0.1.0 and upgrade instructions.
 
 [Download and verify](#download-and-verify-a-release) · [Controls](#using-the-app) · [Agent support](#agent-support) · [Troubleshooting](#troubleshooting-missing-sessions) · [Mac development](../MACOS.md)
 

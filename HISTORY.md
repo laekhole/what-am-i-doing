@@ -27,6 +27,24 @@
 
 ## 프롬프트별 작업 기록
 
+### 2026-10-14 01:17 +09:00 — Partner Center ID 반영과 0.2.1 버전 결정
+
+- 요청: Partner Center 제품 ID 세 값 반영, Store 배포 버전을 0.2.1로 올리기(0.3.0은 macOS 검증 후로 유지), Store 앱 업데이트가 쉬운지 확인.
+- 상태: 진행 중 — 반영·푸시 후 CI 결과 확인 중.
+- 변경·이유: `identity.json`의 임시 테스트 값을 Partner Center 값(`laekhole.waid`, 게시자 CN, 표시 이름 `laekhole`)으로 바꿨다. 이전 안내에서 0.3.0을 권했으나 0.3.0은 macOS 지원 릴리스로 정해져 있어(사용자 지적, 로드맵·이전 남은 일의 v0.2.1과 일치) 코어·데스크톱 버전을 `0.2.1`로 올리고 두 lockfile을 맞췄다. 사용자 가이드의 현재 패키지 버전 문장, Store 문서의 버전 예시·테스트 파일명·인증서 제거 조건·버전 결정 근거를 고치고 업데이트 제출 절(재인증 최대 3영업일, 버전 증가, 마지막 자리 0)을 추가했다. GitHub v0.2.1 릴리스(노트·README 다운로드 링크·태그)는 공개 작업이라 이번에 하지 않았다.
+- 관련 파일: [identity.json](desktop/msix/identity.json), [Cargo.toml](Cargo.toml), [desktop/Cargo.toml](desktop/Cargo.toml), `Cargo.lock`, `desktop/Cargo.lock`, [Store 배포 문서](docs/MICROSOFT_STORE.md), [docs/USER_GUIDE.md](docs/USER_GUIDE.md), [docs/USER_GUIDE.ko.md](docs/USER_GUIDE.ko.md), [HISTORY.md](HISTORY.md).
+- 검증: 코어·데스크톱 `cargo metadata --locked --offline` 통과(waid-desktop 0.2.1). `git diff --check` 통과. Store 인증 기간은 Microsoft Learn 인증 절차 문서로 확인했고, 버전 증가·마지막 자리 0 규칙은 기존 패키징 스크립트 주석과 제3자 문서 기준이다. 로컬 빌드·테스트는 실행하지 않았다(CI 결과로 확인 예정).
+- 남은 일: CI의 Store 업로드 artifact 확인 후 첫 제출, GitHub v0.2.1 릴리스 노트·README 갱신·태그(사용자 확인 후), THIRD_PARTY_NOTICES의 `waid 0.2.0` 기준 문구는 의존성 변경이 없어 유지.
+
+### 2026-10-14 00:54 +09:00 — Partner Center 제품 ID 값 위치 문의
+
+- 요청: Partner Center 가입·`waid` 이름 예약 후, identity.json에 넣을 제품 ID 세 값이 어디 있는지 확인.
+- 상태: 완료 — 위치 안내. ID 값 반영은 사용자 전달 대기.
+- 변경·이유: 사용자 화면이 영어 UI라 Store 문서의 메뉴 경로 `제품 관리 → 제품 ID` 두 곳에 영어 이름(Product management → Product Identity)을 함께 적었다.
+- 관련 파일: [Store 배포 문서](docs/MICROSOFT_STORE.md), [HISTORY.md](HISTORY.md).
+- 검증: 사용자 스크린샷의 왼쪽 메뉴에서 Product management 아래 Product Identity 항목을 확인. 해당 페이지 내용은 직접 보지 않았다.
+- 남은 일: 사용자가 세 값을 전달하면 identity.json 갱신·푸시, 첫 제출 전 버전 결정.
+
 ### 2026-10-13 18:10 +09:00 — MSIX 작업 main 병합과 Partner Center 가입 후 절차
 
 - 요청: `msix/store-package` 브랜치를 main에 병합하고, Partner Center 가입 후 해야 할 일 안내.
