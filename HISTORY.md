@@ -27,6 +27,60 @@
 
 ## 프롬프트별 작업 기록
 
+### 2026-10-13 17:45 +09:00 — MSIX 패키징·설치 테스트·Store 제출 자료 준비
+
+- 요청: MSIX 배포 절차 중 패키징(2), MSIX 환경 동작 확인(3), Store 제출 준비(4) 진행. 진행 중 MSIX 아이콘이 waid 캐릭터가 아닌 이유와 타사 사용 여부 질문.
+- 상태: 부분 완료 — 패키징·CI 빌드·로컬 설치 실행 확인·제출 자료 작성 완료. Partner Center ID 반영과 실제 제출은 사용자 계정 준비 후 진행.
+- 변경·이유: 로컬에 Rust·Windows SDK가 없어 사용자 선택에 따라 `msix/store-package` 브랜치의 GitHub Actions에서 빌드한다. full trust 매니페스트 템플릿, ID 파일(임시 테스트 값), 배율·작업 표시줄용 아이콘과 resources.pri, 일회용 자체 서명 인증서로 테스트 서명하는 패키징 스크립트, Store 업로드용(미서명)·테스트 서명 artifact를 만드는 워크플로를 추가했다. 첫 CI는 토큰 검사가 매니페스트 주석의 중괄호를 잡아 실패해 주석을 고쳤고, makepri 기본 설정이 배율별 pri로 나눠 단일 pri로 바꿨다. 아이콘은 처음에 현재 빌드에서 쓰지 않는 예전 `desktop/icons`(검정 바탕 주황 W, 저장소 초기 커밋의 자체 SVG)로 잘못 만들어 사용자의 지적 후 EXE·트레이와 같은 캐릭터 타일(`assets/waid-app-icon.png`)로 다시 만들었다. Store 설명(한·영), 인증 참고 사항, 개인정보·연령 설문 메모, 1920×1080 스크린샷 2장, MSIX에서 달라지는 설정 파일 위치를 문서화했다. 타사 로고는 사용자 방침대로 유지하고 위험만 기록했다. `release.yml`과 `main`은 변경하지 않았다.
+- 관련 파일: [AppxManifest.xml](desktop/msix/AppxManifest.xml), [identity.json](desktop/msix/identity.json), [desktop/msix/Assets](desktop/msix/Assets), [package-msix.ps1](desktop/package-msix.ps1), [msix.yml](.github/workflows/msix.yml), [Store 배포 문서](docs/MICROSOFT_STORE.md), [assets/store](assets/store), [HISTORY.md](HISTORY.md). 브랜치 `msix/store-package`, 커밋 `7c683dc`–`adfc136`.
+- 검증: CI 실행 38368830699 실패(토큰 검사) → 38369035890·38369500165·38369731799 성공. 테스트 MSIX를 받아 테스트 인증서를 UAC 승인으로 LocalMachine\TrustedPeople에 등록하고 `Add-AppxPackage` 설치 성공(SignatureKind Developer, Status Ok). 시작 메뉴 AUMID로 실행해 WindowsApps 경로의 본 프로세스와 `--waid-core` 수집기 자식 프로세스를 확인했고, PrintWindow 캡처에서 실제 Claude Code·Codex 세션 4개가 표시됐다. 해당 시간대 waid 관련 Code Integrity 차단 이벤트는 없었다(Smart App Control은 평가 모드 2). 최종 패키지는 resources.pri 1개, 미서명 Store 패키지 확인. 테스트 후 앱·인증서·패키지 데이터 폴더 제거를 확인했다. 첫 화면 캡처가 앞 창(브라우저)을 찍어 즉시 삭제했다. 미검증: 설정 저장·재실행 유지, 트레이 종료, Orca 복귀, PowerShell 화면 관찰, 캐릭터 아이콘 패키지의 설치 후 시작 메뉴 표시, WACK.
+- 남은 일: Partner Center ID 값으로 identity.json 갱신 → CI의 Store 업로드 artifact로 제출. 제출 통과 후 release.yml 연결, README Store 링크, 브랜치 main 병합.
+
+### 2026-10-13 17:10 +09:00 — MSIX(Microsoft Store) 배포 진행 방법 안내
+
+- 요청: 미서명 EXE 차단 대안으로 MSIX 배포를 진행하기 위한 절차 확인.
+- 상태: 완료 — 절차 안내. 변경 없음.
+- 변경·이유: 변경 없음. Store가 서명하는 경로는 Store 배포에만 해당하고 GitHub에서 MSIX를 직접 받게 하면 다시 자체 인증서가 필요하다는 점을 구분했다. 데스크톱 앱 코드를 읽어 MSIX 환경에서 확인할 부분(LOCALAPPDATA 설정 파일 가상화, `--waid-core` 자기 재실행, PowerShell 화면 관찰, Orca CLI 호출, 포함된 타사 로고의 Store 심사 위험)을 정리하고 Partner Center 계정 → 매니페스트·패키징 → 로컬 테스트 → 제출 → 릴리스 연결 순서를 안내했다.
+- 관련 파일: [desktop/src/ui.rs](desktop/src/ui.rs), [desktop/src/main.rs](desktop/src/main.rs), [src/terminal.rs](src/terminal.rs), [release.yml](.github/workflows/release.yml), [HISTORY.md](HISTORY.md).
+- 검증: 코드·워크플로 읽기만 수행. Partner Center 등록비·심사 기간 등 현재 정책은 웹으로 재확인하지 않아 미검증. 빌드·패키징·테스트 미실행.
+- 남은 일: 사용자의 Partner Center 개인 개발자 계정 생성·앱 이름 예약 후 Identity 값 전달, 이후 MSIX 패키징 구현과 실기 테스트.
+
+### 2026-10-13 17:03 +09:00 — 미서명 EXE 차단 해결 방법 문의
+
+- 요청: 인증서가 없어 Windows가 차단하는 EXE를 사람들이 받아서 바로 쓸 수 있게 하는 방법 확인.
+- 상태: 완료 — 선택지 안내. 변경 없음.
+- 변경·이유: 변경 없음. 기존 [SIGNING.md](SIGNING.md)와 이전 서명 조사 기록을 바탕으로 SmartScreen(사용자가 `추가 정보 → 실행` 가능)과 Smart App Control(개별 예외 없음, 서명 필요)을 구분하고, SignPath Foundation 무료 신청·저가 오픈소스 인증서 구매·Microsoft Store(MSIX) 배포·README 실행 안내 보강을 비교해 안내했다.
+- 관련 파일: [SIGNING.md](SIGNING.md), [README.md](README.md), [HISTORY.md](HISTORY.md).
+- 검증: 문서 읽기만 수행. 인증기관 가격·국가별 발급 조건은 이번에 웹으로 재확인하지 않아 미검증이다. 빌드·테스트·외부 신청은 하지 않았다.
+- 남은 일: 사용자가 서명 경로를 정하면 신청·인증서 발급(본인 확인 필요) 후 릴리스 워크플로에 서명 단계 연결.
+
+### 2026-10-13 15:19 +09:00 — 사용자가 올린 GeekNews 글 확인
+
+- 요청: 사용자가 직접 게시한 GeekNews 글의 공개 상태와 내용을 확인.
+- 상태: 완료 — 비로그인 공개 조회로 Show GN 게시와 본문을 확인.
+- 변경·이유: LAUNCH.md 맨 위에 게시 URL·페이지 제공 시각·검증 결과를 추가해 이전 미게시 기록을 갱신했다. 공개 글과 원고는 수정하지 않았다. 본문 첫머리에 이미지가 포함된 README 안내 링크를 추가하는 개선안을 제안했다.
+- 관련 파일: [LAUNCH.md](LAUNCH.md), [HISTORY.md](HISTORY.md). 공개 글: https://news.hada.io/topic?id=35282.
+- 검증: 웹 읽기 도구는 접근 실패, 일반 curl은 연결 실패 후 확장 실행에서 HTTP 403을 반환했으나 Node의 일반 비로그인 GET으로 HTTP 200 및 본문을 확인했다. 제목·지원 도구·사용 사례·상세 사용법·클론 및 추가 도구 요청 문구를 확인했고, README·이미지 3개·릴리스·사용 가이드의 공개 링크 6개가 HTTP 200이었다. git diff --check 통과. 브라우저 제어·인증정보 읽기·로그인·외부 수정은 하지 않았으며 화면 배치는 미검증이다.
+- 남은 일: 요청 범위에는 없음. 홈·목록 노출 순위는 미확인이고 자동 모니터링이나 댓글 응대는 예약하지 않았다.
+
+### 2026-10-13 15:17 +09:00 — GeekNews 본문 이미지 표시 방식 확인
+
+- 요청: GeekNews 본문에서도 이미지가 보이도록 구성할 방법 확인.
+- 상태: 완료 — 공식 지원 범위와 현재 소개 자료로 연결하는 방법 확인.
+- 변경·이유: 변경 없음. 공식 이용법의 본문·댓글 이미지 미지원 규정을 재확인했다. 이미지·마스코트·사용법이 들어 있는 공개 README로 안내하는 링크를 첫머리에 두는 방법을 제안했다. 이어진 사용자 게시 확인 요청에 함께 안내한다.
+- 관련 파일: [게시용 원고](docs/geeknews-post.txt), [README.md](README.md), [HISTORY.md](HISTORY.md).
+- 검증: [GeekNews 이용법](https://news.hada.io/guidelines)의 Markdown 지원 항목과 기존 원고·README의 이미지 구성을 확인했다. 외부 게시·본문 수정·브라우저 제어는 수행하지 않았다.
+- 남은 일: 플랫폼에서 본문 이미지 삽입을 지원하지 않으므로 이미지는 링크 대상 페이지에서 볼 수 있다.
+
+### 2026-10-13 15:12 +09:00 — GeekNews 게시 파일과 입력 방법 안내
+
+- 요청: GeekNews에 사용할 파일 위치와 실제 등록할 내용 확인.
+- 상태: 완료 — 게시용 텍스트 파일과 글 종류·제목·URL·본문 입력 방법 안내.
+- 변경·이유: 변경 없음. `docs/geeknews-post.txt`의 제목·Show 유형·GitHub URL·본문 구분을 확인하고, 파일 업로드 대신 각 입력칸에 복사하도록 안내했다. 사진과 마스코트는 링크 대상인 공개 README에 포함되어 있다.
+- 관련 파일: [게시용 원고](docs/geeknews-post.txt), [README.md](README.md), [HISTORY.md](HISTORY.md).
+- 검증: README와 최신 작업 기록, 게시 원고 앞부분, 원고·HTML·커버 파일 존재 확인. git diff --check 통과. 내용 변경·외부 게시·제품 빌드·테스트는 수행하지 않았다.
+- 남은 일: 사용자가 GeekNews에서 중복 여부를 확인하고 사람 확인·최종 등록을 완료한 뒤 게시 URL과 노출 상태 확인.
+
 ### 2026-10-13 13:50 +09:00 — 대표 문구를 내가 뭐하고 있었지로 통일
 
 - 요청: waid의 뜻을 직접 드러내도록 기존 대표 문구를 `내가 뭐하고 있었지?`로 바꾸기.
