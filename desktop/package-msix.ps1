@@ -62,6 +62,11 @@ try {
     $priconfig = Join-Path $work 'priconfig.xml'
     & $makepri createconfig /cf $priconfig /dq ko-KR_en-US /pv 10.0.0 /o | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'makepri createconfig failed.' }
+    # One package, not a bundle: keep every scale in resources.pri instead of split resource packs.
+    [xml]$config = Get-Content -LiteralPath $priconfig -Raw
+    $packaging = $config.SelectSingleNode('/resources/packaging')
+    if ($packaging) { [void]$packaging.ParentNode.RemoveChild($packaging) }
+    $config.Save($priconfig)
     & $makepri new /pr $stage /cf $priconfig /mn (Join-Path $stage 'AppxManifest.xml') /of (Join-Path $stage 'resources.pri') /o | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'makepri new failed.' }
 
