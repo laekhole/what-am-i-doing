@@ -59,7 +59,7 @@
 - 웹 사이트: `https://github.com/laekhole/what-am-i-doing`
 - 지원 연락처: `https://github.com/laekhole/what-am-i-doing/issues`
 - 연령 등급(IARC) 설문: 사용자 간 상호작용 없음, 사용자 생성 콘텐츠 공유 없음, 위치·개인정보 수집 없음, 구매 없음. 실제 질문 문구에 맞춰 답한다.
-- 개인정보 관련 질문: 앱이 개인 정보를 수집·전송하지 않는다. 로컬 로그를 읽어 화면에 표시하기만 한다.
+- 개인정보 관련 질문("개인 정보에 접근·수집·전송하나요?"): **예**. 수집·전송은 하지 않지만, 개인 정보가 들어 있을 수 있는 로컬 대화 로그를 읽어 화면에 표시하므로 접근에 해당한다. [Store 정책 10.5.1](https://learn.microsoft.com/en-us/windows/apps/publish/store-policies)은 접근만으로도 처리방침을 요구하고, Win32·Desktop Bridge 앱은 항상 처리방침이 있어야 한다고 정한다. 로컬 전용이라 외부 전송 동의(10.5.2·10.5.3)는 해당하지 않는다. 처리방침 문서에는 Store 버전의 설정 파일 위치와 제거 시 삭제도 적어 두었다.
 
 ### 설명 (한국어)
 
@@ -102,7 +102,9 @@ Store 데스크톱 스크린샷은 1366×768 이상이어야 한다. 기존 750�
 - [세션 목록(한국어) + 펼친 카드(영어)](../assets/store/store-1-sessions-expanded.png)
 - [세션 목록(영어) + 2열 보기](../assets/store/store-2-sessions-columns.png)
 
-모두 샘플 데이터이며 화면 안에 샘플 표시가 있다. 화면에 타사 에이전트 로고가 보인다(아래 [타사 로고](#타사-로고) 참고). 영어 화면은 v0.2.0 이후 소스 기준이므로, Store에 올리는 빌드와 화면 언어·기능이 맞는지 제출 전에 확인한다.
+모두 샘플 데이터이며 화면 안에 샘플 표시가 있다. 화면에 타사 에이전트 로고가 보인다(아래 [타사 로고](#타사-로고) 참고). 영어 화면과 2열 보기는 Store에 올리는 0.2.1 빌드에 들어 있다. 스크린샷은 언어별로 1장 이상 필요하며, 같은 이미지라도 언어마다 따로 올린다.
+
+Store 로고(1:1 App tile icon, 300×300)는 [Microsoft 문서](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/screenshots-and-images) 본문에서는 선택(없으면 패키지 아이콘 사용)이지만 같은 문서 FAQ는 필수라고 해서, 패키지의 300px 타일을 그대로 [store-logo-300.png](../assets/store/store-logo-300.png)로 준비했다. 올리는 편이 안전하다.
 
 ### 인증 참고 사항 (Notes for certification)
 
@@ -122,13 +124,13 @@ runFullTrust 사용 이유와 테스트 방법을 적는다.
 2. **앱 이름 예약**: 앱 및 게임 → 새 제품 → MSIX or PWA app → 이름 예약.
 3. **ID 값 전달**: 제품 관리 → 제품 ID(Product management → Product Identity)의 세 값을 `identity.json`에 반영하고 푸시한다. `main`의 `msix.yml` 실행이 만든 `waid-msix-store-unsigned` artifact가 제출할 패키지다.
 4. **제출물 작성**
-   - 가격 및 가용성: 무료, 시장, 공개 여부. 첫 제출을 비공개로 두고 직접 설치해 확인할 수도 있다.
+   - 가격 및 가용성: 무료, 시장 전체, 공개. GitHub v0.2.1 릴리스와 같은 시점에 내기로 했으므로 비공개 단계를 두지 않는다.
    - 속성: 범주, 개인정보 처리방침 URL, 웹 사이트, 지원 연락처. 앱이 개인 정보에 접근하는지 묻는 질문은 로컬 대화 로그를 읽으므로 **예**로 답하고 처리방침 URL을 넣는 편이 안전하다.
    - 연령 등급: IARC 설문.
    - 패키지: 위 `.msix` 업로드. Identity가 예약 값과 다르면 여기서 거부된다.
    - Store 목록(한국어·영어): 위 설명과 [스크린샷](../assets/store).
    - 제출 옵션 → 인증 참고 사항: 위 runFullTrust 사용 이유와 테스트 방법.
-5. **제출**: 인증에 보통 며칠 걸린다. 반려 사유가 오면 그에 맞춰 고친다.
+5. **제출**: 제출과 같은 시점에 GitHub v0.2.1 릴리스(노트·README 링크·태그)를 낸다. 인증은 최대 3영업일이며, 반려 사유가 오면 그에 맞춰 고친다.
 6. **게시 후**: Store 링크를 README에 넣고 `release.yml`을 연결한다.
 
 **버전**: 첫 제출은 `0.2.1`(패키지 0.2.1.0)이다. `main`에는 GitHub v0.2.0 이후 변경(영어 UI, 트레이 집계, 답변 알림 등)이 있어 0.2.0으로 올리면 GitHub v0.2.0과 내용이 달라진다. 0.3.0은 macOS 실기 검증을 마친 릴리스에 쓰므로 Windows 변경만 담은 이번 배포는 0.2.1로 하고, GitHub v0.2.1 릴리스와 내용을 맞춘다.

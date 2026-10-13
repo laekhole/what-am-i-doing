@@ -27,13 +27,40 @@
 
 ## 프롬프트별 작업 기록
 
+### 2026-10-14 01:38 +09:00 — Store 제출 자료 보완 커밋·푸시
+
+- 요청: 지금까지의 변경 커밋·푸시.
+- 상태: 완료.
+- 변경·이유: 아래 두 항목(Store 제출서 준비 점검, 개인정보 질문)과 0.2.1 항목의 CI 결과 기록을 main에 커밋·푸시했다. 작성 중인 `releases/v0.2.1.md` 초안은 검토 전이라 제외했다.
+- 관련 파일: [Store 배포 문서](docs/MICROSOFT_STORE.md), [docs/USER_GUIDE.md](docs/USER_GUIDE.md), [docs/USER_GUIDE.ko.md](docs/USER_GUIDE.ko.md), [store-logo-300.png](assets/store/store-logo-300.png), [HISTORY.md](HISTORY.md).
+- 검증: `git diff --check` 통과, 푸시 후 origin/main 일치 확인.
+- 남은 일: 릴리스 노트 초안 검토, Store 제출 시점에 README 링크 갱신과 v0.2.1 태그 푸시.
+
+### 2026-10-14 01:35 +09:00 — 로컬 전용 처리와 Store 개인정보 질문
+
+- 요청: 개인정보를 로컬에만 두고 외부로 보내지 않는데도 Partner Center 개인정보 질문에 예로 답해야 하는지 확인.
+- 상태: 완료.
+- 변경·이유: 현행 Store 정책(7.20) 10.5.1이 "접근·수집·전송" 중 접근만으로도 처리방침을 요구하고, Win32·Desktop Bridge 앱은 항상 처리방침이 필요하다고 정해 **예** 유지가 맞다고 판단했다. 로컬 전용이면 외부 전송 동의 조항(10.5.2·10.5.3)은 해당하지 않는다. 제출할 처리방침(사용자 가이드 개인정보 절)이 Store 버전의 설정 파일 위치를 다루지 않아, 영·한 가이드에 MSIX 패키지 데이터 폴더 위치와 제거 시 삭제를 한 문장씩 추가했고 Store 문서에 정책 근거를 적었다.
+- 관련 파일: [docs/USER_GUIDE.md](docs/USER_GUIDE.md), [docs/USER_GUIDE.ko.md](docs/USER_GUIDE.ko.md), [Store 배포 문서](docs/MICROSOFT_STORE.md), [HISTORY.md](HISTORY.md).
+- 검증: Microsoft Learn의 Store 정책 원문(7.20, 2026-09-14) 10.5절을 직접 확인. MSIX 설정 경로·제거 시 삭제는 이전 설치 테스트 기록과 Store 문서 기준이며 이번에 재설치하지 않았다. `git diff --check` 통과.
+- 남은 일: 10.5.4(개인정보 저장 시 암호화)와 평문 `settings.json`의 관계는 심사 결과에 따라 대응.
+
+### 2026-10-14 01:26 +09:00 — Store 제출서 준비 상태 점검과 v0.2.1 동시 릴리스 준비
+
+- 요청: GitHub v0.2.1 릴리스를 Store 제출과 같은 시점에 내기로 결정. 제출서 작성(4단계)이 어디까지 됐는지 확인.
+- 상태: 진행 중 — 제출 자료 점검·보완 완료. 릴리스 노트 초안 작성 중.
+- 변경·이유: Partner Center 제출서는 사용자 계정에서 입력하는 단계라 아직 아무것도 입력되지 않았고, 저장소에는 입력할 값과 문구만 준비돼 있었다. 점검 중 Store 문서의 개인정보 질문 답이 두 곳에서 엇갈려(수집 안 함 vs 예로 답함) 로컬 대화 로그 접근을 이유로 **예**로 통일했다. 스크린샷 메모의 "영어 화면은 v0.2.0 이후 소스" 주의는 0.2.1 빌드에 포함돼 해소된 것으로 고쳤고, 언어별 스크린샷 업로드를 적었다. Microsoft 문서가 Store 로고를 본문에서는 선택, FAQ에서는 필수라고 해 패키지의 300px 타일을 `assets/store/store-logo-300.png`로 복사해 준비했다. 공개 범위는 동시 릴리스에 맞춰 공개로, 제출 단계에 v0.2.1 릴리스 시점을 적었다.
+- 관련 파일: [Store 배포 문서](docs/MICROSOFT_STORE.md), [store-logo-300.png](assets/store/store-logo-300.png), [HISTORY.md](HISTORY.md).
+- 검증: 로고 파일이 300×300 PNG이고 앱 캐릭터 타일임을 확인. Microsoft Learn의 MSIX 스크린샷·이미지 문서에서 스크린샷 조건(데스크톱 1366×768 이상, 1장 이상, 언어별 업로드)과 로고 관련 상충 문구를 확인. 개인정보 처리방침 URL 필요 조건은 공식 정책 원문 대신 제3자 안내로만 확인했다. `git diff --check` 통과.
+- 남은 일: 사용자의 Partner Center 제출서 입력, `releases/v0.2.1.md` 초안 검토, 제출 시점에 README 링크 갱신·태그 푸시.
+
 ### 2026-10-14 01:17 +09:00 — Partner Center ID 반영과 0.2.1 버전 결정
 
 - 요청: Partner Center 제품 ID 세 값 반영, Store 배포 버전을 0.2.1로 올리기(0.3.0은 macOS 검증 후로 유지), Store 앱 업데이트가 쉬운지 확인.
-- 상태: 진행 중 — 반영·푸시 후 CI 결과 확인 중.
+- 상태: 완료 — 반영·푸시(`424d2ea`)와 Store 업로드 패키지 생성 확인. 제출과 GitHub v0.2.1 릴리스는 남음.
 - 변경·이유: `identity.json`의 임시 테스트 값을 Partner Center 값(`laekhole.waid`, 게시자 CN, 표시 이름 `laekhole`)으로 바꿨다. 이전 안내에서 0.3.0을 권했으나 0.3.0은 macOS 지원 릴리스로 정해져 있어(사용자 지적, 로드맵·이전 남은 일의 v0.2.1과 일치) 코어·데스크톱 버전을 `0.2.1`로 올리고 두 lockfile을 맞췄다. 사용자 가이드의 현재 패키지 버전 문장, Store 문서의 버전 예시·테스트 파일명·인증서 제거 조건·버전 결정 근거를 고치고 업데이트 제출 절(재인증 최대 3영업일, 버전 증가, 마지막 자리 0)을 추가했다. GitHub v0.2.1 릴리스(노트·README 다운로드 링크·태그)는 공개 작업이라 이번에 하지 않았다.
 - 관련 파일: [identity.json](desktop/msix/identity.json), [Cargo.toml](Cargo.toml), [desktop/Cargo.toml](desktop/Cargo.toml), `Cargo.lock`, `desktop/Cargo.lock`, [Store 배포 문서](docs/MICROSOFT_STORE.md), [docs/USER_GUIDE.md](docs/USER_GUIDE.md), [docs/USER_GUIDE.ko.md](docs/USER_GUIDE.ko.md), [HISTORY.md](HISTORY.md).
-- 검증: 코어·데스크톱 `cargo metadata --locked --offline` 통과(waid-desktop 0.2.1). `git diff --check` 통과. Store 인증 기간은 Microsoft Learn 인증 절차 문서로 확인했고, 버전 증가·마지막 자리 0 규칙은 기존 패키징 스크립트 주석과 제3자 문서 기준이다. 로컬 빌드·테스트는 실행하지 않았다(CI 결과로 확인 예정).
+- 검증: 코어·데스크톱 `cargo metadata --locked --offline` 통과(waid-desktop 0.2.1). `git diff --check` 통과. Store 인증 기간은 Microsoft Learn 인증 절차 문서로 확인했고, 버전 증가·마지막 자리 0 규칙은 기존 패키징 스크립트 주석과 제3자 문서 기준이다. 로컬 빌드·테스트는 실행하지 않았고, 푸시로 실행된 Core and Windows checks(38429376059), Windows MSIX package(38429376244), macOS checks(38429376398)가 모두 success. MSIX 실행의 `waid-msix-store-unsigned` artifact(`waid-v0.2.1-windows-x64.msix`, 2026-10-27 만료)를 받아 매니페스트의 Identity Name·Publisher·Version 0.2.1.0·PublisherDisplayName·DisplayName이 예약 값과 같음을 확인했다. Partner Center 업로드 검사는 아직 거치지 않았다.
 - 남은 일: CI의 Store 업로드 artifact 확인 후 첫 제출, GitHub v0.2.1 릴리스 노트·README 갱신·태그(사용자 확인 후), THIRD_PARTY_NOTICES의 `waid 0.2.0` 기준 문구는 의존성 변경이 없어 유지.
 
 ### 2026-10-14 00:54 +09:00 — Partner Center 제품 ID 값 위치 문의

@@ -41,7 +41,7 @@ Windows 창 위쪽의 **English / 한국어** 또는 트레이 언어 메뉴에�
 **waid는 사용자 컴퓨터에 내려받아 로컬에서 실행하는 프로그램입니다. 코딩 에이전트 로그를 내 컴퓨터에서 처리하며, 프롬프트·답변·원본 로그·세션 데이터를 개발자나 외부 서버 어디에도 업로드하지 않습니다.** 현재 앱에는 사용 통계 수집(텔레메트리), 분석 서비스, 클라우드 동기화, 외부 AI API 호출이 없습니다. Windows 버전은 설치 마법사 없이 EXE 하나로 실행합니다.
 
 - 수집기는 기존 로컬 로그와 지원하는 SQLite 데이터베이스를 **읽기 전용**으로 읽습니다. 원본 대화를 수정하거나 에이전트에 프롬프트를 보내지 않습니다. Orca SSH 세션도 Orca가 이미 만든 로컬 훅 사본을 읽으며 원격 컴퓨터에 접속하지 않습니다. Windows에서는 SSH 클라이언트 실행 중 제한된 UI Automation 검사로 보이는 터미널 화면도 로컬에서 관찰합니다. 키 입력·탭 전환·스크롤·SSH 접속은 수행하지 않습니다.
-- 설정과 저장된 세션 상세 정보는 Windows의 `%LOCALAPPDATA%\waid\settings.json`, macOS의 `~/Library/Application Support/waid/settings.json`에 보관합니다. `WAID_DATA_DIR`로 바꿀 수 있으며, 별도 동기화 프로그램을 통한 복사도 원하지 않으면 로컬 폴더를 지정하세요.
+- 설정과 저장된 세션 상세 정보는 Windows의 `%LOCALAPPDATA%\waid\settings.json`, macOS의 `~/Library/Application Support/waid/settings.json`에 보관합니다. `WAID_DATA_DIR`로 바꿀 수 있으며, 별도 동기화 프로그램을 통한 복사도 원하지 않으면 로컬 폴더를 지정하세요. Microsoft Store(MSIX) 버전은 같은 파일을 패키지 데이터 폴더(`%LOCALAPPDATA%\Packages\laekhole.waid_…\LocalCache\Local\waid\`)에 보관하며, 앱을 제거하면 이 폴더도 지워집니다.
 - 네이티브 앱은 로컬 수집기 프로세스를 사용합니다. 선택형 CLI `--html --watch` 대시보드는 **127.0.0.1(localhost)**에서만 데이터를 제공하며 LAN이나 인터넷 인터페이스에 열지 않습니다. 기본 HTML은 로컬 리소스만 사용합니다. 사용자가 넣는 HTML 템플릿에는 스크립트·외부 리소스가 포함될 수 있으므로 이 설명은 기본 템플릿에 해당합니다.
 - 사용자가 세션 돌아가기를 누르면 설치된 앱에 세션 식별자를 전달하거나 기존 로컬 창·탭으로 이동합니다. 해당 AI 앱 자체의 통신, 문서·다운로드 링크 열기, 사용자가 내보낸 파일을 공유하는 행위는 waid의 로컬 수집과 별개입니다. 계획 중인 waidaway LAN 기능은 현재 버전에 구현되어 있지 않습니다.
 
