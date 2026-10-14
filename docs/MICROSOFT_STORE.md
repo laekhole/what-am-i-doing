@@ -55,7 +55,7 @@
 
 - 가격: 무료. 시장: 전체.
 - 범주: 개발자 도구 (Developer tools).
-- 개인정보 처리방침 URL: `https://github.com/laekhole/what-am-i-doing/blob/main/docs/USER_GUIDE.md#privacy-and-local-operation`
+- 개인정보 처리방침 URL: `https://github.com/laekhole/what-am-i-doing/blob/main/PRIVACY.md` (영·한 단독 처리방침. 접근 정보·저장 위치·평문 저장·제공 없음·삭제 방법·문의처를 적었다)
 - 웹 사이트: `https://github.com/laekhole/what-am-i-doing`
 - 지원 연락처: `https://github.com/laekhole/what-am-i-doing/issues`
 - 연령 등급(IARC) 설문: 사용자 간 상호작용 없음, 사용자 생성 콘텐츠 공유 없음, 위치·개인정보 수집 없음, 구매 없음. 실제 질문 문구에 맞춰 답한다.
