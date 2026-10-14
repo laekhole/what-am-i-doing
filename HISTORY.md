@@ -30,10 +30,10 @@
 ### 2026-10-14 15:10 +09:00 — Store 제출 시점의 GitHub v0.2.1 릴리스
 
 - 요청: Partner Center 제출서 작성을 마치고 인증 제출 직전임을 알림. 앞서 합의한 대로 제출과 함께 GitHub v0.2.1 릴리스 진행.
-- 상태: 진행 — 아래 검증에 결과 기록.
+- 상태: 완료 — GitHub v0.2.1 공개. Store 인증 제출은 사용자 진행.
 - 변경·이유: 보류해 둔 v0.2.1 릴리스 노트, README·README.ko.md·영/한 사용자 가이드의 v0.2.1 링크, Store 문서의 목록 항목 기록을 커밋하고 main과 `v0.2.1` 태그를 푸시했다. 태그 푸시로 `release.yml`이 Windows 테스트·EXE 빌드·Sigstore 서명 후 릴리스를 게시한다.
 - 관련 파일: [releases/v0.2.1.md](releases/v0.2.1.md), [README.md](README.md), [README.ko.md](README.ko.md), [docs/USER_GUIDE.md](docs/USER_GUIDE.md), [docs/USER_GUIDE.ko.md](docs/USER_GUIDE.ko.md), [Store 배포 문서](docs/MICROSOFT_STORE.md), [HISTORY.md](HISTORY.md).
-- 검증: 커밋 전 `git diff --check` 통과, 두 Cargo 버전 0.2.1, 원격에 v0.2.1 태그 없음 확인. 릴리스 워크플로 결과는 아래에 추가.
+- 검증: 커밋 전 `git diff --check` 통과, 두 Cargo 버전 0.2.1, 원격에 v0.2.1 태그가 없음을 확인. 커밋 `e809ea4`, 태그 v0.2.1. Windows release 실행 38517699669 success, 릴리스가 2026-10-14 05:39:58 UTC에 정식(초안·사전 배포 아님)으로 게시되어 EXE(4,732,928바이트)·sigstore 번들·SHA256SUMS 첨부. EXE를 받아 SHA-256이 SHA256SUMS와 일치함을 확인했고 릴리스 페이지 HTTP 200. 공개 EXE는 실행하지 않았다.
 - 남은 일: Store 인증 결과 확인, 게시 후 README Store 링크와 `release.yml` MSIX 연결.
 
 ### 2026-10-14 13:55 +09:00 — README.ko.md v0.2.1 반영과 Store 속성 화면 선택 안내
