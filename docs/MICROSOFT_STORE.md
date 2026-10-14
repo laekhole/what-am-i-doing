@@ -54,11 +54,14 @@
 ### 기본 정보
 
 - 가격: 무료. 시장: 전체.
-- 범주: 개발자 도구 (Developer tools).
+- 범주: 개발자 도구(Developer tools), 하위 범주 Utilities.
+- 지원 정보: 웹 사이트·지원 연락처만 넣는다. 전화번호·주소는 Store 목록에 공개되므로 비워 둔다.
+- 표시 모드(Windows Mixed Reality)와 시스템 요구 사항: 선택하지 않는다.
+- 제품 선언: OneDrive 자동 백업 포함은 **해제**한다(설정 파일에 대화 내용이 들어갈 수 있어 처리방침의 "컴퓨터 밖으로 나가지 않음"과 맞춘다). 접근성 테스트 완료는 검증하지 않았으므로 체크하지 않는다. 다른 드라이브 설치 허용은 기본값을 둔다.
 - 개인정보 처리방침 URL: `https://github.com/laekhole/what-am-i-doing/blob/main/PRIVACY.md` (영·한 단독 처리방침. 접근 정보·저장 위치·평문 저장·제공 없음·삭제 방법·문의처를 적었다)
 - 웹 사이트: `https://github.com/laekhole/what-am-i-doing`
 - 지원 연락처: `https://github.com/laekhole/what-am-i-doing/issues`
-- 연령 등급(IARC) 설문: 사용자 간 상호작용 없음, 사용자 생성 콘텐츠 공유 없음, 위치·개인정보 수집 없음, 구매 없음. 실제 질문 문구에 맞춰 답한다.
+- 연령 등급(IARC) 설문: 앱 유형 All Other App Types, 이후 모든 질문 No. 온라인 콘텐츠 질문의 "generated AI content"는 앱이 인터넷에서 가져와 제공하는 콘텐츠를 뜻하므로, 사용자가 자기 PC에서 만든 에이전트 로그를 보여 주는 waid는 No로 답한다.
 - 개인정보 관련 질문("개인 정보에 접근·수집·전송하나요?"): **예**. 수집·전송은 하지 않지만, 개인 정보가 들어 있을 수 있는 로컬 대화 로그를 읽어 화면에 표시하므로 접근에 해당한다. [Store 정책 10.5.1](https://learn.microsoft.com/en-us/windows/apps/publish/store-policies)은 접근만으로도 처리방침을 요구하고, Win32·Desktop Bridge 앱은 항상 처리방침이 있어야 한다고 정한다. 로컬 전용이라 외부 전송 동의(10.5.2·10.5.3)는 해당하지 않는다. 처리방침 문서에는 Store 버전의 설정 파일 위치와 제거 시 삭제도 적어 두었다.
 
 ### 설명 (한국어)
@@ -95,6 +98,33 @@ When you have coding agents running in several terminals and wonder "what was I 
 
 waid only reads agent logs on your PC. It does not launch agents, send prompts or edit conversations, and has no telemetry, cloud sync or account. Open source (MIT).
 
+### 목록 추가 항목
+
+패키지가 `ko-KR`·`en-US`를 선언하므로 Store 목록도 한국어·영어 두 언어를 채운다.
+
+**새로운 기능 (What's new in this version)**
+
+첫 제출에서는 비운다(Partner Center 안내: "Leave blank if this is the first submission"). 아래 문구는 다음 업데이트 제출 때 쓴다.
+
+- 한국어: `한국어·영어 화면 전환, 트레이 상태 요약과 조용한 답변 알림, SSH 세션 화면 관찰, 수집 안정성 개선. Microsoft Store 첫 배포입니다.`
+- English: `English/Korean UI switch, tray status summary and quiet reply notifications, SSH session screen observation and more reliable log collection. First Microsoft Store release.`
+
+**제품 기능 (Product features)**
+
+| 한국어 | English |
+|---|---|
+| 여러 코딩 에이전트 세션을 한 창에서 확인 | See all your coding-agent sessions in one window |
+| 내 차례 / 작업 중 / 유휴 / 오류 상태 배지 | Waiting / Working / Idle / Error status badges |
+| 카드를 펼쳐 마지막 요청과 답변 읽기 | Expand a card to read the last request and answer |
+| 남은 컨텍스트와 압축 여부 표시 | Remaining context and compaction at a glance |
+| 검색·필터·고정·숨기기로 세션 정리 | Search, filter, pin and hide sessions |
+| 트레이 상태 요약과 답변 알림 | Tray status summary and reply notifications |
+| 로컬에서만 동작, 외부 전송 없음 | Runs locally; nothing is sent anywhere |
+
+**검색어 (Search terms, 최대 7개)**: `AI agent`, `coding agent`, `session monitor`, `developer dashboard`, `terminal`, `CLI`, `productivity`. 한국어 목록 키워드: `AI 에이전트`, `코딩 에이전트`, `세션 모니터링`, `개발자 도구`, `터미널`, `CLI`, `생산성`(영어 목록과 같은 개념을 한국어 검색 표현으로 옮김, 전체 11단어). 위 영어 목록은 영어 목록에 쓴다. 타사 제품 이름(Claude, Codex, Orca)은 Store 정책상 키워드 남용으로 볼 수 있어 검색어에 넣지 않는다. 설명 본문에서 호환 대상을 밝히는 것으로 충분하다.
+
+**기타**: 저작권 `© 2026 laekhole. MIT License.`. 추가 라이선스 조건(Additional license terms)은 표준 애플리케이션 라이선스 조건을 바꿀 때만 쓰는 칸이라 비운다. 개발자(Developed by)는 `laekhole`이다. 예고편, 9:16 포스터·1:1 박스 아트(선택, 없으면 패키지 로고 사용), Xbox 이미지, 짧은 제목·음성 제목은 비운다. 키워드는 최대 7개·각 40자·전체 21단어 이하이며 위 목록은 11단어다.
+
 ### 스크린샷
 
 Store 데스크톱 스크린샷은 1366×768 이상이어야 한다. 기존 750×975 샘플 화면 두 장씩을 1920×1080 배경에 원본 크기로 나란히 배치했다.
@@ -108,7 +138,7 @@ Store 로고(1:1 App tile icon, 300×300)는 [Microsoft 문서](https://learn.mi
 
 ### 인증 참고 사항 (Notes for certification)
 
-runFullTrust 사용 이유와 테스트 방법을 적는다.
+runFullTrust 사용 이유와 테스트 방법을 적는다. 패키지 업로드 시 "restricted capabilities require approval: runFullTrust" 경고가 나오는 것은 정상이며, 제출 옵션의 제한 기능(Restricted capabilities) 사유 칸에 아래 첫 문단을 넣는다.
 
 > waid is a desktop dashboard that reads local log files written by coding-agent CLIs (Claude Code, Codex, Orca) under the user's profile and shows their status. It needs runFullTrust because it is a native Win32 app that reads these files outside its package, enumerates processes and windows to match sessions, and starts its own collector process. It also runs a read-only Windows PowerShell script to observe terminal tabs. It does not send data over the network.
 >

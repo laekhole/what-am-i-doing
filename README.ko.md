@@ -44,10 +44,7 @@ waid는 창을 하나씩 열어보지 않아도 그 답을 줍니다.
 
 **Windows 10/11 x64.** [최신 릴리스](https://github.com/laekhole/what-am-i-doing/releases/latest)에서 `waid-<버전>-windows-x64.exe`를 내려받아 더블클릭하면 됩니다. 설치 프로그램, 런타임, WebView2가 필요 없습니다. 닫기는 트레이로 숨기고, 종료는 트레이 메뉴에 있습니다.
 
-내려받기 전에 알아둘 두 가지:
-
-- **공개된 v0.2.0 EXE는 한국어 UI입니다.** English / 한국어 전환, 트레이 상태 요약, 답변 알림은 현재 소스에 들어 있고 다음 릴리스에 포함됩니다.
-- **아직 Authenticode 서명이 없어서** SmartScreen이나 Smart App Control이 실행을 막을 수 있습니다. 릴리스마다 SHA-256 체크섬과 이 저장소의 릴리스 워크플로가 만든 Sigstore 서명이 붙어 있습니다. [검증 방법](docs/USER_GUIDE.ko.md#릴리스-다운로드와-검증)
+내려받기 전에: **아직 Authenticode 서명이 없어서** SmartScreen이나 Smart App Control이 실행을 막을 수 있습니다. 릴리스마다 SHA-256 체크섬과 이 저장소의 릴리스 워크플로가 만든 Sigstore 서명이 붙어 있습니다. [검증 방법](docs/USER_GUIDE.ko.md#릴리스-다운로드와-검증)
 
 macOS는 v0.3.0을 목표로 개발 중입니다(네이티브 AppKit, 같은 Rust 코어). 개발용 빌드는 [MACOS.md](MACOS.md)를 참고하세요. Linux는 지금도 CLI를 쓸 수 있습니다.
 
@@ -72,13 +69,14 @@ JSON이나 JSONL 로그를 쓰는 다른 에이전트는 보통 코드 수정 �
 - 설정과 미리보기는 `%LOCALAPPDATA%\waid\settings.json`에 저장됩니다(`WAID_DATA_DIR`로 변경 가능). 요청·답변 텍스트가 들어갈 수 있으니 로그 파일과 같은 수준으로 다루세요.
 - 선택 기능인 CLI 대시보드는 `127.0.0.1`에만 바인딩합니다.
 
-정확한 범위와 한계는 [개인정보 보호와 로컬 실행](docs/USER_GUIDE.ko.md#개인정보-보호와-로컬-실행)에 있습니다.
+[개인정보 처리방침](PRIVACY.md#한국어)을 참고하세요. 정확한 범위와 한계는 [개인정보 보호와 로컬 실행](docs/USER_GUIDE.ko.md#개인정보-보호와-로컬-실행)에 있습니다.
 
 ## 진행 상태와 로드맵
 
 | 버전 | 이정표 | 상태 |
 |---|---|---|
 | v0.2.0 | Windows | 배포됨. 안정화 진행 중. |
+| v0.2.1 | Windows | 한국어·영어 화면, 트레이 상태 요약과 답변 알림. |
 | v0.3.0 | macOS | 네이티브 앱 개발 중, Apple Silicon·Intel CI 동작 |
 | v0.4.0 | Android + LAN 열람(waidaway) | 계획 |
 | v0.5.0 | iOS / iPadOS | 계획 |

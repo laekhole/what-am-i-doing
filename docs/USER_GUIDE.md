@@ -4,7 +4,7 @@ This is the full reference for waid. For a short overview, screenshots and downl
 
 A native desktop app that shows the **current task, project, agent/model, and last observed status** of multiple coding AI sessions in one place. It reads existing coding-agent logs and does not send commands to agents.
 
-**v0.2.0 is the Windows milestone, with stabilization ongoing.** Both Rust packages are version `0.2.1` in the current source, for the next Windows release. The native macOS app is development work toward v0.3.0; Android, iOS/iPadOS and waidaway LAN access are planned. See the [v0.2.0 release notes](../releases/v0.2.0.md) for changes from v0.1.0 and upgrade instructions.
+**v0.2.1 is the current Windows release, with stabilization ongoing.** It follows the v0.2.0 Windows milestone; both Rust packages are version `0.2.1`. The native macOS app is development work toward v0.3.0; Android, iOS/iPadOS and waidaway LAN access are planned. See the [v0.2.1 release notes](../releases/v0.2.1.md) for changes from v0.2.0 and the [v0.2.0 release notes](../releases/v0.2.0.md) for changes from v0.1.0.
 
 [Download and verify](#download-and-verify-a-release) · [Controls](#using-the-app) · [Agent support](#agent-support) · [Troubleshooting](#troubleshooting-missing-sessions) · [Mac development](../MACOS.md)
 
@@ -21,7 +21,7 @@ A native desktop app that shows the **current task, project, agent/model, and la
 | Custom appearance | Daylight/Midnight JSON templates with edit, preview, apply, import and export; settings persist across restarts. |
 | Local tools | CLI tables, streaming JSON, a localhost HTML dashboard, custom log adapters and `waid doctor` diagnostics. |
 
-The current source supports **English and Korean** in the Windows app, Mac app, CLI and bundled local HTML dashboard. The published v0.2.0 EXE predates this language selector; build the current source until a newer release includes it.
+waid supports **English and Korean** in the Windows app (from v0.2.1), Mac app, CLI and bundled local HTML dashboard. The v0.2.0 EXE predates this language selector.
 
 Use **English / 한국어** at the top of the Windows window or the tray language choices; on Mac, use the language selector beside Templates. The choice applies immediately and is saved across restarts. New installations follow the system language (Korean for Korean, English otherwise); existing settings without a language field retain Korean. Prompts, answers, project names and custom templates remain in their original language. Collector diagnostics retain the language used at launch until you restart waid; operating-system dialogs and errors follow the OS language. For CLI output, use `waid --lang en` or `waid --lang ko`; `WAID_LANG` overrides automatic language detection. The live HTML dashboard has its own language selector.
 
@@ -52,6 +52,7 @@ These concrete safeguards describe the current implementation; they are not a cl
 | Version | Milestone | Status |
 |---|---|---|
 | v0.2.0 | Windows support | Usable on Windows; stabilization continues. |
+| v0.2.1 | Windows update | English/Korean UI, tray status counts and reply notifications. |
 | v0.3.0 | Add macOS support, including MacBook and desktop Macs | Native AppKit app in development; real-Mac release validation pending |
 | v0.4.0 | Add Android support and waidaway LAN access | Planned |
 | v0.5.0 | Add iOS and iPadOS support for iPhone and iPad | Planned |
@@ -67,22 +68,22 @@ For macOS development and installation, see [the Mac guide](../MACOS.md). The na
 
 ## Download and verify a release
 
-Download `waid-v0.2.0-windows-x64.exe` from the [v0.2.0 release](https://github.com/laekhole/what-am-i-doing/releases/tag/v0.2.0), verify it as described below, and double-click it. **One EXE is enough: no extraction, installer, Rust, Cargo, Node, or WebView2 is required.** The collector, fonts, and font license are built in. The current source also embeds waid and third-party license notices; the published v0.2.0 EXE predates this addition. The other two release files are for verification; the app does not need them at runtime. v0.1.0 ZIP releases use the older two-executable layout.
+Download `waid-v0.2.1-windows-x64.exe` from the [v0.2.1 release](https://github.com/laekhole/what-am-i-doing/releases/tag/v0.2.1), verify it as described below, and double-click it. **One EXE is enough: no extraction, installer, Rust, Cargo, Node, or WebView2 is required.** The collector, fonts, and font license are built in. waid and third-party license notices are embedded from v0.2.1. The other two release files are for verification; the app does not need them at runtime. v0.1.0 ZIP releases use the older two-executable layout.
 
 On first launch, waid discovers supported local logs automatically. If a session is missing, open **Show all**, clear search/filters and follow [diagnostics](#troubleshooting-missing-sessions). Existing history may initially show Unknown until a new request is observed.
 
-**Upgrading from v0.1.0:** quit the old app through its tray menu, back up `%LOCALAPPDATA%\waid\settings.json` (or your `WAID_DATA_DIR`), then run the verified v0.2.0 EXE. The settings location is unchanged; old session keys migrate only when their match is unambiguous. An old companion `waid.exe` is not required by the new desktop app. There is no automatic updater.
+**Upgrading from v0.1.0:** quit the old app through its tray menu, back up `%LOCALAPPDATA%\waid\settings.json` (or your `WAID_DATA_DIR`), then run the verified EXE. The settings location is unchanged; old session keys migrate only when their match is unambiguous. An old companion `waid.exe` is not required by the new desktop app. There is no automatic updater.
 
 ```text
-waid-v0.2.0-windows-x64.exe
-waid-v0.2.0-windows-x64.exe.sigstore.json
+waid-v0.2.1-windows-x64.exe
+waid-v0.2.1-windows-x64.exe.sigstore.json
 SHA256SUMS.txt
 ```
 
-Run these PowerShell commands in the folder containing all three matching release files. Replace `v0.2.0` with the downloaded tag. You need Cosign 3.1.3 or later; see the [Cosign installation guide](https://docs.sigstore.dev/cosign/system_config/installation/).
+Run these PowerShell commands in the folder containing all three matching release files. Replace `v0.2.1` with the downloaded tag. You need Cosign 3.1.3 or later; see the [Cosign installation guide](https://docs.sigstore.dev/cosign/system_config/installation/).
 
 ```powershell
-$tag = 'v0.2.0'
+$tag = 'v0.2.1'
 $exe = "waid-$tag-windows-x64.exe"
 $expected = (Get-Content -LiteralPath SHA256SUMS.txt -Raw).Trim()
 $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()

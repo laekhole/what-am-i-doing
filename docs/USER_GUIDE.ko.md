@@ -4,7 +4,7 @@ waid의 전체 참고 문서입니다. 짧은 소개·스크린샷·다운로드
 
 여러 코딩 AI 세션의 **현재 작업, 프로젝트, 에이전트·모델, 마지막으로 확인한 상태**를 한 화면에서 보는 네이티브 데스크톱 앱입니다. 기존 코딩 에이전트 로그를 읽어 표시하며 에이전트에 명령을 보내지 않습니다.
 
-**v0.2.0은 Windows 사용 가능 단계이며 안정화 진행 중입니다.** 현재 소스의 코어와 데스크톱 Rust 패키지는 다음 Windows 릴리스용 `0.2.1`입니다. macOS 네이티브 앱은 v0.3.0을 위한 개발 단계이고 Android·iOS/iPadOS·waidaway LAN 접근은 계획입니다. v0.1.0 이후 변경과 업그레이드 방법은 [v0.2.0 릴리스 노트](../releases/v0.2.0.md#한국어)를 참고하세요.
+**현재 Windows 릴리스는 v0.2.1이며 안정화 진행 중입니다.** v0.2.0 Windows 사용 가능 단계의 후속 릴리스이고, 코어와 데스크톱 Rust 패키지는 `0.2.1`입니다. macOS 네이티브 앱은 v0.3.0을 위한 개발 단계이고 Android·iOS/iPadOS·waidaway LAN 접근은 계획입니다. v0.2.0 이후 변경은 [v0.2.1 릴리스 노트](../releases/v0.2.1.md#한국어), v0.1.0 이후 변경은 [v0.2.0 릴리스 노트](../releases/v0.2.0.md#한국어)를 참고하세요.
 
 [다운로드·검증](#릴리스-다운로드와-검증) · [화면 사용](#화면-사용) · [에이전트 지원](#에이전트별-지원-범위) · [문제 해결](#발견되지-않을-때) · [Mac 개발](../MACOS.md)
 
@@ -21,7 +21,7 @@ waid의 전체 참고 문서입니다. 짧은 소개·스크린샷·다운로드
 | 화면 꾸미기 | Daylight·Midnight JSON 템플릿을 수정·미리보기·적용·가져오기·내보내기 하며 설정을 재시작 후에도 유지합니다. |
 | 로컬 도구 | CLI 표, JSON 스트림, localhost HTML 대시보드, 사용자 로그 어댑터와 `waid doctor` 진단을 제공합니다. |
 
-현재 소스는 Windows 앱·Mac 앱·CLI·기본 로컬 HTML 대시보드에서 **한국어와 영어**를 지원합니다. 공개된 v0.2.0 EXE에는 아직 언어 선택이 없으므로, 새 릴리스에 포함되기 전까지는 현재 소스를 빌드해 사용하세요.
+Windows 앱(v0.2.1부터)·Mac 앱·CLI·기본 로컬 HTML 대시보드에서 **한국어와 영어**를 지원합니다. v0.2.0 EXE에는 언어 선택이 없습니다.
 
 Windows 창 위쪽의 **English / 한국어** 또는 트레이 언어 메뉴에서 전환합니다. Mac은 템플릿 옆 언어 선택기를 사용합니다. 선택한 언어는 즉시 적용되고 재시작 후에도 유지됩니다. 새 설치는 시스템 언어를 따릅니다(한국어 환경은 한국어, 그 외는 영어). 언어 필드가 없는 기존 설정은 한국어를 유지합니다. 프롬프트·답변·프로젝트 이름·사용자 템플릿은 원문 그대로 표시합니다. 수집기 진단은 waid를 재시작할 때까지 실행 당시 언어를 유지하며 OS 대화상자와 오류는 OS 언어를 따릅니다. CLI는 `waid --lang en` 또는 `waid --lang ko`를 사용하고, `WAID_LANG`은 자동 언어 감지보다 우선합니다. 실시간 HTML 대시보드에도 별도 언어 선택기가 있습니다.
 
@@ -52,6 +52,7 @@ Windows 창 위쪽의 **English / 한국어** 또는 트레이 언어 메뉴에�
 | 버전 | 목표 | 현재 상태 |
 |---|---|---|
 | v0.2.0 | Windows 지원 | 사용 가능, 안정화 진행 중 |
+| v0.2.1 | Windows 업데이트 | 한국어·영어 화면, 트레이 상태 집계·답변 알림 |
 | v0.3.0 | MacBook·데스크톱 Mac을 포함한 macOS 지원 | 네이티브 AppKit 앱 개발 중, 실제 Mac 릴리스 검증 남음 |
 | v0.4.0 | Android와 waidaway LAN 접근 | 계획 |
 | v0.5.0 | iPhone·iPad용 iOS·iPadOS 지원 | 계획 |
@@ -65,22 +66,22 @@ Mac 개발·설치는 [MACOS.md](../MACOS.md)를 참고하세요. Windows와 같
 
 ## 릴리스 다운로드와 검증
 
-[v0.2.0 릴리스](https://github.com/laekhole/what-am-i-doing/releases/tag/v0.2.0)에서 `waid-v0.2.0-windows-x64.exe`를 내려받아 검증하고 실행하세요. **EXE 하나면 됩니다. 압축 해제, 설치 프로그램, Rust·Cargo·Node·WebView2가 필요 없습니다.** 수집기·글꼴·글꼴 라이선스가 내장되어 있습니다. 나머지 두 파일은 검증용이며 실행 시 필요하지 않습니다. v0.1.0 ZIP 릴리스는 과거 두 EXE 구성을 사용합니다.
+[v0.2.1 릴리스](https://github.com/laekhole/what-am-i-doing/releases/tag/v0.2.1)에서 `waid-v0.2.1-windows-x64.exe`를 내려받아 검증하고 실행하세요. **EXE 하나면 됩니다. 압축 해제, 설치 프로그램, Rust·Cargo·Node·WebView2가 필요 없습니다.** 수집기·글꼴·글꼴 라이선스가 내장되어 있습니다. 나머지 두 파일은 검증용이며 실행 시 필요하지 않습니다. v0.1.0 ZIP 릴리스는 과거 두 EXE 구성을 사용합니다.
 
 처음 실행하면 지원하는 로컬 로그를 자동으로 찾습니다. 세션이 없으면 **전체 보기**를 켜고 검색·필터를 비운 뒤 [진단 안내](#발견되지-않을-때)를 확인하세요. 기존 이력은 새 요청을 관측하기 전까지 미확인으로 보일 수 있습니다.
 
-**v0.1.0에서 업그레이드:** 트레이 메뉴로 기존 앱을 종료하고 `%LOCALAPPDATA%\waid\settings.json`(또는 지정한 `WAID_DATA_DIR`)을 백업한 뒤 검증한 v0.2.0 EXE를 실행하세요. 설정 경로는 유지되며 이전 세션 키는 대응 대상이 유일할 때만 이관합니다. 새 데스크톱 앱에는 과거의 동반 `waid.exe`가 필요 없고 자동 업데이트 기능은 없습니다.
+**v0.1.0에서 업그레이드:** 트레이 메뉴로 기존 앱을 종료하고 `%LOCALAPPDATA%\waid\settings.json`(또는 지정한 `WAID_DATA_DIR`)을 백업한 뒤 검증한 EXE를 실행하세요. 설정 경로는 유지되며 이전 세션 키는 대응 대상이 유일할 때만 이관합니다. 새 데스크톱 앱에는 과거의 동반 `waid.exe`가 필요 없고 자동 업데이트 기능은 없습니다.
 
 ```text
-waid-v0.2.0-windows-x64.exe
-waid-v0.2.0-windows-x64.exe.sigstore.json
+waid-v0.2.1-windows-x64.exe
+waid-v0.2.1-windows-x64.exe.sigstore.json
 SHA256SUMS.txt
 ```
 
-같은 릴리스의 세 파일을 내려받은 폴더에서 아래 PowerShell 명령을 실행합니다. `v0.2.0`은 실제 태그로 바꾸세요. [Cosign 설치 안내](https://docs.sigstore.dev/cosign/system_config/installation/)에 따라 Cosign 3.1.3 이상이 필요합니다.
+같은 릴리스의 세 파일을 내려받은 폴더에서 아래 PowerShell 명령을 실행합니다. `v0.2.1`은 실제 태그로 바꾸세요. [Cosign 설치 안내](https://docs.sigstore.dev/cosign/system_config/installation/)에 따라 Cosign 3.1.3 이상이 필요합니다.
 
 ```powershell
-$tag = 'v0.2.0'
+$tag = 'v0.2.1'
 $exe = "waid-$tag-windows-x64.exe"
 $expected = (Get-Content -LiteralPath SHA256SUMS.txt -Raw).Trim()
 $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -119,7 +120,7 @@ cargo build --manifest-path desktop/Cargo.toml --release --locked
 
 GNU 타깃은 양쪽 명령에 `--target x86_64-pc-windows-gnu`를 추가하고 실행 경로에도 해당 타깃 디렉터리를 넣습니다. 데스크톱 EXE는 자신을 내부 수집기 모드로 한 번 더 실행하며 종료할 때 자신이 만든 자식 프로세스만 종료합니다. 별도 실행 파일을 추출하거나 요구하지 않습니다. 별도 `waid.exe`는 CLI용으로 계속 제공되며 데스크톱 빌드도 공용 코어를 직접 컴파일합니다.
 
-현재 Windows 소스 빌드는 트레이 메뉴의 **라이선스 및 고지 / Licenses and notices**에서 waid·의존성·Rust 표준 라이브러리 구성요소의 저작권·라이선스 고지와 Pretendard OFL 전문을 엽니다. 이 내용은 EXE에 내장되어 외부 파일 없이 사용할 수 있으며, 메뉴를 누르면 앱 데이터 폴더에 `LICENSES.txt` 사본을 만듭니다. `waid-desktop.exe --licenses`로도 같은 고지를 출력합니다. 공개 v0.2.0 EXE의 기존 메뉴·출력은 글꼴 라이선스만 포함합니다. Mac 메뉴는 현재 글꼴 라이선스 안내를 유지합니다.
+v0.2.1부터 Windows 앱은 트레이 메뉴의 **라이선스 및 고지 / Licenses and notices**에서 waid·의존성·Rust 표준 라이브러리 구성요소의 저작권·라이선스 고지와 Pretendard OFL 전문을 엽니다. 이 내용은 EXE에 내장되어 외부 파일 없이 사용할 수 있으며, 메뉴를 누르면 앱 데이터 폴더에 `LICENSES.txt` 사본을 만듭니다. `waid-desktop.exe --licenses`로도 같은 고지를 출력합니다. v0.2.0 EXE의 메뉴·출력은 글꼴 라이선스만 포함합니다. Mac 메뉴는 현재 글꼴 라이선스 안내를 유지합니다.
 
 ## 화면 사용
 

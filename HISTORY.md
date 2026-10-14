@@ -27,6 +27,34 @@
 
 ## 프롬프트별 작업 기록
 
+### 2026-10-14 15:10 +09:00 — Store 제출 시점의 GitHub v0.2.1 릴리스
+
+- 요청: Partner Center 제출서 작성을 마치고 인증 제출 직전임을 알림. 앞서 합의한 대로 제출과 함께 GitHub v0.2.1 릴리스 진행.
+- 상태: 진행 — 아래 검증에 결과 기록.
+- 변경·이유: 보류해 둔 v0.2.1 릴리스 노트, README·README.ko.md·영/한 사용자 가이드의 v0.2.1 링크, Store 문서의 목록 항목 기록을 커밋하고 main과 `v0.2.1` 태그를 푸시했다. 태그 푸시로 `release.yml`이 Windows 테스트·EXE 빌드·Sigstore 서명 후 릴리스를 게시한다.
+- 관련 파일: [releases/v0.2.1.md](releases/v0.2.1.md), [README.md](README.md), [README.ko.md](README.ko.md), [docs/USER_GUIDE.md](docs/USER_GUIDE.md), [docs/USER_GUIDE.ko.md](docs/USER_GUIDE.ko.md), [Store 배포 문서](docs/MICROSOFT_STORE.md), [HISTORY.md](HISTORY.md).
+- 검증: 커밋 전 `git diff --check` 통과, 두 Cargo 버전 0.2.1, 원격에 v0.2.1 태그 없음 확인. 릴리스 워크플로 결과는 아래에 추가.
+- 남은 일: Store 인증 결과 확인, 게시 후 README Store 링크와 `release.yml` MSIX 연결.
+
+### 2026-10-14 13:55 +09:00 — README.ko.md v0.2.1 반영과 Store 속성 화면 선택 안내
+
+- 요청: README.ko.md도 v0.2.1에 맞게 고치기, Partner Center 속성(Properties) 화면 항목 선택 방법.
+- 상태: 완료 — README.ko.md 수정(릴리스 커밋 대기로 미커밋), 선택 안내.
+- 변경·이유: 사용자 요청으로 README.ko.md를 읽고 "공개 v0.2.0은 한국어 UI" 안내를 지웠으며, 로드맵에 v0.2.1 행과 개인정보 처리방침 링크를 추가했다. 속성 화면은 범주 개발자 도구, 개인정보 예+PRIVACY.md URL, 지원 정보는 웹 사이트·이슈만(전화번호는 Store에 공개되므로 삭제 권고), Mixed Reality·시스템 요구 사항 미선택, OneDrive 앱 데이터 백업 해제를 안내하고 Store 문서에 기록했다.
+- 관련 파일: [README.ko.md](README.ko.md), [Store 배포 문서](docs/MICROSOFT_STORE.md), [HISTORY.md](HISTORY.md).
+- 검증: 사용자가 붙여 넣은 속성 화면 문구와 대조. 하위 범주 목록과 제품 선언 체크박스의 실제 문구는 화면에 보이지 않아 직접 확인하지 못했다. `git diff --check` 대상 확인은 커밋 시 수행.
+- 추가: 하위 범주로 Utilities가 있는지 묻는 후속 질문에, 개발자 도구 아래 Utilities가 있으면 그것이 가장 맞다고 답했다(목록은 직접 확인하지 못함).
+- 추가 2: 연령 등급(IARC) 설문 답(All Other App Types, 모두 No)과 온라인 콘텐츠 질문 판단 근거를 안내하고 Store 문서에 기록했다.
+- 추가 3: Packages의 장치 패밀리는 매니페스트(TargetDeviceFamily Windows.Desktop)에 맞춰 Windows 10/11 Desktop만 선택하도록 안내했다.
+- 추가 4: Packages 업로드 완료 후 Store 목록 단계 안내. 새로운 기능·제품 기능·검색어·저작권 문구를 한·영으로 작성해 Store 문서에 추가했다. 타사 제품명은 검색어에서 제외했다.
+- 추가 5: 패키지 업로드 시 runFullTrust 제한 기능 승인 경고는 오류가 아니며 제출 옵션의 제한 기능 사유 칸에 사용 이유를 쓰면 된다고 안내했다. Arm 안내 배너는 x64 패키지와 무관한 일반 공지로 판단했다.
+- 추가 6: 제출 옵션 안내(게시 시점은 인증 통과 즉시 게시 권장, 인증 참고 사항·제한 기능 사유 문구).
+- 추가 7: Store 목록 언어 관리는 패키지가 선언한 한국어(ko-kr)·영어(en-us) 두 개만 유지하도록 안내했다.
+- 추가 8: 사용자가 붙여 준 영어 Store 목록 화면 기준으로 빈칸 값을 안내했다. 화면 안내에 따라 첫 제출의 새로운 기능은 비우고, 추가 라이선스 조건도 비우도록 Store 문서를 고쳤다. 앞선 두 답변에서 안내용 문구("English text from earlier" 등)를 붙여 넣을 값처럼 써서 혼동을 줬고, 실제 값을 다시 제시했다.
+- 추가 9: 키워드를 언어별로 나누는 안을 검토했다. 사용자 한국어 안에서 `와이드`는 wide로 검색되어 무관한 결과와 섞이므로 `AI 에이전트`로, `개발자 툴`은 Store 범주 표기에 맞춰 `개발자 도구`로 바꾸도록 제안하고 Store 문서에 기록했다.
+- 추가 10: 한·영 키워드가 서로 다른 개념이라는 지적에 따라, 영어 목록과 같은 개념을 한국어 검색 표현으로 맞춘 목록으로 Store 문서를 고쳤다.
+- 남은 일: 제출 직전 릴리스 변경 커밋과 v0.2.1 태그 푸시.
+
 ### 2026-10-14 13:40 +09:00 — 0.2.1 MSIX 실기 테스트, 개인정보 처리방침, v0.2.1 릴리스 준비
 
 - 요청: Store 제출 전 MSIX를 직접 테스트(프라이빗 오디언스 대신), 개인정보 사용 여부와 처리방침 URL 제공·작성, 제출과 함께 낼 GitHub v0.2.1 릴리스 노트·README 준비.

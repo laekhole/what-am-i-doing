@@ -30,7 +30,7 @@ Claude Code에는 결제 화면을, Codex에는 로그인 API를, 다른 세션�
 
 현재 지원 대상은 **Orca, Codex, Claude Code 세 가지**입니다. Orca 안에서 돌리는 Codex·Claude Code 세션도 함께 봅니다. 프로젝트·최근 요청·모델·로그에서 관찰한 상태를 모아 보여주고, 카드를 펼치면 마지막으로 기록된 답변을 읽을 수 있습니다.
 
-**[Windows용 다운로드](https://github.com/laekhole/what-am-i-doing/releases/tag/v0.2.0)** · Windows 10/11 x64 · EXE 하나 · 공개 v0.2.0은 한국어 UI
+**[Windows용 다운로드](https://github.com/laekhole/what-am-i-doing/releases/tag/v0.2.1)** · Windows 10/11 x64 · EXE 하나 · 한국어·영어 UI
 
 <table>
   <tr>
@@ -43,7 +43,7 @@ Claude Code에는 결제 화면을, Codex에는 로그인 API를, 다른 세션�
   </tr>
   <tr>
     <td>한국어 UI · 샘플 데이터</td>
-    <td>최신 소스 빌드의 영어 UI · 샘플 데이터<br>공개 v0.2.0은 한국어 UI입니다.</td>
+    <td>영어 UI · 샘플 데이터</td>
   </tr>
 </table>
 
@@ -52,7 +52,7 @@ Claude Code에는 결제 화면을, Codex에는 로그인 API를, 다른 세션�
 <details>
 <summary><strong>처음 실행부터 세션 정리까지 — 상세 사용법 펼치기</strong></summary>
 
-1. **실행 파일 받기.** [v0.2.0 릴리스](https://github.com/laekhole/what-am-i-doing/releases/tag/v0.2.0)에서 `waid-v0.2.0-windows-x64.exe`를 받아 실행합니다. 설치 프로그램이나 별도 런타임은 필요 없습니다.
+1. **실행 파일 받기.** [v0.2.1 릴리스](https://github.com/laekhole/what-am-i-doing/releases/tag/v0.2.1)에서 `waid-v0.2.1-windows-x64.exe`를 받아 실행합니다. 설치 프로그램이나 별도 런타임은 필요 없습니다.
 2. **원래 도구에서 새 요청 보내기.** waid를 켠 뒤 평소 쓰던 Orca·Codex·Claude Code에서 작업을 시작합니다. waid에 API 키를 넣거나 대화를 복사할 필요는 없습니다.
 3. **프로젝트와 상태 확인하기.** 목록은 약 2초마다 갱신됩니다. 시작 전에 진행하던 대화는 처음에 `미확인`일 수 있습니다. 새 요청·답변이 로그에 기록되면 상태가 갱신되며, 기록이 늦으면 표시도 늦습니다.
 4. **카드 펼치기.** `2열`을 해제하고 카드 제목 부분을 누릅니다. 최근 요청과 마지막으로 기록된 답변을 읽고, 다음 지시는 원래 에이전트에서 보냅니다.
@@ -102,16 +102,13 @@ waid answers that without you clicking through every window:
 
 It observes and never intervenes. waid does not launch agents, send prompts, or edit conversations.
 
-The screenshots above use sample data. The English expanded view is from the current source; the published v0.2.0 EXE has a Korean UI. Tray status counts and quiet reply notifications are also current-source features awaiting the next release.
+The screenshots above use sample data.
 
 ## Install
 
 **Windows 10/11 x64.** Download `waid-<version>-windows-x64.exe` from the [latest release](https://github.com/laekhole/what-am-i-doing/releases/latest) and double-click it. No installer, no runtime, no WebView2. Close hides it to the tray; Exit is in the tray menu.
 
-Two things to know before you download:
-
-- **The published v0.2.0 EXE has a Korean UI.** The English / 한국어 switch, tray status counts, and reply notifications are in the current source and ship with the next release. Until then, [build from source](#build-from-source) for English.
-- **The EXE is not Authenticode-signed yet**, so SmartScreen or Smart App Control may block it. Each release carries a SHA-256 checksum and a Sigstore signature from this repository's release workflow. [How to verify.](docs/USER_GUIDE.md#download-and-verify-a-release)
+Before you download: **the EXE is not Authenticode-signed yet**, so SmartScreen or Smart App Control may block it. Each release carries a SHA-256 checksum and a Sigstore signature from this repository's release workflow. [How to verify.](docs/USER_GUIDE.md#download-and-verify-a-release)
 
 macOS is in development for v0.3.0 (native AppKit, same Rust core). See [MACOS.md](MACOS.md) to build a development copy. Linux can use the CLI today.
 
@@ -135,13 +132,14 @@ Other readers remain experimental and are outside the supported workflows above;
 - Settings and previews live in `%LOCALAPPDATA%\waid\settings.json` (override with `WAID_DATA_DIR`). They can contain prompt and answer text, so treat that file like your logs.
 - The optional CLI dashboard binds to `127.0.0.1` only.
 
-Details and the exact limits are in [Privacy and local operation](docs/USER_GUIDE.md#privacy-and-local-operation).
+See the [privacy policy](PRIVACY.md); details and the exact limits are in [Privacy and local operation](docs/USER_GUIDE.md#privacy-and-local-operation).
 
 ## Status and roadmap
 
 | Version | Milestone | Status |
 |---|---|---|
 | v0.2.0 | Windows | Released. Stabilization continues. |
+| v0.2.1 | Windows | English/Korean UI, tray status and reply notifications. |
 | v0.3.0 | macOS | Native app in development, CI on Apple Silicon and Intel |
 | v0.4.0 | Android + LAN viewing (waidaway) | Planned |
 | v0.5.0 | iOS / iPadOS | Planned |
