@@ -212,15 +212,24 @@ fn scan(now: i64) -> Result<(Vec<Session>, bool), String> {
     ))
 }
 
+fn exe_name(p: &Process) -> &str {
+    p.argv.first().and_then(|s| s.rsplit(['/', '\\']).next()).unwrap_or("")
+}
+
+/// A user's SSH client, not one waid opened for its own remote server list.
+fn user_ssh(p: &Process, processes: &[Process]) -> bool {
+    let name = exe_name(p);
+    if !(name.eq_ignore_ascii_case("ssh.exe") || name == "ssh") {
+        return false;
+    }
+    !processes.iter().any(|parent| {
+        p.parent != 0 && parent.pid == p.parent && exe_name(parent).to_ascii_lowercase().starts_with("waid")
+    })
+}
+
 pub fn collect(processes: &[Process], now: i64) -> Vec<Session> {
     if std::env::var("WAID_TERMINAL_SCAN").as_deref() == Ok("0")
-        || !processes.iter().any(|p| {
-            p.argv.first().is_some_and(|s| {
-                s.rsplit(['/', '\\'])
-                    .next()
-                    .is_some_and(|s| s.eq_ignore_ascii_case("ssh.exe") || s == "ssh")
-            })
-        })
+        || !processes.iter().any(|p| user_ssh(p, processes))
     {
         return Vec::new();
     }
@@ -263,6 +272,21 @@ mod tests {
             ]
             .into(),
         )
+    }
+    #[test]
+    fn ssh_opened_by_waid_does_not_start_screen_observation() {
+        let process = |pid, name: &str, parent| Process { pid, argv: vec![name.into()], cwd: None, parent };
+        let processes = [
+            process(10, "waid-desktop.exe", 1),
+            process(11, r"C:\Windows\System32\OpenSSH\ssh.exe", 10),
+            process(20, "pwsh.exe", 1),
+            process(21, "ssh.exe", 20),
+            process(30, "ssh.exe", 0),
+        ];
+        assert!(!user_ssh(&processes[1], &processes));
+        assert!(user_ssh(&processes[3], &processes));
+        assert!(user_ssh(&processes[4], &processes));
+        assert!(!user_ssh(&processes[0], &processes));
     }
     #[test]
     fn screen_observation_is_bounded_inferred_and_never_a_local_session() {

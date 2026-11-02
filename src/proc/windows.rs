@@ -129,6 +129,7 @@ pub(crate) fn snapshot() -> io::Result<Vec<Process>> {
             };
         }
         if let Some(mut process) = process(entry.pid, &entry.exe) {
+            process.parent = i32::try_from(entry.parent_pid).unwrap_or(0);
             if crate::matchers::needs_arguments(&process.argv[0]) {
                 if let Some(argv) = arguments(entry.pid) { process.argv = argv; }
             }
@@ -147,6 +148,7 @@ fn process(pid: u32, name: &[u16]) -> Option<Process> {
         pid,
         argv: vec![String::from_utf16_lossy(&name[..end])],
         cwd: None, // Tool Help provides neither cwd nor command-line arguments.
+        parent: 0,
     })
 }
 

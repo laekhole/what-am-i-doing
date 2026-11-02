@@ -242,6 +242,8 @@ pub struct Settings {
     pub show_aux: bool,
     pub show_hidden: bool,
     pub template: String,
+    /// SSH servers to collect from. Empty means waid opens no connection.
+    pub remote_servers: Vec<waid::remote::Server>,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -263,6 +265,7 @@ impl Default for Settings {
             show_aux: false,
             show_hidden: false,
             template: DEFAULT.into(),
+            remote_servers: Vec::new(),
         }
     }
 }
@@ -465,12 +468,29 @@ impl Settings {
         s.show_aux = v["show_aux"].as_bool().unwrap_or(false);
         s.show_hidden = v["show_hidden"].as_bool().unwrap_or(false);
         s.template = v["template"].as_str().unwrap_or(DEFAULT).into();
+        // Invalid or extra entries are dropped rather than passed to ssh.
+        for value in v["remote_servers"].as_array().into_iter().flatten() {
+            let Some(destination) = value["destination"].as_str() else { continue };
+            if s.remote_servers.len() >= waid::remote::MAX_SERVERS
+                || waid::remote::validate(destination).is_err()
+                || s.remote_servers.iter().any(|server| server.destination == destination)
+            {
+                continue;
+            }
+            s.remote_servers.push(waid::remote::Server {
+                destination: destination.into(),
+                enabled: value["enabled"].as_bool().unwrap_or(false),
+            });
+        }
         Skin::parse(&s.template)?;
         Ok(s)
     }
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let closed: Vec<Value> = self.closed.values().map(row_value).collect();
-        let v = json!({"version":1,"language":self.language.code(),"notifications":self.notifications,"tray_hint_seen":self.tray_hint_seen,"two_columns":self.two_columns,"always_on_top":self.always_on_top,"opacity":self.opacity,"closed":closed,"show_all":self.show_all,"pinned":self.pinned,"hidden":self.hidden,"search":self.search,"state":self.state,"agent":self.agent,"show_aux":self.show_aux,"show_hidden":self.show_hidden,"template":self.template,"session_targets":self.session_targets});
+        let servers: Vec<Value> = self.remote_servers.iter()
+            .map(|server| json!({"destination":server.destination,"enabled":server.enabled}))
+            .collect();
+        let v = json!({"version":1,"language":self.language.code(),"notifications":self.notifications,"tray_hint_seen":self.tray_hint_seen,"two_columns":self.two_columns,"always_on_top":self.always_on_top,"opacity":self.opacity,"closed":closed,"show_all":self.show_all,"pinned":self.pinned,"hidden":self.hidden,"search":self.search,"state":self.state,"agent":self.agent,"show_aux":self.show_aux,"show_hidden":self.show_hidden,"template":self.template,"session_targets":self.session_targets,"remote_servers":servers});
         let text = serde_json::to_string_pretty(&v)?;
         if text.len() as u64 > MAX_SETTINGS {
             return Err(io::Error::other(tr("설정 파일 크기 상한 8 MiB를 초과했습니다.", "Settings exceed the 8 MiB limit.")));
@@ -836,13 +856,33 @@ mod tests {
         s.show_hidden = true;
         assert_eq!(s.visible(&rows).len(), 1);
         let path = std::env::temp_dir().join(format!("waid-settings-{}.json", std::process::id()));
+        s.remote_servers = waid::remote::parse_servers("dbes-server\n# user@10.0.0.2").unwrap();
         s.save(&path).unwrap();
         s.save(&path).unwrap();
         let loaded = Settings::read(&path).unwrap();
         assert_eq!(loaded.search, s.search);
         assert_eq!(loaded.hidden, s.hidden);
         assert_eq!(loaded.template, s.template);
+        assert_eq!(loaded.remote_servers, s.remote_servers);
         assert!(!loaded.two_columns);
+        fs::remove_file(&path).unwrap();
+        // A tampered settings file cannot smuggle ssh options or duplicates.
+        let mut tampered: Value = serde_json::from_str(&{
+            s.save(&path).unwrap();
+            fs::read_to_string(&path).unwrap()
+        }).unwrap();
+        tampered["remote_servers"] = json!([
+            {"destination":"-oProxyCommand=calc","enabled":true},
+            {"destination":"ok-host","enabled":true},
+            {"destination":"ok-host","enabled":false},
+            {"destination":"no-flag"}
+        ]);
+        fs::write(&path, tampered.to_string()).unwrap();
+        let loaded = Settings::read(&path).unwrap();
+        assert_eq!(loaded.remote_servers, [
+            waid::remote::Server { destination: "ok-host".into(), enabled: true },
+            waid::remote::Server { destination: "no-flag".into(), enabled: false },
+        ]);
         fs::remove_file(path).unwrap();
     }
 

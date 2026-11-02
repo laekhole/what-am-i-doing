@@ -12,6 +12,8 @@ use std::{
 
 #[cfg(windows)]
 mod native;
+#[cfg(windows)]
+mod remote;
 mod ui;
 #[allow(dead_code)]
 #[path = "../../src/time.rs"]
@@ -235,9 +237,105 @@ impl Activity {
     }
 }
 
+/// One server's latest rows and connection state, kept beside the local snapshot.
+#[derive(Default)]
+#[cfg_attr(not(windows), allow(dead_code))]
+struct RemoteSource {
+    rows: Vec<Row>,
+    /// Shown in the main window's collection warnings while something is wrong.
+    warning: Option<String>,
+    /// Shown in the server settings window.
+    status: String,
+    needs_install: bool,
+}
+
+#[derive(Default)]
+struct HubState {
+    local: Option<Snapshot>,
+    local_error: Option<String>,
+    remotes: BTreeMap<String, RemoteSource>,
+}
+
+/// Merges the local collector and remote servers into the UI's single update slot.
+struct Hub {
+    updates: Updates,
+    state: Mutex<HubState>,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+impl Hub {
+    fn new(updates: Updates) -> Arc<Hub> {
+        Arc::new(Hub { updates, state: Mutex::default() })
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HubState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn local(&self, message: Result<Snapshot, String>) {
+        let mut state = self.lock();
+        match message {
+            Ok(snapshot) => {
+                state.local = Some(snapshot);
+                state.local_error = None;
+                self.publish(&state);
+            }
+            Err(error) => {
+                state.local_error = Some(error.clone());
+                publish_update(&self.updates, Err(error));
+            }
+        }
+    }
+
+    fn remote(&self, destination: &str, change: impl FnOnce(&mut RemoteSource)) {
+        let mut state = self.lock();
+        change(state.remotes.entry(destination.to_string()).or_default());
+        self.publish(&state);
+    }
+
+    fn retain(&self, destinations: &[String]) {
+        let mut state = self.lock();
+        let before = state.remotes.len();
+        state.remotes.retain(|destination, _| destinations.contains(destination));
+        if state.remotes.len() != before {
+            self.publish(&state);
+        }
+    }
+
+    /// (destination, status, row count, needs install) for the settings window.
+    fn statuses(&self) -> Vec<(String, String, usize, bool)> {
+        self.lock()
+            .remotes
+            .iter()
+            .map(|(destination, source)| {
+                let main = source.rows.iter().filter(|row| !row.auxiliary).count();
+                (destination.clone(), source.status.clone(), main, source.needs_install)
+            })
+            .collect()
+    }
+
+    fn publish(&self, state: &HubState) {
+        // The first local snapshot ends the loading state; remote rows wait for it.
+        let Some(local) = &state.local else { return };
+        let mut rows = local.rows.clone();
+        let mut warnings = local.warnings.clone();
+        for source in state.remotes.values() {
+            rows.extend(source.rows.iter().cloned());
+            warnings.extend(source.warning.iter().cloned());
+        }
+        warnings.truncate(32);
+        publish_update(&self.updates, Ok(Snapshot { rows, warnings }));
+        if let Some(error) = &state.local_error {
+            publish_update(&self.updates, Err(error.clone()));
+        }
+    }
+}
+
 struct Core {
     child: Child,
     reader: Option<JoinHandle<()>>,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    hub: Arc<Hub>,
 }
 
 impl Drop for Core {
@@ -271,17 +369,19 @@ fn start_core(exe: &Path) -> io::Result<(Core, Updates)> {
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
     let child = command.spawn()?;
+    let updates = Updates::default();
+    let hub = Hub::new(Arc::clone(&updates));
     let mut core = Core {
         child,
         reader: None,
+        hub: Arc::clone(&hub),
     };
     let stdout = core
         .child
         .stdout
         .take()
         .ok_or_else(|| io::Error::other("missing core stdout"))?;
-    let updates = Updates::default();
-    let output = Arc::clone(&updates);
+    let output = hub;
     core.reader = Some(std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
         loop {
@@ -299,7 +399,7 @@ fn start_core(exe: &Path) -> io::Result<(Core, Updates)> {
                 ),
                 Err(e) => (Err(waid::trf!("상태를 읽지 못했습니다: {e}", "Could not read session status: {e}")), true),
             };
-            publish_update(&output, message);
+            output.local(message);
             if ended {
                 break;
             }

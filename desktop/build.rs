@@ -9,7 +9,30 @@ fn main() {
     }
     if std::env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {
         embed_icon();
+        embed_server_binary();
     }
+}
+
+/// The Linux x86_64 collector the app installs on SSH servers. `WAID_LINUX_X64` points
+/// at `target/x86_64-unknown-linux-musl/release/waid`; builds without it embed nothing
+/// and the install button explains that.
+fn embed_server_binary() {
+    println!("cargo:rerun-if-env-changed=WAID_LINUX_X64");
+    let data = match std::env::var_os("WAID_LINUX_X64").filter(|path| !path.is_empty()) {
+        Some(path) => {
+            println!("cargo:rerun-if-changed={}", Path::new(&path).display());
+            let data = std::fs::read(&path).expect("WAID_LINUX_X64 must name the Linux x86_64 waid binary");
+            // ELF, 64-bit, little endian, x86-64.
+            assert!(
+                data.len() > 64 && data.starts_with(b"\x7fELF\x02\x01") && data[18..20] == [0x3e, 0x00],
+                "WAID_LINUX_X64 is not a Linux x86_64 binary"
+            );
+            data
+        }
+        None => Vec::new(),
+    };
+    let out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    std::fs::write(out.join("waid-linux-x64"), data).unwrap();
 }
 
 fn build_macos() {

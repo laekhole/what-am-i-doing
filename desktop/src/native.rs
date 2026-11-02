@@ -26,6 +26,7 @@ use windows_sys::Win32::{
 };
 
 mod accordion;
+mod servers;
 mod tray;
 const SEARCH: usize = 10;
 const STATUS: usize = 11;
@@ -159,6 +160,7 @@ struct Window {
     path: PathBuf,
     dirty: Cell<Option<Instant>>,
     demo: bool,
+    servers: servers::State,
 }
 impl Window {
     fn new(updates: Updates, path: PathBuf, demo: bool) -> Self {
@@ -206,6 +208,7 @@ impl Window {
             path,
             dirty: Cell::new(None),
             demo,
+            servers: servers::State::default(),
         }
     }
     fn get(&self, id: usize) -> HWND {
@@ -389,6 +392,7 @@ impl Window {
             DETAIL,
             BACK,
             ASSOCIATE,
+            servers::OPEN,
         ] {
             ShowWindow(self.get(id), if expanded { SW_SHOWNA } else { SW_HIDE });
         }
@@ -419,7 +423,7 @@ impl Window {
             ShowWindow(self.get(FILTER), SW_SHOWNA);
             mv(FILTER, 156, 104, (w - 320).min(76), 32);
             let menu_open = self.menu_open.get();
-            let actions = [SHOW_DETAIL, PIN, CLOSE_SESSION, ASSOCIATE, EDITOR];
+            let actions = [SHOW_DETAIL, PIN, CLOSE_SESSION, ASSOCIATE, EDITOR, servers::OPEN];
             for (i, id) in actions.into_iter().enumerate() {
                 ShowWindow(self.get(id), if menu_open { SW_SHOWNA } else { SW_HIDE });
                 let width = (w - 50) / actions.len() as i32;
@@ -447,8 +451,9 @@ impl Window {
         mv(CLOSE_SESSION, 118, 196 + extra, 100, 32);
         mv(AUX, 232, 196 + extra, 108, 32);
         mv(HIDDEN, 348, 196 + extra, 108, 32);
-        mv(ASSOCIATE, w - 256, 196 + extra, 88, 32);
-        mv(EDITOR, w - 160, 196 + extra, 140, 32);
+        mv(servers::OPEN, w - 300, 196 + extra, 76, 32);
+        mv(ASSOCIATE, w - 216, 196 + extra, 80, 32);
+        mv(EDITOR, w - 128, 196 + extra, 108, 32);
         let top = 244 + extra;
         let bottom = h - 64;
         if w >= 1000 {
@@ -594,6 +599,11 @@ impl Window {
             return;
         }
         let Some(row) = self.selected() else { return };
+        if super::remote::is_remote(&row) {
+            *self.notice.borrow_mut() = tr("원격 서버 세션은 그 서버의 터미널에서 이어가세요. 상세 내용을 표시합니다.", "Continue remote server sessions in that server's terminal. Showing session details.").into();
+            self.command(hwnd, SHOW_DETAIL, 0);
+            return;
+        }
         let target = self.settings.borrow().session_targets.get(&row.id).cloned();
         if self.demo
             || (row.session_id.is_empty() && target.is_none())
@@ -632,6 +642,11 @@ impl Window {
     }
     unsafe fn association_menu(&self, hwnd: HWND) {
         let Some(row) = self.selected() else { return };
+        if super::remote::is_remote(&row) {
+            *self.notice.borrow_mut() = tr("원격 서버 세션은 이 PC의 창이나 링크에 연결할 수 없습니다.", "Remote server sessions cannot be connected to a window or link on this PC.").into();
+            InvalidateRect(hwnd, null(), 0);
+            return;
+        }
         if self.demo || row.state == "done" {
             *self.notice.borrow_mut() = tr("실제 세션을 선택한 뒤 창이나 링크를 연결하세요.", "Select a real session to connect a window or link.").into();
             InvalidateRect(hwnd, null(), 0);
@@ -829,6 +844,8 @@ impl Window {
             return;
         }
         self.dirty.set(None);
+        // The settings window is rebuilt in the new language when reopened.
+        self.close_servers();
         set_language(language);
         self.busy.set(true);
         set_text(hwnd, tr("waid · AI 세션", "waid · AI sessions"));
@@ -960,6 +977,7 @@ impl Window {
             self.refresh_tray(hwnd);
         }
         self.tray_tick(hwnd);
+        self.servers_tick();
         if self
             .dirty
             .get()
@@ -973,12 +991,13 @@ impl Window {
         if self.busy.get() || !self.ready.get() {
             return;
         }
-        if [SHOW_DETAIL, FILTER, PIN, CLOSE_SESSION, EDITOR].contains(&id)
+        if [SHOW_DETAIL, FILTER, PIN, CLOSE_SESSION, EDITOR, servers::OPEN].contains(&id)
             && self.menu_open.replace(false)
         {
             self.layout(hwnd);
         }
         match id {
+            servers::OPEN => self.open_servers(hwnd),
             LANGUAGE => self.language_menu(hwnd),
             LANGUAGE_KOREAN => self.change_language(hwnd, Language::Korean),
             LANGUAGE_ENGLISH => self.change_language(hwnd, Language::English),
@@ -1836,6 +1855,7 @@ unsafe fn tray_menu(s: &Window, hwnd: HWND) {
     }
     let sessions = s.append_tray_menu(menu);
     AppendMenuW(menu, MF_STRING, TRAY_OPEN, wide(tr("waid 열기", "Open waid")).as_ptr());
+    AppendMenuW(menu, MF_STRING, servers::OPEN, wide(tr("원격 서버 (SSH)…", "Remote servers (SSH)…")).as_ptr());
     AppendMenuW(menu, MF_STRING, TRAY_LICENSE, wide(tr("라이선스 및 고지", "Licenses and notices")).as_ptr());
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     s.append_languages(menu);
@@ -1856,6 +1876,7 @@ unsafe fn tray_menu(s: &Window, hwnd: HWND) {
     DestroyMenu(menu);
     match command as usize {
         TRAY_OPEN => restore_window(s, hwnd),
+        servers::OPEN => s.open_servers(hwnd),
         LANGUAGE_KOREAN | LANGUAGE_ENGLISH => s.command(hwnd, command as usize, 0),
         TRAY_LICENSE => {
             let result = (|| -> io::Result<()> {
@@ -2134,8 +2155,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
     }
     0
 }
-fn button_labels() -> [(usize, &'static str); 23] {
+fn button_labels() -> [(usize, &'static str); 24] {
     [
+        (servers::OPEN, tr("서버", "Servers")),
         (TOPMOST, tr("항상 위", "On top")),
         (OPACITY, tr("투명도 0%", "Transparency 0%")),
         (MINIMIZE, tr("최소화", "Minimize")),
@@ -2419,6 +2441,9 @@ pub fn run() -> io::Result<()> {
     if demo {
         publish_update(&state.updates, Ok(Snapshot { rows: demo_rows(), ..Snapshot::default() }));
     }
+    if let Some(core) = &core {
+        state.start_remotes(std::sync::Arc::clone(&core.hub));
+    }
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let hwnd = create_window(&state)?;
@@ -2442,6 +2467,15 @@ pub fn run() -> io::Result<()> {
                     return Err(io::Error::last_os_error());
                 }
                 _ => {
+                    // Keyboard handling for the server settings window stays inside it.
+                    let servers = state.servers.hwnd();
+                    if !servers.is_null() && GetAncestor(msg.hwnd, GA_ROOT) == servers {
+                        if IsDialogMessageW(servers, &msg) == 0 {
+                            TranslateMessage(&msg);
+                            DispatchMessageW(&msg);
+                        }
+                        continue;
+                    }
                     if msg.message == WM_KEYDOWN && GetKeyState(VK_CONTROL as i32) < 0 {
                         match msg.wParam as u16 {
                             0x46 => {

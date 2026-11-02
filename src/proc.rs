@@ -19,6 +19,9 @@ pub struct Process {
     /// `/proc` 경로가 `ps`보다 정확하다.
     pub argv: Vec<String>,
     pub cwd: Option<PathBuf>,
+    /// Parent PID, or 0 when unknown. Windows only, to recognize waid's own `ssh`.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub parent: i32,
 }
 
 
@@ -64,7 +67,7 @@ fn from_procfs() -> Vec<Process> {
             continue;
         }
         let cwd = fs::read_link(format!("/proc/{pid}/cwd")).ok();
-        out.push(Process { pid, argv, cwd });
+        out.push(Process { pid, argv, cwd, parent: 0 });
     }
     out
 }
@@ -91,7 +94,7 @@ fn from_ps() -> Vec<Process> {
             if argv.is_empty() {
                 return None;
             }
-            Some(Process { pid, argv, cwd: None })
+            Some(Process { pid, argv, cwd: None, parent: 0 })
         })
         .collect()
 }

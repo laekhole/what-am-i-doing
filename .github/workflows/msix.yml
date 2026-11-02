@@ -43,6 +43,15 @@ jobs:
           rustup default stable
           if ($LASTEXITCODE -ne 0) { throw 'Rust selection failed.' }
 
+      - name: Build Linux server collector
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          if ($LASTEXITCODE -ne 0) { throw 'Linux target setup failed.' }
+          $env:CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = 'rust-lld'
+          cargo build --release --locked --target x86_64-unknown-linux-musl
+          if ($LASTEXITCODE -ne 0) { throw 'Linux server collector build failed.' }
+          "WAID_LINUX_X64=$((Resolve-Path target/x86_64-unknown-linux-musl/release/waid).Path)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Build desktop EXE
         run: |
           cargo build --manifest-path desktop/Cargo.toml --release --locked

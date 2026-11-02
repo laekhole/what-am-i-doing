@@ -20,6 +20,17 @@ Push-Location (Split-Path -Parent $PSScriptRoot)
 try {
     & $cargoExe test --release --locked
     if ($LASTEXITCODE -ne 0) { throw 'Core tests failed.' }
+    # The app embeds the Linux collector it installs on SSH servers (remote server settings).
+    if (-not $env:WAID_LINUX_X64) {
+        $rustupCommand = Get-Command rustup -ErrorAction SilentlyContinue
+        $rustupExe = if ($rustupCommand) { $rustupCommand.Source } else { Join-Path $env:USERPROFILE '.cargo/bin/rustup.exe' }
+        & $rustupExe target add x86_64-unknown-linux-musl
+        if ($LASTEXITCODE -ne 0) { throw 'Could not add the Linux musl target.' }
+        $env:CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = 'rust-lld'
+        & $cargoExe build --release --locked --target x86_64-unknown-linux-musl
+        if ($LASTEXITCODE -ne 0) { throw 'Linux server collector build failed.' }
+        $env:WAID_LINUX_X64 = (Resolve-Path -LiteralPath 'target/x86_64-unknown-linux-musl/release/waid').Path
+    }
     & $cargoExe test --manifest-path desktop/Cargo.toml --release --locked
     if ($LASTEXITCODE -ne 0) { throw 'Native shell tests failed.' }
     & $cargoExe build --manifest-path desktop/Cargo.toml --release --locked

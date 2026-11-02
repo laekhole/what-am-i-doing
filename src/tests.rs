@@ -18,6 +18,7 @@ fn p(argv: &[&str]) -> Process {
         pid: 1,
         argv: argv.iter().map(|s| s.to_string()).collect(),
         cwd: None,
+        parent: 0,
     }
 }
 
