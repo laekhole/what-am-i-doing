@@ -2157,7 +2157,6 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
 }
 fn button_labels() -> [(usize, &'static str); 24] {
     [
-        (servers::OPEN, tr("서버", "Servers")),
         (TOPMOST, tr("항상 위", "On top")),
         (OPACITY, tr("투명도 0%", "Transparency 0%")),
         (MINIMIZE, tr("최소화", "Minimize")),
@@ -2181,6 +2180,7 @@ fn button_labels() -> [(usize, &'static str); 24] {
         (NIGHT, tr("어두운 기본", "Midnight")),
         (CLOSE_EDITOR, tr("편집 닫기", "Close editor")),
         (LANGUAGE, "English / 한국어"),
+        (servers::OPEN, tr("서버", "Servers")),
     ]
 }
 

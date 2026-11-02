@@ -155,7 +155,8 @@ impl Window {
             }
             child
         };
-        add(INTRO, "STATIC", &intro(), SS_LEFT as u32, 16, 12, WIDTH - 32, 92, 0);
+        // SS_LEFT is 0: a plain left-aligned, word-wrapped static label.
+        add(INTRO, "STATIC", &intro(), 0, 16, 12, WIDTH - 32, 92, 0);
         let editor = add(
             TEXT,
             "EDIT",
